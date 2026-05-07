@@ -1,20 +1,19 @@
 import os
 from operator import itemgetter
 from dotenv import load_dotenv
-from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace, HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda, RunnablePassthrough
 from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_ollama import ChatOllama
 
 load_dotenv()
 
-hf_token = os.getenv("HF_TOKEN")
-if hf_token:
-    print("API Key caricata correttamente.")
-else:
-    print("Errore: HF_TOKEN non trovato nel file .env")
+OLLAMA_CHAT_MODEL = os.getenv("OLLAMA_CHAT_MODEL", "qwen2.5:7b")
+
+print(f"Ollama chat model: {OLLAMA_CHAT_MODEL}")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Shared embedding model (used by both ingestion and app)
@@ -30,11 +29,10 @@ embedding_model = HuggingFaceEmbeddings(
 # ─────────────────────────────────────────────────────────────────────────────
 class DiemBrain:
     def __init__(self, vectorstore: Chroma):
-        self.chat_model = ChatHuggingFace(llm=HuggingFaceEndpoint(
-            repo_id="Qwen/Qwen2.5-7B-Instruct",
+        self.chat_model = ChatOllama(
+            model=OLLAMA_CHAT_MODEL,
             temperature=0.1,
-            huggingfacehub_api_token=hf_token,
-        ))
+        )
 
         retriever = vectorstore.as_retriever(
             search_type="similarity",
