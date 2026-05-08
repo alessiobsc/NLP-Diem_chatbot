@@ -4,4 +4,3 @@ venv/
 __pycache__/
 chroma_diem/
 *.pyc
-CLAUDE.md
