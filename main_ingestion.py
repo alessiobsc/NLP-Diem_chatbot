@@ -18,6 +18,7 @@ from src.ingestion.crawler import (
     extract_diem_faculty_urls,
     filter_docs,
     get_section_base,
+    save_crawled_pdfs_to_json,
     save_crawled_urls_to_json,
 )
 from src.ingestion.parser import filter_recent_documents, html_extractor, load_pdfs_from_links
@@ -132,6 +133,7 @@ def main() -> None:
     if args.crawl_only:
         raw_html_docs, pdf_docs = crawl_phase()
         save_crawled_urls_to_json(raw_html_docs, "crawled_urls.json")
+        save_crawled_pdfs_to_json(pdf_docs, "crawled_pdfs.json")
         total = len(raw_html_docs) + len(pdf_docs)
         print(f"\nCrawl-only complete. {len(raw_html_docs)} HTML docs, {len(pdf_docs)} PDF docs ({total} total).")
         print("Stopped before temporal filtering, enrichment, and indexing.")

@@ -13,7 +13,7 @@ EXCLUDE_DIRS = [
     "/rescue/css/", "/rescue/js/", "/rescue/assets/",
     ".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ".svg",
     ".ico", ".woff", ".woff2", ".ttf", ".eot",
-    "/idp/", "/password-recovery", "/login"
+    "/idp/", "/password-recovery", "/login",
 ]
 
 
@@ -55,7 +55,10 @@ def extract_corsi_urls(raw_docs: list) -> list[str]:
             for a in soup.find_all("a", href=True):
                 href = a["href"].strip()
                 if href.startswith("http") and "corsi.unisa.it" in href:
-                    corsi.add(href.split("?")[0].split("#")[0].rstrip("/"))
+                    parsed = urlparse(href)
+                    first_seg = parsed.path.strip("/").split("/")[0]
+                    if first_seg:
+                        corsi.add(f"{parsed.scheme}://{parsed.netloc}/{first_seg}")
         except Exception:
             pass
     return sorted(corsi)
@@ -114,9 +117,38 @@ def extract_diem_faculty_urls() -> list[str]:
 
 
 def filter_docs(docs: list) -> list:
-    """Drop docs whose source URL contains query parameters we want to skip."""
-    SKIP_PARAMS = ("?sitemap",)
-    return [d for d in docs if not any(p in d.metadata.get("source", "") for p in SKIP_PARAMS)]
+    """Drop docs whose source URL contains substrings we want to skip."""
+    SKIP_SUBSTRINGS = (
+        "?sitemap",
+        # unisa-rescue-page treats JS relative hrefs (print(), history.go(-1)) as
+        # literal row IDs. /row/ID/print() duplicates /row/ID/<slug>;
+        # /row/print() is a server fallback for invalid IDs.
+        "/print()",
+        "/history.go(",
+        # PDFs are handled by load_pdfs_from_links via PyPDFLoader.
+        # RecursiveUrlLoader reads them as binary → garbage in page_content.
+        ".pdf",
+    )
+    return [d for d in docs if not any(p in d.metadata.get("source", "") for p in SKIP_SUBSTRINGS)]
+
+
+def save_crawled_pdfs_to_json(pdf_docs: list, filename: str) -> None:
+    """Group PDF pages by source URL and save summary to JSON."""
+    pdfs: dict[str, dict] = {}
+    for doc in pdf_docs:
+        url = doc.metadata.get("source", "")
+        if url not in pdfs:
+            pdfs[url] = {
+                "url": url,
+                "source_page": doc.metadata.get("source_page", ""),
+                "pages": 0,
+            }
+        pdfs[url]["pages"] += 1
+
+    entries = sorted(pdfs.values(), key=lambda x: x["url"])
+    with open(filename, "w", encoding="utf-8") as f:
+        json.dump(entries, f, ensure_ascii=False, indent=2)
+    print(f"  -> Saved {len(entries)} PDF sources ({len(pdf_docs)} pages total) to {filename}")
 
 
 def save_crawled_urls_to_json(docs: list, filename: str) -> None:
