@@ -4,6 +4,8 @@ from urllib.parse import urlparse, urldefrag, urljoin
 from bs4 import BeautifulSoup
 from langchain_community.document_loaders import PyPDFLoader
 
+from src.ingestion.crawler import is_pre_2020_url
+
 YEAR_CUTOFF = 2020
 TEMPORAL_SCAN_CHARS = 2500
 
@@ -122,6 +124,10 @@ def load_pdfs_from_links(raw_docs: list, seen_urls: set | None = None) -> list:
                 if pdf_url in seen_urls:
                     continue
                 seen_urls.add(pdf_url)
+
+                if is_pre_2020_url(pdf_url):
+                    print(f"  SKIP pre-2020 PDF: {pdf_url}")
+                    continue
 
                 try:
                     docs = PyPDFLoader(pdf_url).load()
