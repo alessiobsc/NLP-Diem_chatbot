@@ -11,6 +11,8 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
+os.environ.setdefault("PYTHONUNBUFFERED", "1")
+
 # Load environment variables from .env file if it exists
 load_dotenv()
 
@@ -35,12 +37,22 @@ LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.1"))
 # Embedding Model Settings (HuggingFace)
 EMBEDDING_MODEL_NAME: str = os.getenv("EMBEDDING_MODEL_NAME", "intfloat/multilingual-e5-small")
 
+# Cross-Encoder Model Settings
+CROSS_ENCODER_MODEL_NAME: str = os.getenv("CROSS_ENCODER_MODEL_NAME", "cross-encoder/ms-marco-MiniLM-L6-v2")
+
 # =============================================================================
 # RAG & VECTOR DATABASE CONFIGURATION
 # =============================================================================
 COLLECTION_NAME: str = "diem_knowledge"
 DEFAULT_SESSION_ID: str = "diem-session"
-RETRIEVER_K: int = int(os.getenv("RETRIEVER_K", "5"))
+
+# Retrieval Settings
+# BI_ENCODER_K is the number of documents retrieved in the first stage (fast retrieval)
+BI_ENCODER_K: int = int(os.getenv("BI_ENCODER_K", "20"))
+# CROSS_ENCODER_K is the number of documents kept after reranking in the second stage (precision reranking)
+CROSS_ENCODER_K: int = int(os.getenv("CROSS_ENCODER_K", "3"))
+
+RETRIEVER_SCORE_THRESHOLD: float = float(os.getenv("RETRIEVER_SCORE_THRESHOLD", "0.5"))
 
 # Document Splitting Settings (Parent-Child Strategy)
 # Parent Document Settings (Broad context)

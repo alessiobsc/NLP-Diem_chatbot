@@ -12,24 +12,28 @@ from langchain_classic.storage import LocalFileStore, create_kv_docstore
 from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import Runnable, RunnableLambda, RunnablePassthrough
+from langchain_core.runnables import Runnable, RunnableBranch, RunnableLambda, RunnablePassthrough
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_ollama import ChatOllama
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_classic.retrievers.multi_vector import SearchType
+
+from sentence_transformers import CrossEncoder
 
 from config import (
     OLLAMA_CHAT_MODEL,
     LLM_TEMPERATURE,
     PARENT_STORE_DIR,
     EMBEDDING_MODEL_NAME,
+    CROSS_ENCODER_MODEL_NAME,
     CHILD_CHUNK_SIZE,
     CHILD_CHUNK_OVERLAP,
-    RETRIEVER_K,
+    BI_ENCODER_K,
+    CROSS_ENCODER_K,
+    RETRIEVER_SCORE_THRESHOLD,
     DEFAULT_SESSION_ID
 )
-
-print(f"Ollama chat model initialized: {OLLAMA_CHAT_MODEL}")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Shared embedding model (used by both ingestion and app)
@@ -39,6 +43,34 @@ embedding_model = HuggingFaceEmbeddings( # type: ignore
     encode_kwargs={"normalize_embeddings": True},
 )
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Cross-Encoder Reranker model
+# ─────────────────────────────────────────────────────────────────────────────
+reranker = CrossEncoder(CROSS_ENCODER_MODEL_NAME)
+
+def rerank(query: str, documents: List[Document], top_n: int = 3) -> List[Document]:
+    """
+    Reranks documents using a Cross-Encoder model to find the most relevant ones.
+    
+    Args:
+        query (str): The search query.
+        documents (List[Document]): The initial list of retrieved documents.
+        top_n (int): The number of top documents to return.
+
+    Returns:
+        List[Document]: Reranked and filtered documents.
+    """
+    if not documents:
+        return []
+        
+    pairs = [[query, d.page_content] for d in documents]
+    scores = reranker.predict(pairs)
+    ranked = sorted(zip(documents, scores), key=lambda x: x[1], reverse=True)
+    out = []
+    for d, s in ranked[:top_n]:
+        d.metadata["relevance_score"] = float(s)
+        out.append(d)
+    return out
 
 class DiemBrain:
     """
@@ -111,12 +143,16 @@ class DiemBrain:
             vectorstore=vectorstore,
             docstore=parent_doc_store,
             child_splitter=child_splitter,
-            search_kwargs={"k": RETRIEVER_K},
+            search_type=SearchType.similarity_score_threshold,
+            search_kwargs={
+                "k": BI_ENCODER_K,
+                "score_threshold": RETRIEVER_SCORE_THRESHOLD
+            },
         )
 
     def _build_rag_chain(self, retriever: ParentDocumentRetriever) -> Runnable:
         """
-        Builds the complete RAG chain including query rewriting and response generation.
+        Builds the complete RAG chain including query rewriting, retrieval, cross-encoder reranking, and response generation.
 
         Args:
             retriever (ParentDocumentRetriever): The configured document retriever.
@@ -143,13 +179,26 @@ class DiemBrain:
             | RunnableLambda(lambda m: m.content.strip())
         )
 
-        # Core RAG logic: Retrieve -> Format -> Generate
+        # Skip rewrite if history is empty
+        conditional_rewrite_chain = RunnableBranch(
+            (
+                lambda x: not x.get("history"),
+                itemgetter("question")
+            ),
+            rewrite_chain
+        )
+
+        # Core RAG logic: Retrieve -> Rerank -> Format -> Generate
         rag_chain = (
             {
                 "docs": itemgetter("question") | retriever,
                 "question": itemgetter("question"),
                 "history": itemgetter("history"),
             }
+            # Add the reranking step: passing the retrieved docs and query to the cross-encoder
+            | RunnablePassthrough.assign(
+                docs=lambda x: rerank(x["question"], x["docs"], top_n=CROSS_ENCODER_K) if x["docs"] else []
+            )
             | RunnableLambda(self._format_context)
             | RunnableLambda(lambda x: {
                 "answer": self._chat_model.invoke(
@@ -166,7 +215,7 @@ class DiemBrain:
         # Combine rewrite and core RAG pipeline
         return (
             RunnablePassthrough()
-            | RunnablePassthrough.assign(question=rewrite_chain)
+            | RunnablePassthrough.assign(question=conditional_rewrite_chain)
             | rag_chain
         )
 
