@@ -2,16 +2,20 @@ import os
 from operator import itemgetter
 from dotenv import load_dotenv
 from langchain_chroma import Chroma
+from langchain_classic.retrievers import ParentDocumentRetriever
+from langchain_classic.storage import LocalFileStore, create_kv_docstore
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda, RunnablePassthrough
 from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_ollama import ChatOllama
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 load_dotenv()
 
 OLLAMA_CHAT_MODEL = os.getenv("OLLAMA_CHAT_MODEL", "qwen2.5:7b")
+PARENT_STORE_DIR = os.path.join("chroma_diem", "parent_store")
 
 print(f"Ollama chat model: {OLLAMA_CHAT_MODEL}")
 
@@ -19,7 +23,7 @@ print(f"Ollama chat model: {OLLAMA_CHAT_MODEL}")
 # Shared embedding model (used by both ingestion and app)
 # ─────────────────────────────────────────────────────────────────────────────
 embedding_model = HuggingFaceEmbeddings(
-    model_name="BAAI/bge-small-en-v1.5",
+    model_name="intfloat/multilingual-e5-small",
     encode_kwargs={"normalize_embeddings": True}
 )
 
@@ -34,8 +38,12 @@ class DiemBrain:
             temperature=0.1,
         )
 
-        retriever = vectorstore.as_retriever(
-            search_type="similarity",
+        parent_docstore = create_kv_docstore(LocalFileStore(PARENT_STORE_DIR))
+        child_splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=50)
+        retriever = ParentDocumentRetriever(
+            vectorstore=vectorstore,
+            docstore=parent_docstore,
+            child_splitter=child_splitter,
             search_kwargs={"k": 5},
         )
 

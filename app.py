@@ -22,8 +22,13 @@ FORCE_REINDEX = "--reindex" in sys.argv
 db_file = os.path.join(CHROMA_DIR, "chroma.sqlite3")
 
 if FORCE_REINDEX or not os.path.exists(db_file):
-    from ingestion import build_index
-    vectorstore = build_index(embedding_model)
+    from main_ingestion import run_full_pipeline
+    run_full_pipeline(embedding_model)
+    vectorstore = Chroma(
+        collection_name=COLLECTION,
+        embedding_function=embedding_model,
+        persist_directory=CHROMA_DIR,
+    )
 else:
     print("Loading existing Chroma index...")
     vectorstore = Chroma(

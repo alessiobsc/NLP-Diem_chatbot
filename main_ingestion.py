@@ -1,6 +1,5 @@
 import argparse
 import os
-import sys
 
 os.environ.setdefault("PYTHONUNBUFFERED", "1")
 

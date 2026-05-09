@@ -1,5 +1,5 @@
 from langchain_chroma import Chroma
-from brain import embedding_model # Assicurati che il nome sia corretto
+from brain import embedding_model 
 
 vectorstore = Chroma(
     collection_name="diem_knowledge",
