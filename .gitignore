@@ -5,3 +5,4 @@ __pycache__/
 chroma_diem/
 *.pyc
 crawled_urls.json
+crawled_pdfs.json
