@@ -28,6 +28,17 @@ CHROMA_DIR: Path = PROJECT_ROOT / CHROMA_DIR_NAME
 PARENT_STORE_DIR: Path = CHROMA_DIR / "parent_store"
 
 # =============================================================================
+# LOGGING CONFIGURATION
+# =============================================================================
+LOG_LEVEL: str = os.getenv("LOG_LEVEL", "DEBUG")
+LOG_DIR: Path = PROJECT_ROOT / "logs"
+LOG_FILE: Path = LOG_DIR / "chatbot.log"
+# Log rotation settings to prevent infinite growth
+MAX_LOG_SIZE_MB: int = int(os.getenv("MAX_LOG_SIZE_MB", "10"))
+LOG_BACKUP_COUNT: int = int(os.getenv("LOG_BACKUP_COUNT", "5"))
+
+
+# =============================================================================
 # MODEL CONFIGURATION
 # =============================================================================
 # LLM Settings (Ollama)
