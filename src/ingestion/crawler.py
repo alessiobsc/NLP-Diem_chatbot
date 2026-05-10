@@ -20,7 +20,8 @@ OFFERTA_FORMATIVA_PATH = "/didattica/offerta-formativa"
 
 
 def is_pre_2020_url(url: str) -> bool:
-    years = [int(y) for y in re.findall(r"\b(19\d{2}|20[01]\d)\b", url)]
+    normalized = url.replace("_", "/")
+    years = [int(y) for y in re.findall(r"\b(19\d{2}|20[01]\d)\b", normalized)]
     return any(y < 2020 for y in years)
 
 
@@ -59,6 +60,7 @@ def extract_corsi_urls(raw_docs: list) -> list[str]:
     source_docs = [
         d for d in raw_docs
         if OFFERTA_FORMATIVA_PATH in d.metadata.get("source", "")
+        and "?anno=" not in d.metadata.get("source", "")
     ]
     for doc in source_docs:
         try:
@@ -139,8 +141,9 @@ def filter_docs(docs: list) -> list:
         # PDFs are handled by load_pdfs_from_links via PyPDFLoader.
         # RecursiveUrlLoader reads them as binary → garbage in page_content.
         ".pdf",
-        # English versions of Italian pages — duplicate content, IT is canonical.
+        # English/Chinese versions of Italian pages — duplicate content, IT is canonical.
         "/en/",
+        "/zh/",
     )
     return [
         d for d in docs

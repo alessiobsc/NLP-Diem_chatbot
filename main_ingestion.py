@@ -1,4 +1,5 @@
 import argparse
+import datetime
 import os
 
 os.environ.setdefault("PYTHONUNBUFFERED", "1")
@@ -71,11 +72,19 @@ def crawl_phase() -> tuple[list, list]:
 
     # 1b. Crawl docenti.unisa.it
     total_docenti = len(docenti_urls)
+    current_year = datetime.datetime.now().year
     print(f"\n[2/3] Crawling docenti.unisa.it ({total_docenti} faculty pages) ...")
     for i, url in enumerate(docenti_urls, 1):
         base = get_section_base(url)
-        docs = filter_docs(crawl(url, base_url=base, max_depth=2))
-        batch_pdfs = load_pdfs_from_links(docs, seen_pdf_urls)
+        docs = filter_docs(crawl(url, base_url=base, max_depth=3))
+
+        matricola = url.rstrip("/").split("/")[-2]
+        for anno in range(2020, current_year + 1):
+            pub_url = f"https://docenti.unisa.it/{matricola}/ricerca/pubblicazioni?anno={anno}"
+            docs.extend(filter_docs(crawl(pub_url, base_url=base, max_depth=1)))
+
+        non_pub = [d for d in docs if "/pubblicazioni" not in d.metadata.get("source", "")]
+        batch_pdfs = load_pdfs_from_links(non_pub, seen_pdf_urls)
         raw_html_docs.extend(docs)
         pdf_docs.extend(batch_pdfs)
         print(f"  [{i:02d}/{total_docenti}] {url}  ({len(docs)} sub-pages)")
@@ -85,7 +94,7 @@ def crawl_phase() -> tuple[list, list]:
     print(f"\n[3/3] Crawling corsi.unisa.it ({total_corsi} course pages) ...")
     for i, url in enumerate(corsi_urls, 1):
         base = get_section_base(url)
-        docs = filter_docs(crawl(url, base_url=base, max_depth=2))
+        docs = filter_docs(crawl(url, base_url=base, max_depth=3))
         batch_pdfs = load_pdfs_from_links(docs, seen_pdf_urls)
         raw_html_docs.extend(docs)
         pdf_docs.extend(batch_pdfs)
@@ -96,6 +105,9 @@ def crawl_phase() -> tuple[list, list]:
 
 def run_full_pipeline(embedding_model) -> None:
     raw_html_docs, pdf_docs = crawl_phase()
+
+    save_crawled_urls_to_json(raw_html_docs, "crawled_urls.json")
+    save_crawled_pdfs_to_json(pdf_docs, "crawled_pdfs.json")
 
     print(f"\nApplying HTML extractor to {len(raw_html_docs)} HTML documents...")
     for doc in raw_html_docs:
