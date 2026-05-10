@@ -17,6 +17,59 @@ METADATA_DATE_KEYS = (
     "modified", "last_modified", "published", "publish_date", "updated",
 )
 
+# HTML <meta name/property> values that carry a publication or modification date
+_DATE_META_NAMES = frozenset({
+    "date", "article:published_time", "article:modified_time",
+    "dc.date", "dcterms.date", "dcterms.modified",
+    "pubdate", "publishdate",
+})
+
+# lang attribute prefixes considered non-Italian → drop
+NON_ITALIAN_LANG_PREFIXES = ("en", "zh")
+
+
+def extract_html_metadata(html: str) -> dict:
+    """Extract title, language, and date from raw HTML.
+
+    Must be called BEFORE html_extractor() — the DOM is destroyed after that.
+    Returns a dict suitable for doc.metadata.update(). Keys produced:
+      "title"    — text of <title> tag (if present)
+      "language" — <html lang="..."> lowercased (if present)
+      "date"     — content of the first matching <meta> or <time datetime> (if present)
+    "date" maps to an existing key in METADATA_DATE_KEYS so temporal filter picks it up automatically.
+    """
+    meta: dict = {}
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+
+        title_tag = soup.find("title")
+        if title_tag:
+            meta["title"] = title_tag.get_text(strip=True)
+
+        html_tag = soup.find("html")
+        if html_tag:
+            lang = (html_tag.get("lang") or "").strip().lower()
+            if lang:
+                meta["language"] = lang
+
+        for tag in soup.find_all("meta"):
+            name = (tag.get("name") or tag.get("property") or "").lower().strip()
+            if name in _DATE_META_NAMES:
+                content = (tag.get("content") or "").strip()
+                if content:
+                    meta["date"] = content
+                    break
+
+        if "date" not in meta:
+            time_tag = soup.find("time", attrs={"datetime": True})
+            if time_tag:
+                meta["date"] = time_tag["datetime"].strip()
+
+    except Exception:
+        pass
+
+    return meta
+
 
 def clean_text(text: str) -> str:
     text = re.sub(r"[ \t]+", " ", text)

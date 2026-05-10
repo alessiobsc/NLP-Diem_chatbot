@@ -181,18 +181,24 @@ def save_crawled_pdfs_to_json(pdf_docs: list, filename: str) -> None:
 
 
 def save_crawled_urls_to_json(docs: list, filename: str) -> None:
-    """Extract URL and <title> from raw HTML docs and save to JSON."""
+    """Extract URL and <title> from docs and save to JSON.
+
+    Reads title from doc.metadata["title"] if already extracted by
+    extract_html_metadata(); falls back to BeautifulSoup parse when
+    page_content is still raw HTML (e.g. during --full pipeline).
+    """
     entries = []
     for doc in docs:
         url = doc.metadata.get("source", "")
-        title = ""
-        try:
-            soup = BeautifulSoup(doc.page_content, "html.parser")
-            title_tag = soup.find("title")
-            if title_tag:
-                title = title_tag.get_text(strip=True)
-        except Exception:
-            pass
+        title = doc.metadata.get("title", "")
+        if not title:
+            try:
+                soup = BeautifulSoup(doc.page_content, "html.parser")
+                title_tag = soup.find("title")
+                if title_tag:
+                    title = title_tag.get_text(strip=True)
+            except Exception:
+                pass
         entries.append({"url": url, "title": title})
 
     with open(filename, "w", encoding="utf-8") as f:
