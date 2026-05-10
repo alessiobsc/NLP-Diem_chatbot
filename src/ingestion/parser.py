@@ -5,6 +5,9 @@ from bs4 import BeautifulSoup
 from langchain_community.document_loaders import PyPDFLoader
 
 from src.ingestion.crawler import is_pre_2020_url
+from src.logger import get_logger
+
+logger = get_logger(__name__)
 
 YEAR_CUTOFF = 2020
 TEMPORAL_SCAN_CHARS = 2500
@@ -93,9 +96,9 @@ def filter_recent_documents(docs: list) -> list:
         else:
             dropped += 1
             source = doc.metadata.get("source", "unknown source")
-            print(f"  SKIP old document ({reason}): {source}")
+            logger.debug(f"  SKIP old document ({reason}): {source}")
 
-    print(
+    logger.info(
         f"  -> Temporal filter kept {len(kept)}/{len(docs)} documents "
         f"(cutoff year: {YEAR_CUTOFF}, dropped: {dropped})"
     )
@@ -109,6 +112,7 @@ def load_pdfs_from_links(raw_docs: list, seen_urls: set | None = None) -> list:
     """
     seen_urls = seen_urls if seen_urls is not None else set()
     pdf_docs = []
+    logger.info(f"Scanning {len(raw_docs)} documents for PDF links...")
 
     for doc in raw_docs:
         page_url = doc.metadata.get("source", "")
@@ -126,7 +130,7 @@ def load_pdfs_from_links(raw_docs: list, seen_urls: set | None = None) -> list:
                 seen_urls.add(pdf_url)
 
                 if is_pre_2020_url(pdf_url):
-                    print(f"  SKIP pre-2020 PDF: {pdf_url}")
+                    logger.debug(f"  SKIP pre-2020 PDF: {pdf_url}")
                     continue
 
                 try:
@@ -135,10 +139,10 @@ def load_pdfs_from_links(raw_docs: list, seen_urls: set | None = None) -> list:
                         pdf_doc.metadata.setdefault("source", pdf_url)
                         pdf_doc.metadata.setdefault("source_page", page_url)
                     pdf_docs.extend(docs)
-                    print(f"  PDF loaded: {pdf_url} ({len(docs)} pages)")
+                    logger.info(f"  PDF loaded: {pdf_url} ({len(docs)} pages)")
                 except Exception as e:
-                    print(f"  WARNING: skipped PDF {pdf_url}: {e}")
+                    logger.warning(f"  WARNING: skipped PDF {pdf_url}: {e}")
         except Exception as e:
-            print(f"  WARNING: could not inspect PDF links in {page_url}: {e}")
+            logger.warning(f"  WARNING: could not inspect PDF links in {page_url}: {e}")
 
     return pdf_docs
