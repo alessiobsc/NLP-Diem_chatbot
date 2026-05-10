@@ -112,8 +112,8 @@ class DiemBrain:
         )
         self._store: Dict[str, InMemoryChatMessageHistory] = {}
         
-        retriever = self._build_retriever(vectorstore)
-        rag_chain = self._build_rag_chain(retriever)
+        self._retriever = self._build_retriever(vectorstore)
+        rag_chain = self._build_rag_chain(self._retriever)
         
         self.conversational_rag = RunnableWithMessageHistory(
             rag_chain,
@@ -187,6 +187,9 @@ class DiemBrain:
             ),
             rewrite_chain
         )
+
+        self._rag_prompt = rag_prompt
+        self._rewrite_chain = conditional_rewrite_chain
 
         # Core RAG logic: Retrieve -> Rerank -> Format -> Generate
         rag_chain = (
@@ -305,3 +308,43 @@ class DiemBrain:
         except Exception as e:
             print(f"Error during chat processing: {e}")
             return "Mi dispiace, si è verificato un errore durante l'elaborazione della tua richiesta."
+
+    def chat_stream(self, message: str, session_id: str = DEFAULT_SESSION_ID):
+        """
+        Streaming generator: runs full RAG pipeline silently, then yields LLM tokens incrementally.
+        Bypasses RunnableWithMessageHistory and manages history manually.
+        """
+        history = self._get_history(session_id)
+        history_messages = history.messages
+
+        rewritten = self._rewrite_chain.invoke({
+            "question": message,
+            "history": history_messages,
+        }) if history_messages else message
+
+        docs = self._retriever.invoke(rewritten)
+        reranked = rerank(rewritten, docs, top_n=CROSS_ENCODER_K) if docs else []
+
+        context = "\n\n---\n\n".join(d.page_content for d in reranked)
+        prompt_value = self._rag_prompt.invoke({
+            "context": context,
+            "question": rewritten,
+            "history": history_messages,
+        })
+
+        answer = ""
+        try:
+            for chunk in self._chat_model.stream(prompt_value):
+                answer += chunk.content
+                yield answer
+        except Exception as e:
+            print(f"Error during streaming: {e}")
+            yield "Mi dispiace, si è verificato un errore durante la generazione della risposta."
+            return
+
+        history.add_user_message(message)
+        history.add_ai_message(answer)
+
+        sources_md = self._format_sources(reranked)
+        if sources_md:
+            yield answer + sources_md

@@ -46,8 +46,8 @@ brain = DiemBrain(vectorstore)
 # ─────────────────────────────────────────────────────────────────────────────
 # Gradio UI
 # ─────────────────────────────────────────────────────────────────────────────
-def chat_fn(message: str, history: list) -> str:
-    return brain.chat(message, DEFAULT_SESSION_ID)
+def chat_fn(message: str, history: list):
+    yield from brain.chat_stream(message, DEFAULT_SESSION_ID)
 
 
 demo = gr.ChatInterface(
@@ -58,11 +58,14 @@ demo = gr.ChatInterface(
         "degree programs, faculty, research, courses, regulations, and more."
     ),
     examples=[
-        "What degree programs are offered by DIEM?",
-        "Where is DIEM located?",
-        "What research areas are active at DIEM?",
-        "Who is responsible for internationalization at DIEM?",
-        "Which laboratories are available at DIEM?",
+        "Quali corsi di laurea offre il DIEM?",
+        "Dove si trova il DIEM?",
+        "Quali sono le aree di ricerca attive al DIEM?",
+        "Chi è responsabile dell'internazionalizzazione al DIEM?",
+        "Quali laboratori sono disponibili al DIEM?",
+        "Ho preso 18 al TOLC. Posso iscrivermi?",
+        "Qual è il programma del corso di Ingegneria del Software?",
+        "Quali sono gli orari di ricevimento del professore Capuano?"
     ],
     chatbot=gr.Chatbot(height=500),
 )
