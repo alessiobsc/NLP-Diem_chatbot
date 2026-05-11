@@ -179,7 +179,7 @@ class DiemBrain:
         rag_prompt = ChatPromptTemplate.from_messages([
             ("system", SYSTEM_PROMPT),
             ("placeholder", "{history}"),
-            ("human", "Context:\n{context}\n\nQuestion:\n{question}\n\nAnswer:"),
+            ("human", "<context>\n{context}\n</context>\n\n<instruction>\n{question}\n</instruction>"),
         ])
 
         rewrite_prompt = ChatPromptTemplate.from_messages([
@@ -265,7 +265,19 @@ class DiemBrain:
         """
         docs: List[Document] = inputs.get("docs", [])
         logger.debug(f"Formatting context from {len(docs)} reranked documents")
-        context = "\n\n---\n\n".join(doc.page_content for doc in docs)
+
+        formatted_docs = []
+        for doc in docs:
+            source = doc.metadata.get("source", "Unknown Source")
+            block = (
+                "<document>\n"
+                f"<source>{source}</source>\n"
+                f"<content>\n{doc.page_content}\n</content>\n"
+                "</document>"
+            )
+            formatted_docs.append(block)
+
+        context = "\n\n".join(formatted_docs)
         if docs:
             logger.debug(f"Total formatted context length: {len(context)} characters")
         return {**inputs, "context": context}
@@ -369,7 +381,8 @@ class DiemBrain:
         docs = self._retriever.invoke(rewritten)
         reranked = rerank(rewritten, docs, top_n=CROSS_ENCODER_K) if docs else []
 
-        context = "\n\n---\n\n".join(d.page_content for d in reranked)
+        formatted = self._format_context({"docs": reranked, "question": rewritten, "history": history_messages})
+        context = formatted["context"]
         prompt_value = self._rag_prompt.invoke({
             "context": context,
             "question": rewritten,
