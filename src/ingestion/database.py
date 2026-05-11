@@ -101,6 +101,7 @@ class DocumentIndexer:
             collection_name=COLLECTION_NAME,
             embedding_function=self._embedding_model,
             persist_directory=str(CHROMA_DIR),
+            collection_metadata={"hnsw:space": "cosine"},
         )
         
         self._retriever = ParentDocumentRetriever(

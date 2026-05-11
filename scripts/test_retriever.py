@@ -18,7 +18,7 @@ from src.brain import embedding_model
 from config import CHROMA_DIR_NAME, COLLECTION_NAME, PARENT_STORE_DIR, CHILD_CHUNK_SIZE, CHILD_CHUNK_OVERLAP
 
 
-def get_retriever(k: int = 5, score_threshold: float = 0.5) -> ParentDocumentRetriever:
+def get_retriever(k: int = 5, score_threshold: float = 0.7) -> ParentDocumentRetriever:
     """
     Initializes and returns the ParentDocumentRetriever.
     
@@ -33,6 +33,7 @@ def get_retriever(k: int = 5, score_threshold: float = 0.5) -> ParentDocumentRet
         collection_name=COLLECTION_NAME,
         embedding_function=embedding_model,
         persist_directory=CHROMA_DIR_NAME,
+        collection_metadata={"hnsw:space": "cosine"},
     )
     
     parent_doc_store = create_kv_docstore(LocalFileStore(str(PARENT_STORE_DIR)))
@@ -67,8 +68,8 @@ def main() -> None:
             if not query:
                 continue
                 
-            threshold_input = input("Inserisci la soglia di similarità [default 0.5]: ").strip()
-            score_threshold = float(threshold_input) if threshold_input else 0.5
+            threshold_input = input("Inserisci la soglia di similarità [default 0.7]: ").strip()
+            score_threshold = float(threshold_input) if threshold_input else 0.7
             
             k_input = input("Inserisci il numero massimo di risultati (k) [default 5]: ").strip()
             k = int(k_input) if k_input else 5

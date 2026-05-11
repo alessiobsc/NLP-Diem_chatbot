@@ -44,9 +44,11 @@ logger = get_logger(__name__)
 # Shared embedding model (used by both ingestion and app)
 # ─────────────────────────────────────────────────────────────────────────────
 logger.info(f"Initializing embedding model: {EMBEDDING_MODEL_NAME}")
-embedding_model = HuggingFaceEmbeddings( # type: ignore
+embedding_model = HuggingFaceEmbeddings(
     model_name=EMBEDDING_MODEL_NAME,
     encode_kwargs={"normalize_embeddings": True},
+    query_instruction="query: ",
+    embed_instruction="passage: ",
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -365,7 +367,7 @@ class DiemBrain:
                 answer += chunk.content
                 yield answer
         except Exception as e:
-            print(f"Error during streaming: {e}")
+            logger.error(f"Error during streaming: {e}")
             yield "Mi dispiace, si è verificato un errore durante la generazione della risposta."
             return
 
