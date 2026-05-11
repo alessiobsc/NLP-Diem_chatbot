@@ -43,7 +43,7 @@ CROSS_ENCODER_MODEL_NAME: str = os.getenv("CROSS_ENCODER_MODEL_NAME", "cross-enc
 # =============================================================================
 # RAG & VECTOR DATABASE CONFIGURATION
 # =============================================================================
-COLLECTION_NAME: str = "diem_knowledge"
+COLLECTION_NAME: str = "diem_collect_HeaderContext_new_Italiano"
 DEFAULT_SESSION_ID: str = "diem-session"
 
 # Retrieval Settings

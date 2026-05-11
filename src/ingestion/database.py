@@ -5,7 +5,7 @@ Handles the splitting and vectorization of documents using a Parent-Child strate
 
 import os
 import time
-from typing import List, Optional
+from typing import Iterable, List, Optional
 
 from langchain_chroma import Chroma
 from langchain_classic.retrievers import ParentDocumentRetriever
@@ -24,6 +24,58 @@ from config import (
     CHILD_CHUNK_SIZE,
     CHILD_CHUNK_OVERLAP
 )
+
+
+def _get_context_header(doc: Document) -> str:
+    header = doc.metadata.get("context_header", "")
+    return header.strip() if isinstance(header, str) else ""
+
+
+def _strip_context_header(text: str, header: str) -> str:
+    if not header:
+        return text
+
+    stripped = text.lstrip()
+    if stripped.startswith(header):
+        return stripped[len(header):].lstrip()
+    return text
+
+
+def _add_context_header(text: str, header: str) -> str:
+    if not header:
+        return text
+
+    body = _strip_context_header(text, header).lstrip()
+    if not body:
+        return header
+    return f"{header}\n\n{body}"
+
+
+class ContextHeaderTextSplitter(RecursiveCharacterTextSplitter):
+    """
+    Text splitter that prepends each generated child chunk with its context header.
+    """
+
+    def split_documents(self, documents: Iterable[Document]) -> List[Document]:
+        split_docs: List[Document] = []
+
+        for doc in documents:
+            header = _get_context_header(doc)
+            if not header:
+                split_docs.extend(super().split_documents([doc]))
+                continue
+
+            body_doc = Document(
+                page_content=_strip_context_header(doc.page_content, header),
+                metadata=doc.metadata.copy(),
+            )
+            chunks = super().split_documents([body_doc])
+            for chunk in chunks:
+                chunk.page_content = _add_context_header(chunk.page_content, header)
+            split_docs.extend(chunks)
+
+        return split_docs
+
 
 class DocumentIndexer:
     """
@@ -75,10 +127,24 @@ class DocumentIndexer:
             chunk_size=PARENT_CHUNK_SIZE, 
             chunk_overlap=PARENT_CHUNK_OVERLAP
         )
-        self._child_splitter = RecursiveCharacterTextSplitter(
+        self._child_splitter = ContextHeaderTextSplitter(
             chunk_size=CHILD_CHUNK_SIZE, 
             chunk_overlap=CHILD_CHUNK_OVERLAP
         )
+
+    @staticmethod
+    def _add_context_headers_to_documents(docs: List[Document]) -> int:
+        """
+        Ensures each parent document carries its context header in page_content.
+        """
+        updated = 0
+        for doc in docs:
+            header = _get_context_header(doc)
+            if not header:
+                continue
+            doc.page_content = _add_context_header(doc.page_content, header)
+            updated += 1
+        return updated
 
     def _get_collection_count(self) -> Optional[int]:
         """
@@ -109,8 +175,10 @@ class DocumentIndexer:
         print("=" * 60)
         
         parent_docs = self._parent_splitter.split_documents(all_docs)
+        parents_with_header = self._add_context_headers_to_documents(parent_docs)
         total_parents = len(parent_docs)
         print(f"  -> Generated {total_parents} parent documents from {len(all_docs)} sources")
+        print(f"  -> Context headers applied to {parents_with_header} parent documents")
 
         print("\n" + "=" * 60)
         print("PHASE 3 - Embedding child chunks and indexing parents")

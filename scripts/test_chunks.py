@@ -6,16 +6,20 @@ Eseguire DOPO il completamento della pipeline --full.
 import os
 import sys
 from collections import Counter, defaultdict
+from pathlib import Path
 from urllib.parse import urlparse
 
 os.environ.setdefault("PYTHONUNBUFFERED", "1")
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from dotenv import load_dotenv
 load_dotenv()
 
 from config import (
     CHROMA_DIR, COLLECTION_NAME, PARENT_STORE_DIR,
-    EMBEDDING_MODEL_NAME
 )
 
 SEP = "=" * 70
@@ -24,15 +28,10 @@ SEP = "=" * 70
 def load_stores():
     from langchain_chroma import Chroma
     from langchain_classic.storage import LocalFileStore, create_kv_docstore
-    from langchain_huggingface import HuggingFaceEmbeddings
-
-    print("Loading embedding model...")
-    emb = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL_NAME)
 
     print("Connecting to Chroma...")
     vectorstore = Chroma(
         collection_name=COLLECTION_NAME,
-        embedding_function=emb,
         persist_directory=str(CHROMA_DIR),
     )
 

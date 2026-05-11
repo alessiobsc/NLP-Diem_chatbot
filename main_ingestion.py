@@ -45,7 +45,7 @@ def crawl_phase() -> tuple[list, list]:
     raw_loader = RecursiveUrlLoader(
         "https://www.diem.unisa.it/",
         base_url="https://www.diem.unisa.it/",
-        max_depth=3,
+        max_depth=4,
         prevent_outside=True,
         timeout=15,
         check_response_status=True,

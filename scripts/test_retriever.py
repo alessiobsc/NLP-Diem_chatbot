@@ -2,6 +2,13 @@
 Script to test the retrieval of documents from Chroma DB.
 Allows the user to input a query and a score threshold, displaying the retrieved documents.
 """
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from langchain_chroma import Chroma
 from langchain_classic.retrievers import ParentDocumentRetriever
 from langchain_classic.storage import LocalFileStore, create_kv_docstore
