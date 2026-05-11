@@ -43,12 +43,27 @@ logger = get_logger(__name__)
 # ─────────────────────────────────────────────────────────────────────────────
 # Shared embedding model (used by both ingestion and app)
 # ─────────────────────────────────────────────────────────────────────────────
+
+class E5HuggingFaceEmbeddings(HuggingFaceEmbeddings):
+    """
+    Custom wrapper for E5 models to automatically append 
+    'query: ' and 'passage: ' prefixes as required by the model.
+    """
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        # Append "passage: " to all documents during ingestion
+        formatted_texts = [f"passage: {text}" for text in texts]
+        return super().embed_documents(formatted_texts)
+
+    def embed_query(self, text: str) -> List[float]:
+        # Append "query: " to the user question during retrieval
+        formatted_text = f"query: {text}"
+        return super().embed_query(formatted_text)
+
+
 logger.info(f"Initializing embedding model: {EMBEDDING_MODEL_NAME}")
-embedding_model = HuggingFaceEmbeddings(
+embedding_model = E5HuggingFaceEmbeddings(
     model_name=EMBEDDING_MODEL_NAME,
     encode_kwargs={"normalize_embeddings": True},
-    query_instruction="query: ",
-    embed_instruction="passage: ",
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
