@@ -3,10 +3,13 @@ import sys
 from config import CHROMA_DIR_NAME, COLLECTION_NAME, DEFAULT_SESSION_ID
 from dotenv import load_dotenv
 from langchain_chroma import Chroma
-from brain import embedding_model, DiemBrain
+from src.brain import embedding_model, DiemBrain
 import gradio as gr
+from src.logger import get_logger
 
 load_dotenv()
+
+logger = get_logger(__name__)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Configuration
@@ -19,6 +22,7 @@ FORCE_REINDEX = "--reindex" in sys.argv
 db_file = os.path.join(CHROMA_DIR_NAME, "chroma.sqlite3")
 
 if FORCE_REINDEX or not os.path.exists(db_file):
+    logger.info("Building Chroma index from scratch or forced reindex...")
     from main_ingestion import run_full_pipeline
     run_full_pipeline(embedding_model)
     vectorstore = Chroma(
@@ -27,20 +31,22 @@ if FORCE_REINDEX or not os.path.exists(db_file):
         persist_directory=CHROMA_DIR_NAME,
     )
 else:
-    print("Loading existing Chroma index...")
+    logger.info("Loading existing Chroma index...")
     vectorstore = Chroma(
         collection_name=COLLECTION_NAME,
         embedding_function=embedding_model,
         persist_directory=CHROMA_DIR_NAME,
     )
     try:
-        print(f"  -> {vectorstore._collection.count()} chunks in index")
-    except Exception:
-        print("  -> Index loaded")
+        logger.info(f"  -> {vectorstore._collection.count()} chunks in index")
+    except Exception as e:
+        logger.warning(f"  -> Could not count chunks in index: {e}")
+        logger.info("  -> Index loaded")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Brain
 # ─────────────────────────────────────────────────────────────────────────────
+logger.info("Initializing DiemBrain from app.py")
 brain = DiemBrain(vectorstore)
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -71,4 +77,5 @@ demo = gr.ChatInterface(
 )
 
 if __name__ == "__main__":
+    logger.info("Launching Gradio interface")
     demo.launch()

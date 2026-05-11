@@ -5,6 +5,9 @@ from bs4 import BeautifulSoup
 from langchain_community.document_loaders import PyPDFLoader
 
 from src.ingestion.crawler import is_pre_2020_url
+from src.logger import get_logger
+
+logger = get_logger(__name__)
 
 YEAR_CUTOFF = 2020
 TEMPORAL_SCAN_CHARS = 2500
@@ -13,6 +16,59 @@ METADATA_DATE_KEYS = (
     "date", "created", "creation_date", "creationdate", "moddate",
     "modified", "last_modified", "published", "publish_date", "updated",
 )
+
+# HTML <meta name/property> values that carry a publication or modification date
+_DATE_META_NAMES = frozenset({
+    "date", "article:published_time", "article:modified_time",
+    "dc.date", "dcterms.date", "dcterms.modified",
+    "pubdate", "publishdate",
+})
+
+# lang attribute prefixes considered non-Italian → drop
+NON_ITALIAN_LANG_PREFIXES = ("en", "zh")
+
+
+def extract_html_metadata(html: str) -> dict:
+    """Extract title, language, and date from raw HTML.
+
+    Must be called BEFORE html_extractor() — the DOM is destroyed after that.
+    Returns a dict suitable for doc.metadata.update(). Keys produced:
+      "title"    — text of <title> tag (if present)
+      "language" — <html lang="..."> lowercased (if present)
+      "date"     — content of the first matching <meta> or <time datetime> (if present)
+    "date" maps to an existing key in METADATA_DATE_KEYS so temporal filter picks it up automatically.
+    """
+    meta: dict = {}
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+
+        title_tag = soup.find("title")
+        if title_tag:
+            meta["title"] = title_tag.get_text(strip=True)
+
+        html_tag = soup.find("html")
+        if html_tag:
+            lang = (html_tag.get("lang") or "").strip().lower()
+            if lang:
+                meta["language"] = lang
+
+        for tag in soup.find_all("meta"):
+            name = (tag.get("name") or tag.get("property") or "").lower().strip()
+            if name in _DATE_META_NAMES:
+                content = (tag.get("content") or "").strip()
+                if content:
+                    meta["date"] = content
+                    break
+
+        if "date" not in meta:
+            time_tag = soup.find("time", attrs={"datetime": True})
+            if time_tag:
+                meta["date"] = time_tag["datetime"].strip()
+
+    except Exception:
+        pass
+
+    return meta
 
 
 def clean_text(text: str) -> str:
@@ -93,9 +149,9 @@ def filter_recent_documents(docs: list) -> list:
         else:
             dropped += 1
             source = doc.metadata.get("source", "unknown source")
-            print(f"  SKIP old document ({reason}): {source}")
+            logger.debug(f"  SKIP old document ({reason}): {source}")
 
-    print(
+    logger.info(
         f"  -> Temporal filter kept {len(kept)}/{len(docs)} documents "
         f"(cutoff year: {YEAR_CUTOFF}, dropped: {dropped})"
     )
@@ -109,6 +165,7 @@ def load_pdfs_from_links(raw_docs: list, seen_urls: set | None = None) -> list:
     """
     seen_urls = seen_urls if seen_urls is not None else set()
     pdf_docs = []
+    logger.info(f"Scanning {len(raw_docs)} documents for PDF links...")
 
     for doc in raw_docs:
         page_url = doc.metadata.get("source", "")
@@ -126,7 +183,7 @@ def load_pdfs_from_links(raw_docs: list, seen_urls: set | None = None) -> list:
                 seen_urls.add(pdf_url)
 
                 if is_pre_2020_url(pdf_url):
-                    print(f"  SKIP pre-2020 PDF: {pdf_url}")
+                    logger.debug(f"  SKIP pre-2020 PDF: {pdf_url}")
                     continue
 
                 try:
@@ -135,10 +192,10 @@ def load_pdfs_from_links(raw_docs: list, seen_urls: set | None = None) -> list:
                         pdf_doc.metadata.setdefault("source", pdf_url)
                         pdf_doc.metadata.setdefault("source_page", page_url)
                     pdf_docs.extend(docs)
-                    print(f"  PDF loaded: {pdf_url} ({len(docs)} pages)")
+                    logger.info(f"  PDF loaded: {pdf_url} ({len(docs)} pages)")
                 except Exception as e:
-                    print(f"  WARNING: skipped PDF {pdf_url}: {e}")
+                    logger.warning(f"  WARNING: skipped PDF {pdf_url}: {e}")
         except Exception as e:
-            print(f"  WARNING: could not inspect PDF links in {page_url}: {e}")
+            logger.warning(f"  WARNING: could not inspect PDF links in {page_url}: {e}")
 
     return pdf_docs

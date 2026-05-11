@@ -18,7 +18,7 @@
       "persona": "prospective_student",
       "tags": ["degree_programs", "general"],
       "question": "Quali corsi di laurea sono offerti dal DIEM?",
-      "reference": "Il DIEM offre corsi di laurea triennale in Ingegneria Informatica, Ingegneria Elettronica e Ingegneria Gestionale, oltre a vari corsi di laurea magistrale nelle stesse aree e in Information Engineering for Digital Medicine."
+      "reference": "Il DIEM offre corsi di laurea triennale in Ingegneria Informatica, Ingegneria Elettronica, oltre a vari corsi di laurea magistrale nelle stesse aree e in Information Engineering for Digital Medicine."
     },
     {
       "id": "is_prosp_002",
@@ -32,7 +32,7 @@
       "persona": "prospective_student",
       "tags": ["admission", "master", "digital_medicine"],
       "question": "Quali sono i requisiti di accesso alla Laurea Magistrale in Information Engineering for Digital Medicine?",
-      "reference": "L'accesso richiede una laurea triennale (o titolo equivalente) in un'area pertinente di ingegneria o di discipline scientifiche, con specifici CFU minimi in matematica, fisica, informatica e materie ingegneristiche. E richiesta inoltre una conoscenza della lingua inglese (tipicamente B2). I requisiti esatti sono indicati nel regolamento del corso di studio."
+      "reference": "L'accesso richiede una laurea triennale (o titolo equivalente) in un'area pertinente di ingegneria o di discipline scientifiche e una conoscenza della lingua inglese di livello B2. I requisiti esatti sono indicati nel regolamento del corso di studio."
     },
     {
       "id": "is_prosp_004",
@@ -53,7 +53,7 @@
       "id": "is_curr_002",
       "persona": "current_student",
       "tags": ["faculty", "office_hours", "Capuano"],
-      "question": "Quali sono gli orari di ricevimento del Professor Capuano?",
+      "question": "Quali sono gli orari di ricevimento del Professor Capuano?", 
       "reference": "Gli orari di ricevimento del Professor Nicola Capuano sono pubblicati sulla sua pagina docenti.unisa.it. Gli studenti dovrebbero consultare la pagina per gli orari aggiornati, dato che possono cambiare tra un semestre e l'altro."
     },
     {
@@ -271,7 +271,8 @@
       "turns": [
         {"question": "Chi e il Professor Nicola Capuano?", "expected_behavior": "in_scope_answer"},
         {"question": "Quali sono i suoi orari di ricevimento?", "expected_behavior": "in_scope_answer"}
-      ]
+      ],
+      "reference": "Gli orari di ricevimento del Professor Nicola Capuano sono pubblicati sulla sua pagina docenti.unisa.it. Tipicamente il ricevimento si tiene il mercoledi (es. 11:00-13:00), ma gli studenti dovrebbero verificare gli orari aggiornati sulla pagina del docente perche possono cambiare tra un semestre e l'altro."
     },
     {
       "id": "mt_002",
@@ -280,7 +281,8 @@
       "turns": [
         {"question": "Quali corsi di laurea magistrale sono offerti dal DIEM?", "expected_behavior": "in_scope_answer"},
         {"question": "Dimmi di piu sul secondo.", "expected_behavior": "in_scope_answer"}
-      ]
+      ],
+      "reference": "Il riferimento e al secondo corso di laurea magistrale elencato nel turno precedente (tipicamente Information Engineering for Digital Medicine o un altro corso magistrale del DIEM). La risposta dovrebbe descrivere obiettivi formativi, classe di laurea, sbocchi professionali e principali aree disciplinari del corso indicato, restando ancorata al contenuto del sito DIEM."
     },
     {
       "id": "mt_003",
@@ -289,7 +291,8 @@
       "turns": [
         {"question": "Quali laboratori sono disponibili al DIEM?", "expected_behavior": "in_scope_answer"},
         {"question": "E quale si occupa di intelligenza artificiale?", "expected_behavior": "in_scope_answer"}
-      ]
+      ],
+      "reference": "Tra i laboratori del DIEM, le attivita su intelligenza artificiale, machine learning e visione artificiale sono svolte principalmente in laboratori come il Laboratorio di Computazione Naturale (Marcelli), il laboratorio Embedded Intelligent Systems (Capuano) e altri laboratori afferenti alle aree di Cognitive Robotics, Autonomous Driving e Decision Support Systems. La risposta dovrebbe indicare almeno un laboratorio o gruppo di ricerca DIEM dedicato a AI/ML, citando temi presenti nelle pagine ufficiali del dipartimento."
     }
   ]
 }

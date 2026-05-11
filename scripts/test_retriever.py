@@ -14,7 +14,7 @@ from langchain_classic.retrievers import ParentDocumentRetriever
 from langchain_classic.storage import LocalFileStore, create_kv_docstore
 from langchain_classic.retrievers.multi_vector import SearchType
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from brain import embedding_model
+from src.brain import embedding_model
 from config import CHROMA_DIR_NAME, COLLECTION_NAME, PARENT_STORE_DIR, CHILD_CHUNK_SIZE, CHILD_CHUNK_OVERLAP
 
 

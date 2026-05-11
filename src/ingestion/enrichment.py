@@ -5,9 +5,11 @@ import requests
 from dotenv import load_dotenv
 
 from .parser import clean_text
+from src.logger import get_logger
 
 load_dotenv()
 
+logger = get_logger(__name__)
 OLLAMA_MODEL = "llama3.2:3b"
 OLLAMA_ENDPOINT = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434/api/generate")
 _HEADER_CACHE: dict = {}
@@ -226,6 +228,16 @@ RISPOSTA:
         header = normalize_context_header(header, text, url)
     except Exception as e:
         _OLLAMA_DISABLED = True
+        logger.warning(f"Ollama unavailable, using heuristic context headers: {e}")
+        header = normalize_context_header(fallback_context_header(text, url), text, url)
+
+    if not header.lower().startswith("context:"):
+        header = f"Context: {header}"
+
+    # Enforce compactness even if the local model is verbose.
+    words = header.split()
+    if len(words) > 15:
+        header = " ".join(words[:15]).rstrip(".,;:") + "."
         print(f"  WARNING: Ollama unavailable, using heuristic context headers: {e}")
         header = normalize_context_header(fallback_context_header(text, url), text, url)
 
@@ -234,10 +246,10 @@ RISPOSTA:
 
 
 def add_context_headers(docs: list) -> None:
-    print("\nAdding contextual headers with Ollama...")
+    logger.info("Adding contextual headers with Ollama...")
     for i, doc in enumerate(docs, 1):
         source = doc.metadata.get("source", "")
         header = generate_context_header(doc.page_content, source)
         doc.metadata["context_header"] = header
         if i % 100 == 0 or i == len(docs):
-            print(f"  -> {i}/{len(docs)} contextual headers added", flush=True)
+            logger.info(f"  -> {i}/{len(docs)} contextual headers added")

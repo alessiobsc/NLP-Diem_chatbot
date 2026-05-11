@@ -24,6 +24,9 @@ from config import (
     CHILD_CHUNK_SIZE,
     CHILD_CHUNK_OVERLAP
 )
+from src.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 def _get_context_header(doc: Document) -> str:
@@ -114,9 +117,9 @@ class DocumentIndexer:
             os.makedirs(PARENT_STORE_DIR, exist_ok=True)
             parent_store = LocalFileStore(str(PARENT_STORE_DIR))
             self._parent_doc_store = create_kv_docstore(parent_store)
-            print(f"Initialized parent document store at {PARENT_STORE_DIR}")
+            logger.info(f"Initialized parent document store at {PARENT_STORE_DIR}")
         except Exception as e:
-            print(f"Failed to setup storage: {e}")
+            logger.error(f"Failed to setup storage: {e}")
             raise
 
     def _setup_splitters(self) -> None:
@@ -156,7 +159,7 @@ class DocumentIndexer:
         try:
             return self._child_vectorstore._collection.count()
         except Exception as e:
-            print(f"Could not retrieve collection count: {e}")
+            logger.warning(f"Could not retrieve collection count: {e}")
             return None
 
     def index(self, all_docs: List[Document]) -> Chroma:
@@ -170,19 +173,20 @@ class DocumentIndexer:
         Returns:
             Chroma: The populated vector store.
         """
-        print("\n" + "=" * 60)
-        print("PHASE 2 - Starting Parent-Child document splitting")
-        print("=" * 60)
+        logger.info("=" * 60)
+        logger.info("PHASE 2 - Starting Parent-Child document splitting")
+        logger.info("=" * 60)
         
         parent_docs = self._parent_splitter.split_documents(all_docs)
         parents_with_header = self._add_context_headers_to_documents(parent_docs)
         total_parents = len(parent_docs)
-        print(f"  -> Generated {total_parents} parent documents from {len(all_docs)} sources")
-        print(f"  -> Context headers applied to {parents_with_header} parent documents")
+        logger.info(f"  -> Generated {total_parents} parent documents from {len(all_docs)} sources")
 
-        print("\n" + "=" * 60)
-        print("PHASE 3 - Embedding child chunks and indexing parents")
-        print("=" * 60)
+        logger.info(f"  -> Context headers applied to {parents_with_header} parent documents")
+
+        logger.info("=" * 60)
+        logger.info("PHASE 3 - Embedding child chunks and indexing parents")
+        logger.info("=" * 60)
 
         indexed_parent_docs: int = 0
         start_time: float = time.time()
@@ -206,15 +210,14 @@ class DocumentIndexer:
                 child_count = self._get_collection_count()
                 child_info = f", total child chunks in Chroma: {child_count}" if child_count is not None else ""
 
-                print(
+                logger.info(
                     f"  -> {indexed_parent_docs}/{total_parents} parent docs indexed "
                     f"({progress_pct:.1%}); "
                     f"[Batch chunks: {current_chunks}{child_info}] "
-                    f"- Elapsed time: {elapsed_mins:.1f} min",
-                    flush=True
+                    f"- Elapsed time: {elapsed_mins:.1f} min"
                 )
             except Exception as e:
-                print(f"Failed to index batch: {e}")
+                logger.error(f"Failed to index batch: {e}")
                 raise
 
         # Iterate over parent docs and batch them based on estimated child chunks
@@ -234,7 +237,7 @@ class DocumentIndexer:
         # Process any remaining documents in the final batch
         _process_batch(batch, batch_child_chunks)
 
-        print(f"\nIndexing completed successfully. Total Parent documents indexed: {total_parents}")
+        logger.info(f"Indexing completed successfully. Total Parent documents indexed: {total_parents}")
         return self._child_vectorstore
 
 

@@ -271,7 +271,8 @@
       "turns": [
         {"question": "Who is Professor Nicola Capuano?", "expected_behavior": "in_scope_answer"},
         {"question": "What are his office hours?", "expected_behavior": "in_scope_answer"}
-      ]
+      ],
+      "reference": "Professor Nicola Capuano's office hours are published on his docenti.unisa.it page. They typically take place on Wednesdays (e.g. 11:00-13:00), but students should verify the up-to-date schedule on the professor's page as it may change between semesters."
     },
     {
       "id": "mt_002",
@@ -280,7 +281,8 @@
       "turns": [
         {"question": "What Master's degree programs are offered by DIEM?", "expected_behavior": "in_scope_answer"},
         {"question": "Tell me more about the second one.", "expected_behavior": "in_scope_answer"}
-      ]
+      ],
+      "reference": "The reference is to the second Master's program listed in the previous turn (typically Information Engineering for Digital Medicine or another DIEM master's). The answer should describe its educational goals, degree class, career outcomes, and main disciplinary areas, grounded in the DIEM website content."
     },
     {
       "id": "mt_003",
@@ -289,7 +291,8 @@
       "turns": [
         {"question": "Which laboratories are available at DIEM?", "expected_behavior": "in_scope_answer"},
         {"question": "And which one focuses on artificial intelligence?", "expected_behavior": "in_scope_answer"}
-      ]
+      ],
+      "reference": "Among DIEM laboratories, work on artificial intelligence, machine learning and computer vision is carried out mainly in labs such as the Natural Computation Lab (Marcelli), the Embedded Intelligent Systems lab (Capuano), and other groups working on Cognitive Robotics, Autonomous Driving and Decision Support Systems. The answer should mention at least one DIEM lab or research group dedicated to AI/ML, citing themes present in the department's official pages."
     }
   ]
 }

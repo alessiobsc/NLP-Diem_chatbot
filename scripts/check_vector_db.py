@@ -10,6 +10,7 @@ from pathlib import Path
 os.environ.setdefault("PYTHONUNBUFFERED", "1")
 
 from langchain_chroma import Chroma
+from src.brain import embedding_model
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:

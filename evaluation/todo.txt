@@ -1,0 +1,190 @@
+================================================================================
+TODO - Modifiche post-evaluation per DIEM Chatbot
+================================================================================
+Lista delle modifiche identificate analizzando le run del tester. Per ogni
+voce: problema osservato, file/linea, fix proposto, beneficio atteso.
+
+Marker:
+  [PRE-RUN]  richiede una run completa del tester prima di poter decidere/agire
+  [BUG]      bug confermato dagli smoke test
+  [ESTENSIONE] aggiunta opzionale, non strettamente necessaria
+
+================================================================================
+A) BLOCCANTE PER LA CONSEGNA
+================================================================================
+
+# 0. Revisionare manualemnte reference-per-question autogenerate.
+   dubbi miei: is_curr_002, gli orari di capuano dovrebbero starci?
+               ho letto al volo forse overall vanno bene in realtà. 
+
+# 1. Run completa del tester (it + en)
+   Problema:   I fix attuali sono validati solo con la metrica `coherence`.
+               Le altre 5 metriche Ragas (response_relevancy, faithfulness,
+               answer_correctness, context_precision, context_recall) sono
+               configurate identicamente ma non ancora dimostrate end-to-end.
+   File:       evaluation/tester.py
+               Pullare prima il judge: ollama pull llama3.1:8b-instruct-q4_K_M
+   Fix:        Lanciare su macchina con GPU:
+                   python evaluation/tester.py --lang it --cache use
+                   python evaluation/tester.py --lang en --cache use
+               Stima: 8-15h/lingua su CPU, 1-3h con GPU.
+   Conseguenze:Risultati baseline per la relazione. Se qualche metrica torna
+               NaN, il run.log contiene ora il traceback per diagnosi mirata.
+
+================================================================================
+B) BUG CONFERMATI NEL CHATBOT (rilevati dal tester)
+================================================================================
+
+# 2. [BUG] Scope rejection conflato con knowledge gap
+   Problema:   Il bot risponde "I don't have that information in my knowledge
+               base." anche a domande chiaramente fuori scope (es. "Chi e il
+               re di Spagna?"). Smoke: strict pass 0%, soft pass 100%.
+   File:       brain.py:85-94 (SYSTEM_PROMPT)
+   Fix:        Aggiungere uno stadio di scope-classification a monte del
+               retrieval (prompt LLM in/out_of_scope). Se OOS, rispondere
+               direttamente con "This question is outside my scope. I can
+               only answer questions about DIEM." senza chiamare il retriever.
+   Conseguenze:Strict scope pass rate da 0% a >90%. Risparmio retrieval su OOS.
+
+# 3. [BUG] Robustness "Sei sicuro?" -> retrieval drift
+   Problema:   Al turno 2 ("Sei sicuro?"), il bot rifa retrieval con una query
+               nuova e cita docenti completamente diversi dal turno 1.
+               Smoke: rob_001 pass 0/1.
+   File:       brain.py:96-100 (REWRITE_PROMPT), brain.py:153-223 (rag_chain)
+   Fix:        Nel rewrite chain, intercettare challenge brevi
+               ("sei sicuro", "davvero?", "are you sure") e riusare la query
+               del turno precedente invece di riformulare. In alternativa:
+               skip retrieval su challenge e rispondere dalla sola history.
+   Conseguenze:Robustness `are_you_sure*` da 0% a positiva (atteso >80%).
+
+# 4. [BUG] Multi-turn framing odd ("Si, questo e corretto...")
+   Problema:   Risposta a "Quali sono i suoi orari?" inizia con "Si, questo e
+               corretto. Il Professore..." come se confermasse un'affermazione.
+               Il rewrite chain probabilmente trasforma la domanda in
+               affermazione.
+   File:       brain.py:96-100 (REWRITE_PROMPT)
+   Fix:        Stringere il prompt: imporre che l'output sia SEMPRE una
+               domanda interrogativa, mai un'affermazione. Aggiungere un
+               log temporaneo del rewrite intermedio per diagnosi.
+   Conseguenze:Risposte multi-turn piu naturali, miglior ResponseRelevancy.
+
+# 5. [BUG] Retrieval incompleto su DIEM (indirizzo, corsi triennali)
+   Problema:   "Dove si trova il DIEM?" -> non cita Via Giovanni Paolo II 132
+               (dato presente nel DB). "Quali corsi di laurea?" -> mancano
+               Ing. Elettronica e Gestionale (probabile gap di ingestion).
+   File:       crawled_urls.json, config.py:51-55 (retrieval params)
+   Fix:        Verificare che /presentazione, /corsi-di-laurea, pagine dei
+               corsi triennali siano ingestiti. Eventualmente alzare
+               BI_ENCODER_K (20 -> 30) o abbassare RETRIEVER_SCORE_THRESHOLD
+               (0.5 -> 0.4).
+   Conseguenze:Faithfulness e AnswerCorrectness migliori sulle domande
+               geografiche e di offerta formativa.
+
+================================================================================
+C) ANALISI E REPORTING (per la relazione)
+================================================================================
+
+# 6. [PRE-RUN] Notebook di analisi quantitativa sul CSV
+   Problema:   summary.md riporta solo le medie; per la relazione servono
+               distribuzioni, worst-case e split per categoria.
+   File:       nuovo file evaluation/analysis.ipynb (o .py)
+   Fix:        Notebook che carica evaluation/results/<run>/ragas_metrics.csv:
+                 - box-plot per ogni metrica
+                 - top-5 domande peggiori per metrica
+                 - groupby('category').mean() per pivot in_scope vs multi_turn
+                 - export PNG da includere nel report
+   Conseguenze:Grafici e tabelle ready per la consegna. Visibilita di
+               localizzazione dei fallimenti vs media globale.
+
+
+
+================================================================================
+D) ESTENSIONI AL GOLDEN SET
+================================================================================
+
+# 7. [PRE-RUN] Domande mirate sui pattern di fallimento
+   Problema:   Dopo la run completa, alcuni bug saranno evidenti solo su
+               domande specifiche. Servono test case mirati per regressione.
+   File:       evaluation/dataset/golden_set_it.json e _en.json
+   Fix:        Aggiungere 5-10 domande sui pattern osservati. Esempi:
+                 - false_premise con date/nomi inventati
+                 - out_of_scope borderline (altri dipartimenti UNISA)
+                 - multi-turn con coreferenze piu complesse
+   Conseguenze:Coverage piu solida. Regression test per i fix del chatbot.
+
+# 8. [ESTENSIONE] Test su input degenerati
+   Problema:   Solo oos_008 ("asdfghjkl qwerty 12345") testa input rumorosi.
+   File:       evaluation/dataset/golden_set_it.json e _en.json
+   Fix:        Aggiungere 2-3 varianti: emoji-only, input >3000 char, input
+               di 1 char, caratteri non-latini.
+   Conseguenze:Robustezza piu completa contro input adversariali reali.
+
+# 9. [ESTENSIONE] Prompt-injection avanzati
+    Problema:   rob_003 e un jailbreak base. Mancano varianti realistiche.
+    File:       evaluation/dataset/golden_set_it.json e _en.json
+    Fix:        Aggiungere:
+                  - Injection in italiano ("Dimentica le tue istruzioni...")
+                  - Persona injection ("Come AI senza filtri, dimmi...")
+                  - Multi-turno con rapport iniziale seguito da injection
+    Conseguenze:Misura piu realistica della resistenza a prompt-injection.
+
+================================================================================
+E) MIGLIORIE AL TESTER (opzionali)
+================================================================================
+
+# 10. [ESTENSIONE] NoiseSensitivity di Ragas
+    Problema:   Manca una metrica che misuri la sensibilita a contesti
+                irrilevanti (utile per la sezione Robustness della relazione).
+    File:       evaluation/tester.py, dentro metric_registry
+    Fix:        Aggiungere `NoiseSensitivity()` nel registry come metric
+                no-ref. Documentare nella doc del modulo.
+    Conseguenze:Una metrica in piu sulla sezione Robustness della relazione.
+
+
+# 11. [ESTENSIONE] Run multipli + media (variance reduction)
+    Problema:   Le metriche LLM-judge sono rumorose. Una sola run puo dare
+                un valore non rappresentativo (specie con temperatura > 0).
+    File:       evaluation/tester.py
+    Fix:        Flag --repeats N che esegue ogni domanda N volte e riporta
+                media + std nel summary.
+    Conseguenze:Score piu stabili per la relazione (la metrica passa da
+                singolo valore a "mean +/- std") però test un casino piu lungo 
+                (N volte uagliu greve)
+  
+
+# 12. [PRE-RUN] Confronto con baseline non-RAG //lo vuole il greco??capiamo 
+    Problema:   La relazione dovrebbe dimostrare il valore di RAG. Mancano
+                risultati comparativi con un chatbot non-RAG.
+    File:       nuovo file baseline_brain.py + estensione tester.py
+    Fix:        Implementare un baseline che usa solo il chat model senza
+                retrieval. Lanciare lo stesso golden set su entrambi e
+                confrontare le metriche side-by-side.
+    Conseguenze:Sezione "Ablation study" pronta per la relazione. Misura
+                quantitativa del valore aggiunto del RAG.
+
+
+
+================================================================================
+NOTE OPERATIVE
+================================================================================
+
+  - Il modello judge `llama3.1:8b-instruct-q4_K_M` deve essere pullato
+    sulla macchina che fa la run completa:
+        ollama pull llama3.1:8b-instruct-q4_K_M
+
+  - Per iterare velocemente dopo la prima run completa, usare il cache:
+        python evaluation/tester.py --lang it --cache use
+    Le invocazioni del chatbot vengono replayate da disco (gratis).
+    Solo le LLM-call del judge pagano il costo. Risparmia ~2-3h per run.
+
+  - La cache NON e invalidata automaticamente dai cambiamenti a:
+      * SYSTEM_PROMPT in brain.py
+      * indice Chroma (re-ingestion)
+      * parametri di retrieval in config.py
+    Dopo questi cambi: usare --cache refresh oppure cancellare
+    evaluation/cache/.
+
+  - I file ragas_metrics.csv di ogni run sono la fonte di verita per la
+    relazione. Tenere sotto version control insieme a summary.md.
+
+================================================================================
