@@ -35,9 +35,15 @@ from config import (
     DEFAULT_SESSION_ID
 )
 
+from src.prompts import SYSTEM_PROMPT, REWRITE_PROMPT
+from src.logger import get_logger
+
+logger = get_logger(__name__)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Shared embedding model (used by both ingestion and app)
 # ─────────────────────────────────────────────────────────────────────────────
+logger.info(f"Initializing embedding model: {EMBEDDING_MODEL_NAME}")
 embedding_model = HuggingFaceEmbeddings( # type: ignore
     model_name=EMBEDDING_MODEL_NAME,
     encode_kwargs={"normalize_embeddings": True},
@@ -46,6 +52,7 @@ embedding_model = HuggingFaceEmbeddings( # type: ignore
 # ─────────────────────────────────────────────────────────────────────────────
 # Cross-Encoder Reranker model
 # ─────────────────────────────────────────────────────────────────────────────
+logger.info(f"Initializing reranker model: {CROSS_ENCODER_MODEL_NAME}")
 reranker = CrossEncoder(CROSS_ENCODER_MODEL_NAME)
 
 def rerank(query: str, documents: List[Document], top_n: int = 3) -> List[Document]:
@@ -61,15 +68,20 @@ def rerank(query: str, documents: List[Document], top_n: int = 3) -> List[Docume
         List[Document]: Reranked and filtered documents.
     """
     if not documents:
+        logger.debug(f"No documents to rerank for query: '{query}'")
         return []
-        
+    
+    logger.debug(f"Reranking {len(documents)} documents for query: '{query}'")
     pairs = [[query, d.page_content] for d in documents]
     scores = reranker.predict(pairs)
     ranked = sorted(zip(documents, scores), key=lambda x: x[1], reverse=True)
     out = []
-    for d, s in ranked[:top_n]:
+    for i, (d, s) in enumerate(ranked[:top_n]):
         d.metadata["relevance_score"] = float(s)
+        logger.debug(f"Reranked rank {i+1}: score={s:.4f}, source={d.metadata.get('source', 'Unknown')}")
         out.append(d)
+    
+    logger.info(f"Selected top {len(out)} documents after reranking")
     return out
 
 class DiemBrain:
@@ -82,23 +94,6 @@ class DiemBrain:
     3. Building the execution chain with query rewriting and history management.
     """
 
-    SYSTEM_PROMPT = (
-        "You are a helpful assistant for the DIEM department "
-        "(Department of Information and Electrical Engineering and Applied Mathematics) "
-        "at the University of Salerno, Italy. "
-        "Answer questions using ONLY the provided context. Do not use prior knowledge. "
-        "If the answer is not in the context, say: "
-        "'I don't have that information in my knowledge base.' "
-        "If the question is unrelated to DIEM or the University of Salerno, say: "
-        "'This question is outside my scope. I can only answer questions about DIEM.'"
-    )
-
-    REWRITE_PROMPT = (
-        "Rewrite the user's question into a self-contained search query using the chat history. "
-        "Resolve all pronouns and references (e.g. 'it', 'they', 'that professor'). "
-        "Return ONLY the rewritten query."
-    )
-
     def __init__(self, vectorstore: Chroma) -> None:
         """
         Initializes the DiemBrain with the specified vector store.
@@ -106,6 +101,7 @@ class DiemBrain:
         Args:
             vectorstore (Chroma): The Chroma vector store used for document retrieval.
         """
+        logger.info(f"Initializing DiemBrain with model: {OLLAMA_CHAT_MODEL} (temp={LLM_TEMPERATURE})")
         self._chat_model = ChatOllama(
             model=OLLAMA_CHAT_MODEL,
             temperature=LLM_TEMPERATURE,
@@ -122,6 +118,7 @@ class DiemBrain:
             output_messages_key="answer",
             history_messages_key="history",
         )
+        logger.info("DiemBrain initialization complete")
 
     def _build_retriever(self, vectorstore: Chroma) -> ParentDocumentRetriever:
         """
@@ -133,6 +130,7 @@ class DiemBrain:
         Returns:
             ParentDocumentRetriever: Configured retriever instance.
         """
+        logger.debug(f"Building ParentDocumentRetriever (chunk_size={CHILD_CHUNK_SIZE}, overlap={CHILD_CHUNK_OVERLAP})")
         parent_doc_store = create_kv_docstore(LocalFileStore(str(PARENT_STORE_DIR)))
         child_splitter = RecursiveCharacterTextSplitter(
             chunk_size=CHILD_CHUNK_SIZE, 
@@ -160,30 +158,44 @@ class DiemBrain:
         Returns:
             Runnable: The executable LangChain runnable sequence.
         """
+        logger.debug("Building RAG chain")
         rag_prompt = ChatPromptTemplate.from_messages([
-            ("system", self.SYSTEM_PROMPT),
+            ("system", SYSTEM_PROMPT),
             ("placeholder", "{history}"),
             ("human", "Context:\n{context}\n\nQuestion:\n{question}\n\nAnswer:"),
         ])
 
         rewrite_prompt = ChatPromptTemplate.from_messages([
-            ("system", self.REWRITE_PROMPT),
+            ("system", REWRITE_PROMPT),
             ("placeholder", "{history}"),
             ("human", "{question}"),
         ])
+
+        def _log_rewrite(q: str) -> str:
+            logger.info(f"Rewritten query using history: '{q}'")
+            return q
+            
+        def _log_skip_rewrite(x: Dict[str, Any]) -> str:
+            logger.debug(f"Skipping query rewrite (empty history). Original query: '{x['question']}'")
+            return x["question"]
+
+        def _log_retrieved_docs(docs: List[Document]) -> List[Document]:
+            logger.info(f"Retriever fetched {len(docs)} documents")
+            return docs
 
         # Chain to rewrite the query using context from history
         rewrite_chain = (
             rewrite_prompt
             | self._chat_model
             | RunnableLambda(lambda m: m.content.strip())
+            | RunnableLambda(_log_rewrite)
         )
 
         # Skip rewrite if history is empty
         conditional_rewrite_chain = RunnableBranch(
             (
                 lambda x: not x.get("history"),
-                itemgetter("question")
+                RunnableLambda(_log_skip_rewrite)
             ),
             rewrite_chain
         )
@@ -194,7 +206,7 @@ class DiemBrain:
         # Core RAG logic: Retrieve -> Rerank -> Format -> Generate
         rag_chain = (
             {
-                "docs": itemgetter("question") | retriever,
+                "docs": itemgetter("question") | retriever | RunnableLambda(_log_retrieved_docs),
                 "question": itemgetter("question"),
                 "history": itemgetter("history"),
             }
@@ -235,7 +247,10 @@ class DiemBrain:
             Dict[str, Any]: Inputs augmented with the 'context' string.
         """
         docs: List[Document] = inputs.get("docs", [])
+        logger.debug(f"Formatting context from {len(docs)} reranked documents")
         context = "\n\n---\n\n".join(doc.page_content for doc in docs)
+        if docs:
+            logger.debug(f"Total formatted context length: {len(context)} characters")
         return {**inputs, "context": context}
 
 
@@ -250,7 +265,11 @@ class DiemBrain:
             InMemoryChatMessageHistory: The chat history object.
         """
         if session_id not in self._store:
+            logger.info(f"Creating new chat history for session ID: {session_id}")
             self._store[session_id] = InMemoryChatMessageHistory()
+        else:
+            logger.debug(f"Retrieved existing chat history for session ID: {session_id}")
+            logger.debug(f"Current history length: {len(self._store[session_id].messages)} messages")
         return self._store[session_id]
 
 
@@ -265,6 +284,7 @@ class DiemBrain:
             str: Formatted markdown string of sources, or empty string if none.
         """
         if not sources:
+            logger.debug("No sources found to format")
             return ""
 
         seen_urls = set()
@@ -277,8 +297,10 @@ class DiemBrain:
                 unique_urls.append(url)
                 
         if unique_urls:
+            logger.debug(f"Extracted {len(unique_urls)} unique source URLs out of {len(sources)} documents")
             return "\n\n**Sources:**\n" + "\n".join(f"- {url}" for url in unique_urls)
             
+        logger.debug("Documents had no valid source metadata")
         return ""
 
 
@@ -293,6 +315,8 @@ class DiemBrain:
         Returns:
             str: The generated response, potentially including sources.
         """
+        logger.info(f"--- New chat request | Session: {session_id} ---")
+        logger.debug(f"User message: '{message}'")
         try:
             result = self.conversational_rag.invoke(
                 {"question": message},
@@ -302,11 +326,14 @@ class DiemBrain:
             answer: str = result["answer"]
             sources: List[Document] = result.get("sources", [])
             
+            logger.info("Chat message processed successfully")
+            logger.debug(f"Generated answer (length={len(answer)}): {answer[:100]}...")
+
             formatted_sources = self._format_sources(sources)
             return answer + formatted_sources
             
         except Exception as e:
-            print(f"Error during chat processing: {e}")
+            logger.exception(f"Error during chat processing: {e}")
             return "Mi dispiace, si è verificato un errore durante l'elaborazione della tua richiesta."
 
     def chat_stream(self, message: str, session_id: str = DEFAULT_SESSION_ID):

@@ -7,6 +7,10 @@ import requests
 from bs4 import BeautifulSoup
 from langchain_community.document_loaders import RecursiveUrlLoader
 
+from src.logger import get_logger
+
+logger = get_logger(__name__)
+
 HTML_LINK_REGEX = r"""<a\s+(?:[^>]*?\s+)?href=["']([^"']*)["']"""
 
 EXCLUDE_DIRS = [
@@ -39,6 +43,7 @@ def get_section_base(url: str) -> str:
 
 def crawl(start_url: str, base_url: str, max_depth: int = 2) -> list:
     try:
+        logger.debug(f"Crawling {start_url} with max depth {max_depth}")
         loader = RecursiveUrlLoader(
             start_url,
             base_url=base_url,
@@ -51,7 +56,7 @@ def crawl(start_url: str, base_url: str, max_depth: int = 2) -> list:
         )
         return loader.load()
     except Exception as e:
-        print(f"  FAILED {start_url}: {e}")
+        logger.warning(f"  FAILED {start_url}: {e}")
         return []
 
 
@@ -74,6 +79,7 @@ def extract_corsi_urls(raw_docs: list) -> list[str]:
                         corsi.add(f"{parsed.scheme}://{parsed.netloc}/{first_seg}")
         except Exception:
             pass
+    logger.info(f"Extracted {len(corsi)} course URLs")
     return sorted(corsi)
 
 
@@ -88,6 +94,7 @@ def extract_diem_faculty_urls() -> list[str]:
     link — skips matricole whose profile page is an empty stub.
     """
     try:
+        logger.info(f"Fetching faculty list from {DIEM_PERSONALE_URL}")
         resp = requests.get(DIEM_PERSONALE_URL, timeout=15)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
@@ -102,7 +109,7 @@ def extract_diem_faculty_urls() -> list[str]:
                 rubrica_links[m.group(1)] = href
 
         matricole = sorted(rubrica_links)
-        print(f"  -> {len(matricole)} matricole found on personale page, validating via rubrica...")
+        logger.info(f"  -> {len(matricole)} matricole found on personale page, validating via rubrica...")
 
         urls: list[str] = []
         for i, mid in enumerate(matricole, 1):
@@ -115,17 +122,17 @@ def extract_diem_faculty_urls() -> list[str]:
                     for a in rubrica_soup.find_all("a", href=True)
                 )
                 status = "OK" if has_profile else "SKIP (no profile)"
-                print(f"    [{i:02d}/{len(matricole)}] {mid}: {status}")
+                logger.debug(f"    [{i:02d}/{len(matricole)}] {mid}: {status}")
                 if has_profile:
                     urls.append(f"https://docenti.unisa.it/{mid}/home")
             except Exception as e:
-                print(f"    [{i:02d}/{len(matricole)}] {mid}: ERROR {e} — skipping")
+                logger.warning(f"    [{i:02d}/{len(matricole)}] {mid}: ERROR {e} — skipping")
             time.sleep(0.5)
 
-        print(f"  -> {len(urls)}/{len(matricole)} faculty URLs validated")
+        logger.info(f"  -> {len(urls)}/{len(matricole)} faculty URLs validated")
         return urls
     except Exception as e:
-        print(f"  WARNING: could not fetch faculty list from personale page: {e}")
+        logger.error(f"  WARNING: could not fetch faculty list from personale page: {e}")
         return []
 
 
@@ -145,11 +152,13 @@ def filter_docs(docs: list) -> list:
         "/en/",
         "/zh/",
     )
-    return [
+    filtered = [
         d for d in docs
         if not any(p in d.metadata.get("source", "") for p in SKIP_SUBSTRINGS)
         and not is_pre_2020_url(d.metadata.get("source", ""))
     ]
+    logger.debug(f"Filtered {len(docs) - len(filtered)} documents")
+    return filtered
 
 
 def save_crawled_pdfs_to_json(pdf_docs: list, filename: str) -> None:
@@ -168,7 +177,7 @@ def save_crawled_pdfs_to_json(pdf_docs: list, filename: str) -> None:
     entries = sorted(pdfs.values(), key=lambda x: x["url"])
     with open(filename, "w", encoding="utf-8") as f:
         json.dump(entries, f, ensure_ascii=False, indent=2)
-    print(f"  -> Saved {len(entries)} PDF sources ({len(pdf_docs)} pages total) to {filename}")
+    logger.info(f"  -> Saved {len(entries)} PDF sources ({len(pdf_docs)} pages total) to {filename}")
 
 
 def save_crawled_urls_to_json(docs: list, filename: str) -> None:
@@ -188,4 +197,4 @@ def save_crawled_urls_to_json(docs: list, filename: str) -> None:
 
     with open(filename, "w", encoding="utf-8") as f:
         json.dump(entries, f, ensure_ascii=False, indent=2)
-    print(f"  -> Saved {len(entries)} URLs to {filename}")
+    logger.info(f"  -> Saved {len(entries)} URLs to {filename}")
