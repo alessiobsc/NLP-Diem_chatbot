@@ -129,7 +129,7 @@ from langchain_chroma import Chroma  # noqa: E402
 from langchain_core.documents import Document  # noqa: E402
 from langchain_ollama import ChatOllama  # noqa: E402
 
-from brain import DiemBrain, embedding_model  # noqa: E402
+from src.brain import DiemBrain, embedding_model  # noqa: E402
 from config import CHROMA_DIR, COLLECTION_NAME, LLM_TEMPERATURE, OLLAMA_CHAT_MODEL  # noqa: E402
 
 # ``evaluation/`` is implicitly on sys.path when running ``python
