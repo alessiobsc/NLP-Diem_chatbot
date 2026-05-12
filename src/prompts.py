@@ -43,7 +43,7 @@ REWRITE_PROMPT = (
 CONTEXT_HEADER_PROMPT = """
 ROLE: Assistant for Academic Data Indexing.
 TASK: Analyze the provided text from the University of Salerno, DIEM department.
-OUTPUT: A single concise sentence, max 15 words, identifying the subject and context.
+OUTPUT: A single informative sentence in Italian, around 30-45 words when enough evidence is available, identifying the subject and context.
 
 CONTEXT RULES:
 If it is a person: "Profile and contact info of Prof. [Name] (DIEM)."

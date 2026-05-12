@@ -6,11 +6,12 @@ from dotenv import load_dotenv
 
 from .parser import clean_text
 from src.logger import get_logger
+from src.prompts import CONTEXT_HEADER_PROMPT
 
 load_dotenv()
 
 logger = get_logger(__name__)
-OLLAMA_MODEL = "llama3.2:3b"
+OLLAMA_MODEL = os.getenv("OLLAMA_ENRICHMENT_MODEL", "llama3.2:3b")
 OLLAMA_ENDPOINT = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434/api/generate")
 _HEADER_CACHE: dict = {}
 _OLLAMA_DISABLED = False
@@ -166,6 +167,12 @@ def normalize_context_header(header: str, text: str, url: str) -> str:
     return header
 
 
+def ensure_context_prefix(header: str) -> str:
+    if not header.lower().startswith("context:"):
+        return f"Context: {header}"
+    return header
+
+
 def generate_context_header(text: str, url: str) -> str:
     global _OLLAMA_DISABLED
     cache_key = (url, text[:500])
@@ -174,43 +181,12 @@ def generate_context_header(text: str, url: str) -> str:
 
     if _OLLAMA_DISABLED:
         header = normalize_context_header(fallback_context_header(text, url), text, url)
+        header = ensure_context_prefix(header)
         _HEADER_CACHE[cache_key] = header
         return header
 
     header_context = build_header_context(text, url)
-    prompt = f"""
-RUOLO: Assistente per l'indicizzazione RAG del chatbot DIEM.
-COMPITO: Scrivi un header contestuale per i chunk di un documento del DIEM dell'Universita di Salerno.
-OUTPUT: Una sola frase in italiano, 30-45 parole quando ci sono prove sufficienti.
-
-La frase deve iniziare con il tipo documento piu adatto, scegliendo tra:
-- Avviso DIEM
-- Scheda insegnamento
-- Profilo docente
-- Pagina corso di laurea
-- Regolamento
-- Pagina pubblicazioni
-- Pagina progetto/laboratorio
-- Pagina DIEM
-
-INCLUDI QUANDO DISPONIBILE:
-- oggetto specifico: nome insegnamento, docente, corso di laurea, regolamento, progetto, laboratorio, evento o area di ricerca
-- relazione con il DIEM: didattica, ricerca, avvisi, contatti, ricevimento, servizi agli studenti, orientamento o informazioni amministrative
-- dettagli distintivi: anno accademico, data, sede, aula, pubblico destinatario, sezione o corso di laurea
-
-REGOLE:
-Non inventare nomi, titoli, date o argomenti.
-Usa solo informazioni presenti nel testo o nell'URL.
-Non usare frasi meta come "la knowledge base fornisce informazioni", "questa pagina descrive" o "il documento contiene".
-Non iniziare con "Context:" o "Contesto:".
-Restituisci solo la frase finale, senza spiegazioni, elenchi, virgolette o etichette extra.
-Preferisci un header specifico a uno generico sul dipartimento.
-
-EVIDENZE SELEZIONATE DAL DOCUMENTO:
-{header_context}
-
-RISPOSTA:
-""".strip()
+    prompt = CONTEXT_HEADER_PROMPT.format(text=header_context, url=url)
 
     try:
         response = requests.post(
@@ -231,15 +207,7 @@ RISPOSTA:
         logger.warning(f"Ollama unavailable, using heuristic context headers: {e}")
         header = normalize_context_header(fallback_context_header(text, url), text, url)
 
-    if not header.lower().startswith("context:"):
-        header = f"Context: {header}"
-
-    # Enforce compactness even if the local model is verbose.
-    words = header.split()
-    if len(words) > 15:
-        header = " ".join(words[:15]).rstrip(".,;:") + "."
-        print(f"  WARNING: Ollama unavailable, using heuristic context headers: {e}")
-        header = normalize_context_header(fallback_context_header(text, url), text, url)
+    header = ensure_context_prefix(header)
 
     _HEADER_CACHE[cache_key] = header
     return header

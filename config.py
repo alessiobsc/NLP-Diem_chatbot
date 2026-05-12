@@ -46,7 +46,7 @@ OLLAMA_CHAT_MODEL: str = os.getenv("OLLAMA_CHAT_MODEL", "qwen2.5:7b")
 LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.1"))
 
 # Embedding Model Settings (HuggingFace)
-EMBEDDING_MODEL_NAME: str = os.getenv("EMBEDDING_MODEL_NAME", "intfloat/multilingual-e5-small")
+EMBEDDING_MODEL_NAME: str = os.getenv("EMBEDDING_MODEL_NAME", "intfloat/multilingual-e5-base")
 
 # Cross-Encoder Model Settings
 CROSS_ENCODER_MODEL_NAME: str = os.getenv("CROSS_ENCODER_MODEL_NAME", "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1")
@@ -54,7 +54,7 @@ CROSS_ENCODER_MODEL_NAME: str = os.getenv("CROSS_ENCODER_MODEL_NAME", "cross-enc
 # =============================================================================
 # RAG & VECTOR DATABASE CONFIGURATION
 # =============================================================================
-COLLECTION_NAME: str = "diem_collect_HeaderContext_new_Italiano"
+COLLECTION_NAME: str = "diem_collect_HeaderContext_Nuova_Versione"
 DEFAULT_SESSION_ID: str = "diem-session"
 
 # Retrieval Settings
