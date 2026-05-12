@@ -165,10 +165,3 @@ CRONOLOGIA AGGIORNAMENTI
 #   - risultati misurati (se applicabile, link al run dir)
 
 ================================================================================
-
-
-
-dubbi
-
-context header non aggiunto ai chunk singoli?
-
