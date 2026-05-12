@@ -1,0 +1,174 @@
+================================================================================
+DIEM CHATBOT - PROGRESS LOG
+================================================================================
+Documento di tracking dell'avanzamento del progetto. Aggiornare dopo ogni
+modifica rilevante: aggiungere una nuova voce in coda alla sezione
+"CRONOLOGIA AGGIORNAMENTI" con data ISO, autore (facoltativo) e riassunto
+sintetico delle modifiche / decisioni / risultati.
+
+================================================================================
+STATO ATTUALE (snapshot al 2026-05-12)
+================================================================================
+
+----------------------------------------------------------------------------
+ARCHITETTURA - COMPLETATA
+----------------------------------------------------------------------------
+[x] Configurazione centralizzata (config.py, Singleton via costanti).
+[x] Logger condiviso con rotazione file (src/logger.py).
+[x] Pipeline di ingestion end-to-end:
+    [x] Crawler resiliente su diem.unisa.it / docenti.unisa.it / corsi.unisa.it
+        con scoperta dinamica delle pagine docenti e corsi.
+    [x] Estrazione metadati HTML (title, lang, date) prima dell'extractor.
+    [x] Loader PDF integrato con dedup su URL.
+    [x] Filtro lingua (drop /en/, /zh/ + drop via attributo lang).
+    [x] Filtro temporale (cutoff 2020) su URL + metadata + testo iniziale,
+        con corsia preferenziale per pagine time-sensitive.
+    [x] Generazione context header via Ollama (llama3.2:3b) con cache,
+        fallback euristico se Ollama non risponde, normalizzazione e clip.
+    [x] Strategia Parent-Child indexing (parent 2000/200, child 400/50)
+        con ContextHeaderTextSplitter custom che prepend dell'header.
+    [x] Batching adattivo in indicizzazione (max 4000 child per batch).
+    [x] Persistenza Chroma + LocalFileStore per i parent.
+    [x] Dump JSON dello stato post-filtri (crawled_urls.json,
+        crawled_pdfs.json).
+
+[x] Core RAG (src/brain.py):
+    [x] E5HuggingFaceEmbeddings (prefissi passage:/query:) come embedding
+        condiviso ingestion/runtime.
+    [x] Cross-encoder reranker (mMiniLMv2) con scoring + re-sort.
+    [x] ParentDocumentRetriever con similarity_score_threshold (k=20,
+        thr=0.7) -> rerank top-3.
+    [x] Chain LangChain: rewrite condizionale -> retrieve -> rerank ->
+        format context -> LLM.
+    [x] Storia di conversazione per sessione (InMemoryChatMessageHistory).
+    [x] API sincrona (`chat`) e streaming generator (`chat_stream`).
+    [x] Citazione fonti dedotte dai metadata.
+
+[x] UI Gradio (app.py):
+    [x] Caricamento lazy del Chroma index (rebuild se mancante o --reindex).
+    [x] gr.ChatInterface con esempi prefillati IT/EN.
+    [x] Streaming token-per-token via chat_stream.
+
+[x] Tool di debug (scripts/):
+    [x] check_vector_db.py (validazione propagazione context header).
+    [x] test_chunks.py (ispezione child/parent chunks).
+    [x] test_retriever.py (REPL interattiva sul retriever bi-encoder).
+
+----------------------------------------------------------------------------
+EVALUATION FRAMEWORK - COMPLETATO
+----------------------------------------------------------------------------
+[x] Golden set IT (golden_set_it.json) e EN (golden_set_en.json) con
+    categorie in_scope / multi_turn / out_of_scope / robustness.
+[x] Runner (evaluation/tester.py) con:
+    [x] Ragas 0.4.3 (Faithfulness, ResponseRelevancy, AnswerCorrectness,
+        LLMContextPrecisionWithReference, LLMContextRecall, AspectCritic
+        custom "coherence").
+    [x] Two-phase Ragas eval (no-ref vs ref-requiring) per evitare NaN
+        artificiali su rows senza reference.
+    [x] Custom scope-awareness check (strict marker + LLM-judge, distingue
+        rejection da knowledge-gap).
+    [x] Custom robustness check multi-turno (5 tag scenari avversariali)
+        con marker override per i refusal-style tag.
+    [x] Cache su disco (evaluation/cache.py) configurabile off/use/refresh,
+        keyed per (chat_model, temperature, history pairs, question).
+    [x] Output strutturati per run: run.log, per_question.json,
+        ragas_metrics.csv/.json, scope_awareness.json, robustness.json,
+        summary.md.
+[x] Run smoke test (--limit 3) completata su lang=it:
+    evaluation/results/20260511_172307_it/
+
+----------------------------------------------------------------------------
+ULTIMA RUN DI EVALUATION (smoke, limit=3, lang=it)
+----------------------------------------------------------------------------
+Chat model:      qwen2.5:7b      (temp 0.1)
+Judge model:     llama3.1:8b-instruct-q4_K_M
+Embedding:       intfloat/multilingual-e5-small
+
+Metriche aggregate (3 questions/categoria, 12 totali in Ragas):
+  ResponseRelevancy:           0.637  (11/12 valid)
+  Faithfulness:                0.490  (12/12 valid)
+  AnswerCorrectness:           0.545  (5/12 valid)   <- solo righe con reference
+  LLMContextPrecision:         0.847  (6/12 valid)
+  LLMContextRecall:            0.738  (6/12 valid)
+  Coherence (AspectCritic):    0.750  (12/12 valid)
+
+  Scope Awareness:
+    strict pass:               33.3% (1/3)
+    soft pass:                100.0% (3/3)            <- bot fa "knowledge gap"
+
+  Robustness:
+    pass rate:                  66.7% (2/3)
+
+----------------------------------------------------------------------------
+BACKLOG ATTIVO (sintesi da evaluation/todo.txt)
+----------------------------------------------------------------------------
+BLOCCANTE per la consegna:
+  [ ] #0 Revisionare manualmente reference auto-generate del golden set.
+  [ ] #1 Run completa del tester (it + en) con tutte le 6 metriche su
+        macchina con GPU per ottenere risultati baseline definitivi.
+
+BUG CONFERMATI nel chatbot:
+  [ ] #2 Scope rejection conflato con knowledge-gap: aggiungere uno stadio
+        di scope-classification a monte del retrieval o irrigidire il
+        SYSTEM_PROMPT.
+  [ ] #3 Robustness "Sei sicuro?" -> retrieval drift al turno 2 (citate
+        fonti diverse rispetto al turno 1). Intervenire sul REWRITE_PROMPT
+        o skippare il retrieval su challenge brevi.
+  [ ] #4 Multi-turn framing "Si, questo e corretto..." (output del rewrite
+        diventa affermazione, non domanda).
+  [ ] #5 Retrieval incompleto su domande factuali ("Dove si trova il DIEM?"
+        non cita Via Giovanni Paolo II 132): valutare ingestion gap e/o
+        tuning di BI_ENCODER_K / RETRIEVER_SCORE_THRESHOLD.
+
+REPORTING (per la relazione):
+  [ ] #6 Notebook di analisi quantitativa sui CSV di Ragas
+        (distribuzioni, top-N peggiori, split per categoria, export PNG).
+
+ESTENSIONI golden set:
+  [ ] #7 Domande mirate sui pattern di fallimento (regression test).
+  [ ] #8 Input degenerati (emoji-only, >3000 char, non-latini).
+  [ ] #9 Prompt-injection avanzati (italiano, persona injection, multi-turn).
+
+ESTENSIONI tester (opzionali):
+  [ ] #10 Aggiungere NoiseSensitivity (Ragas) al metric_registry.
+  [ ] #11 Flag --repeats N per media + std su run rumorose.
+  [ ] #12 Baseline non-RAG per ablation study (se richiesto).
+
+----------------------------------------------------------------------------
+DEBITO TECNICO / DA RIVEDERE
+----------------------------------------------------------------------------
+- enrichment.py: ramo morto dopo il disable di Ollama (linee 234-242 -
+  print + assegnazione a `e` fuori scope). Da pulire.
+- requirements.txt cita "Notebook 15" come fonte di ragas: aggiornare al
+  contesto reale (evaluation/tester.py).
+- crawled_urls.json e crawled_pdfs.json sono in .gitignore ma presenti nel
+  working tree (committati in commit precedente: utili per la consegna,
+  ma rumore per i diff).
+
+================================================================================
+CRONOLOGIA AGGIORNAMENTI
+================================================================================
+
+2026-05-12 - Snapshot iniziale di progress.txt
+  - Documentata l'architettura corrente (ingestion + brain + UI).
+  - Documentato il framework di evaluation e la prima smoke run lang=it
+    (run dir: evaluation/results/20260511_172307_it).
+  - Recepito il backlog da evaluation/todo.txt come stato attuale.
+  - Identificato debito tecnico in enrichment.py (ramo morto post-Ollama
+    disable) e disallineamento descrittivo in requirements.txt.
+
+# Template per aggiornamenti futuri:
+# YYYY-MM-DD - <titolo breve>
+#   - cosa e' cambiato (file/modulo)
+#   - perche'
+#   - impatto su backlog (item chiusi/aggiunti)
+#   - risultati misurati (se applicabile, link al run dir)
+
+================================================================================
+
+
+
+dubbi
+
+context header non aggiunto ai chunk singoli?
+
