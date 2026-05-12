@@ -1,6 +1,7 @@
 import re
 from urllib.parse import urlparse, urldefrag, urljoin
 
+import trafilatura
 from bs4 import BeautifulSoup
 from langchain_community.document_loaders import PyPDFLoader
 
@@ -77,7 +78,7 @@ def clean_text(text: str) -> str:
     return text.strip()
 
 
-def html_extractor(html: str) -> str:
+def _bs4_extractor(html: str) -> str:
     soup = BeautifulSoup(html, "html.parser")
     for tag in soup(["script", "style", "nav", "footer", "header",
                      "noscript", "aside", "iframe"]):
@@ -90,6 +91,19 @@ def html_extractor(html: str) -> str:
     body = soup.find("body")
     source = body if body else soup
     return clean_text(source.get_text("\n", strip=True))
+
+
+def html_extractor(html: str) -> str:
+    result = trafilatura.extract(
+        html,
+        include_tables=True,
+        include_links=False,
+        include_images=False,
+        favor_precision=True,
+    )
+    if result:
+        return clean_text(result)
+    return _bs4_extractor(html)
 
 
 def extract_years_from_text(text: str) -> list[int]:
