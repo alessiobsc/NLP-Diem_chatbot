@@ -7,4 +7,5 @@ chroma_diem/
 crawled_urls.json
 crawled_pdfs.json
 evaluation/cache/
+evaluation/results/
 logs/
