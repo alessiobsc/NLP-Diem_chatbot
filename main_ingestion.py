@@ -8,12 +8,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from langchain_community.document_loaders import RecursiveUrlLoader
-
 from src.ingestion.crawler import (
-    HTML_LINK_REGEX,
-    EXCLUDE_DIRS,
     crawl,
+    crawl_html_sitemap,
     extract_corsi_urls,
     extract_diem_faculty_urls,
     filter_docs,
@@ -34,6 +31,19 @@ from src.logger import get_logger
 
 logger = get_logger(__name__)
 
+
+def dedupe_docs_by_source(docs: list) -> list:
+    """Keep the first document for each source URL."""
+    seen: set[str] = set()
+    unique_docs = []
+    for doc in docs:
+        source = doc.metadata.get("source", "")
+        if not source or source in seen:
+            continue
+        seen.add(source)
+        unique_docs.append(doc)
+    return unique_docs
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Phase 1: Crawl
 # Returns (raw_html_docs, pdf_docs) — html_extractor NOT yet applied.
@@ -48,19 +58,12 @@ def crawl_phase() -> tuple[list, list]:
     pdf_docs: list = []
     seen_pdf_urls: set = set()
 
-    # 1a. Crawl diem.unisa.it — keep raw HTML to extract external links
-    logger.info("[1/3] Crawling www.diem.unisa.it ...")
-    raw_loader = RecursiveUrlLoader(
-        "https://www.diem.unisa.it/",
-        base_url="https://www.diem.unisa.it/",
-        max_depth=4,
-        prevent_outside=True,
-        timeout=15,
-        check_response_status=True,
-        exclude_dirs=EXCLUDE_DIRS,
-        link_regex=HTML_LINK_REGEX,
-    )
-    raw_diem = filter_docs(raw_loader.load())
+    # 1a. Crawl diem.unisa.it from deterministic HTML sitemap section seeds.
+    # Keep raw HTML to extract external links and PDFs.
+    logger.info("[1/3] Crawling www.diem.unisa.it from HTML sitemap ...")
+    raw_diem = filter_docs(dedupe_docs_by_source(
+        crawl_html_sitemap("https://www.diem.unisa.it/", max_depth=2, fallback_depth=4)
+    ))
     logger.info(f"  -> {len(raw_diem)} pages found")
 
     corsi_urls = extract_corsi_urls(raw_diem)
@@ -99,12 +102,19 @@ def crawl_phase() -> tuple[list, list]:
 
     # 1c. Crawl corsi.unisa.it
     total_corsi = len(corsi_urls)
-    logger.info(f"[3/3] Crawling corsi.unisa.it ({total_corsi} course pages) ...")
+    logger.info(f"[3/3] Crawling corsi.unisa.it ({total_corsi} course sitemaps) ...")
     for i, url in enumerate(corsi_urls, 1):
         # Use corsi.unisa.it domain as base (not course-specific path) so the crawler
         # can follow internal numeric-ID URLs (e.g. /0650107303300001/...) that some
         # course sites use instead of the slug-based path.
-        docs = filter_docs(crawl(url, base_url="https://corsi.unisa.it/", max_depth=3))
+        docs = filter_docs(dedupe_docs_by_source(
+            crawl_html_sitemap(
+                url,
+                max_depth=1,
+                crawl_base_url="https://corsi.unisa.it/",
+                fallback_depth=3,
+            )
+        ))
         batch_pdfs = load_pdfs_from_links(docs, seen_pdf_urls)
         raw_html_docs.extend(docs)
         pdf_docs.extend(batch_pdfs)

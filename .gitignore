@@ -9,3 +9,7 @@ crawled_pdfs.json
 evaluation/cache/
 evaluation/results/
 logs/
+.DS_Store
+chroma_diem.backup_header_bad/
+evaluation/results/*
+!evaluation/results/.gitkeep
