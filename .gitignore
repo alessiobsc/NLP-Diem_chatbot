@@ -10,3 +10,7 @@ evaluation/cache/
 evaluation/results/
 evaluation/crawler_comparison/
 logs/
+.DS_Store
+chroma_diem.backup_header_bad/
+evaluation/results/*
+!evaluation/results/.gitkeep

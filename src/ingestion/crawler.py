@@ -1,7 +1,7 @@
 import json
 import re
 import time
-from urllib.parse import urlparse
+from urllib.parse import urldefrag, urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -21,6 +21,7 @@ EXCLUDE_DIRS = [
 ]
 
 OFFERTA_FORMATIVA_PATH = "/didattica/offerta-formativa"
+SITEMAP_QUERY = "?sitemap"
 
 
 def is_pre_2020_url(url: str) -> bool:
@@ -58,6 +59,69 @@ def crawl(start_url: str, base_url: str, max_depth: int = 2) -> list:
     except Exception as e:
         logger.warning(f"  FAILED {start_url}: {e}")
         return []
+
+
+def build_html_sitemap_url(base_url: str) -> str:
+    return f"{base_url.rstrip('/')}/{SITEMAP_QUERY}"
+
+
+def extract_html_sitemap_urls(sitemap_url: str, base_url: str) -> list[str]:
+    """Extract deterministic section URLs from UNISA HTML sitemap pages."""
+    try:
+        logger.info(f"Fetching HTML sitemap: {sitemap_url}")
+        resp = requests.get(sitemap_url, timeout=15)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        base_netloc = urlparse(base_url).netloc
+        urls: set[str] = set()
+        for a in soup.find_all("a", href=True):
+            href = a["href"].strip()
+            if not href or href.startswith(("javascript:", "mailto:", "tel:")):
+                continue
+
+            absolute_url, _ = urldefrag(urljoin(sitemap_url, href))
+            parsed = urlparse(absolute_url)
+            if parsed.netloc != base_netloc:
+                continue
+            if SITEMAP_QUERY in absolute_url:
+                continue
+            if any(excluded in absolute_url for excluded in EXCLUDE_DIRS):
+                continue
+            if is_pre_2020_url(absolute_url):
+                continue
+            urls.add(absolute_url)
+
+        seeds = sorted(urls)
+        logger.info(f"  -> {len(seeds)} sitemap seeds extracted from {sitemap_url}")
+        return seeds
+    except Exception as e:
+        logger.warning(f"  WARNING: could not fetch HTML sitemap {sitemap_url}: {e}")
+        return []
+
+
+def crawl_html_sitemap(
+    base_url: str,
+    max_depth: int = 1,
+    crawl_base_url: str | None = None,
+    fallback_depth: int | None = None,
+) -> list:
+    """Crawl section seeds from a UNISA HTML sitemap using shallow recursion."""
+    crawl_base_url = crawl_base_url or base_url
+    fallback_depth = fallback_depth if fallback_depth is not None else max_depth
+    sitemap_url = build_html_sitemap_url(base_url)
+    seeds = extract_html_sitemap_urls(sitemap_url, base_url)
+    if not seeds:
+        logger.warning(f"  WARNING: no sitemap seeds found for {base_url}; falling back to direct crawl")
+        return crawl(base_url, base_url=crawl_base_url, max_depth=fallback_depth)
+
+    docs = []
+    for i, seed in enumerate(seeds, 1):
+        seed_docs = crawl(seed, base_url=crawl_base_url, max_depth=max_depth)
+        docs.extend(seed_docs)
+        logger.debug(f"    [{i:02d}/{len(seeds)}] {seed} ({len(seed_docs)} pages)")
+
+    return docs
 
 
 def extract_corsi_urls(raw_docs: list) -> list[str]:

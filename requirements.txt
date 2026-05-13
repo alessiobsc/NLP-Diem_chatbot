@@ -18,6 +18,7 @@ pypdf==6.10.2
 beautifulsoup4==4.14.3
 trafilatura==2.0.0
 requests==2.32.5
+pip-system-certs==5.3  # Windows: use OS cert store instead of certifi bundle
 
 # --- HuggingFace / ML ---
 huggingface_hub==1.11.0

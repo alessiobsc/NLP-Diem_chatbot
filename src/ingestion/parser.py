@@ -94,6 +94,8 @@ def _bs4_extractor(html: str) -> str:
 
 
 def html_extractor(html: str) -> str:
+    # Primary extractor using trafilatura, which is robust to malformed HTML 
+    # and often produces cleaner results than BeautifulSoup-based extraction.
     result = trafilatura.extract(
         html,
         include_tables=True,
@@ -103,6 +105,7 @@ def html_extractor(html: str) -> str:
     )
     if result:
         return clean_text(result)
+    # Fallback to BeautifulSoup-based extractor if trafilatura fails (e.g. due to malformed HTML).
     return _bs4_extractor(html)
 
 

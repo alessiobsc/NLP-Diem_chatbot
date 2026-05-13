@@ -16,14 +16,18 @@ from langchain_core.runnables import Runnable, RunnableBranch, RunnableLambda, R
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_classic.retrievers.multi_vector import SearchType
 
 from sentence_transformers import CrossEncoder
 
 from config import (
+    LLM_PROVIDER,
     OLLAMA_CHAT_MODEL,
     LLM_TEMPERATURE,
+    OPENROUTER_API_KEY,
+    OPENROUTER_MODEL,
     PARENT_STORE_DIR,
     EMBEDDING_MODEL_NAME,
     CROSS_ENCODER_MODEL_NAME,
@@ -35,10 +39,27 @@ from config import (
     DEFAULT_SESSION_ID
 )
 
-from src.prompts import SYSTEM_PROMPT, REWRITE_PROMPT
+from src.prompts import SYSTEM_PROMPT, REWRITE_PROMPT, REJECTION_TAGS
 from src.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _build_chat_model():
+    if LLM_PROVIDER == "openrouter":
+        try:
+            logger.info(f"Using OpenRouter LLM: {OPENROUTER_MODEL} (temp={LLM_TEMPERATURE})")
+            return ChatOpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=OPENROUTER_API_KEY,
+                model=OPENROUTER_MODEL,
+                temperature=LLM_TEMPERATURE,
+            )
+        except Exception as e:
+            logger.warning(f"OpenRouter init failed ({e}), falling back to Ollama")
+    logger.info(f"Using Ollama LLM: {OLLAMA_CHAT_MODEL} (temp={LLM_TEMPERATURE})")
+    return ChatOllama(model=OLLAMA_CHAT_MODEL, temperature=LLM_TEMPERATURE)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Shared embedding model (used by both ingestion and app)
@@ -118,11 +139,7 @@ class DiemBrain:
         Args:
             vectorstore (Chroma): The Chroma vector store used for document retrieval.
         """
-        logger.info(f"Initializing DiemBrain with model: {OLLAMA_CHAT_MODEL} (temp={LLM_TEMPERATURE})")
-        self._chat_model = ChatOllama(
-            model=OLLAMA_CHAT_MODEL,
-            temperature=LLM_TEMPERATURE,
-        )
+        self._chat_model = _build_chat_model()
         self._store: Dict[str, InMemoryChatMessageHistory] = {}
         
         self._retriever = self._build_retriever(vectorstore)
@@ -354,12 +371,19 @@ class DiemBrain:
             
             answer: str = result["answer"]
             sources: List[Document] = result.get("sources", [])
-            
+
             logger.info("Chat message processed successfully")
             logger.debug(f"Generated answer (length={len(answer)}): {answer[:100]}...")
 
-            formatted_sources = self._format_sources(sources)
-            return answer + formatted_sources
+            is_rejection = any(answer.startswith(t) for t in REJECTION_TAGS)
+            if is_rejection:
+                for tag in REJECTION_TAGS:
+                    if answer.startswith(tag):
+                        answer = answer[len(tag):].lstrip()
+                        break
+            else:
+                answer += self._format_sources(sources)
+            return answer
             
         except Exception as e:
             logger.exception(f"Error during chat processing: {e}")
@@ -389,19 +413,41 @@ class DiemBrain:
             "history": history_messages,
         })
 
+        _max_tag_len = max(len(t) for t in REJECTION_TAGS)
         answer = ""
+        tag_checked = False
+        is_rejection = False
+
         try:
             for chunk in self._chat_model.stream(prompt_value):
                 answer += chunk.content
-                yield answer
+                if not tag_checked and len(answer) >= _max_tag_len + 2:
+                    tag_checked = True
+                    for tag in REJECTION_TAGS:
+                        if answer.startswith(tag):
+                            is_rejection = True
+                            answer = answer[len(tag):].lstrip()
+                            break
+                if tag_checked:
+                    yield answer
         except Exception as e:
             logger.error(f"Error during streaming: {e}")
             yield "Mi dispiace, si è verificato un errore durante la generazione della risposta."
             return
 
+        if not tag_checked:
+            for tag in REJECTION_TAGS:
+                if answer.startswith(tag):
+                    is_rejection = True
+                    answer = answer[len(tag):].lstrip()
+                    break
+            if answer:
+                yield answer
+
         history.add_user_message(message)
         history.add_ai_message(answer)
 
-        sources_md = self._format_sources(reranked)
-        if sources_md:
-            yield answer + sources_md
+        if not is_rejection:
+            sources_md = self._format_sources(reranked)
+            if sources_md:
+                yield answer + sources_md
