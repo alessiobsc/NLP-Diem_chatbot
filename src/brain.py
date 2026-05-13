@@ -16,14 +16,18 @@ from langchain_core.runnables import Runnable, RunnableBranch, RunnableLambda, R
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_classic.retrievers.multi_vector import SearchType
 
 from sentence_transformers import CrossEncoder
 
 from config import (
+    LLM_PROVIDER,
     OLLAMA_CHAT_MODEL,
     LLM_TEMPERATURE,
+    OPENROUTER_API_KEY,
+    OPENROUTER_MODEL,
     PARENT_STORE_DIR,
     EMBEDDING_MODEL_NAME,
     CROSS_ENCODER_MODEL_NAME,
@@ -39,6 +43,23 @@ from src.prompts import SYSTEM_PROMPT, REWRITE_PROMPT, REJECTION_TAGS
 from src.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _build_chat_model():
+    if LLM_PROVIDER == "openrouter":
+        try:
+            logger.info(f"Using OpenRouter LLM: {OPENROUTER_MODEL} (temp={LLM_TEMPERATURE})")
+            return ChatOpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=OPENROUTER_API_KEY,
+                model=OPENROUTER_MODEL,
+                temperature=LLM_TEMPERATURE,
+            )
+        except Exception as e:
+            logger.warning(f"OpenRouter init failed ({e}), falling back to Ollama")
+    logger.info(f"Using Ollama LLM: {OLLAMA_CHAT_MODEL} (temp={LLM_TEMPERATURE})")
+    return ChatOllama(model=OLLAMA_CHAT_MODEL, temperature=LLM_TEMPERATURE)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Shared embedding model (used by both ingestion and app)
@@ -118,11 +139,7 @@ class DiemBrain:
         Args:
             vectorstore (Chroma): The Chroma vector store used for document retrieval.
         """
-        logger.info(f"Initializing DiemBrain with model: {OLLAMA_CHAT_MODEL} (temp={LLM_TEMPERATURE})")
-        self._chat_model = ChatOllama(
-            model=OLLAMA_CHAT_MODEL,
-            temperature=LLM_TEMPERATURE,
-        )
+        self._chat_model = _build_chat_model()
         self._store: Dict[str, InMemoryChatMessageHistory] = {}
         
         self._retriever = self._build_retriever(vectorstore)
