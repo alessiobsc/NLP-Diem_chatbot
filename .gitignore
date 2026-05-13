@@ -8,4 +8,5 @@ crawled_urls.json
 crawled_pdfs.json
 evaluation/cache/
 evaluation/results/
+evaluation/crawler_comparison/
 logs/

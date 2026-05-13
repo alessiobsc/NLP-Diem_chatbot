@@ -1,0 +1,180 @@
+================================================================================
+CRAWL4AI MIGRATION ANALYSIS
+DIEM Chatbot RAG Pipeline — Trafilatura vs Crawl4AI
+Date: 2026-05-13
+Source: scripts/compare_crawlers.py, evaluation/crawler_comparison/
+================================================================================
+
+BACKGROUND
+----------
+Evaluation run (limit=3, Italian, 2026-05-12) returned Faithfulness=0.504,
+suggesting the LLM often adds facts not grounded in retrieved context.
+Hypothesis: the current text extractor (trafilatura) may lose important
+content on JS-heavy or dynamically loaded pages, causing retrieval gaps
+that force the LLM to hallucinate.
+
+Comparison methodology:
+  Level A — Same HTML (requests fetch), different extraction only
+             → isolates extractor quality from fetching method
+  Level B — Playwright (Crawl4AI) vs requests fetch
+             → measures JS-rendering benefit
+
+Both methods configured with equivalent filters (see compare_crawlers.py
+module docstring for full equivalence table). One unavoidable gap:
+trafilatura uses its own ML classifier (favor_precision=True), while
+Crawl4AI uses PruningContentFilter(threshold=0.48, fixed).
+
+
+================================================================================
+1. LEVEL A — SAME HTML, DIFFERENT EXTRACTION
+   (last run: results_20260513_154647.json)
+================================================================================
+
+AGGREGATE AVERAGES (10 URLs)
+-----------------------------
+Metric               Trafilatura    Crawl4AI       Delta (C4AI - Traf)
+-------------------  -----------    --------       -------------------
+text_length (chars)      2319.1      3230.5         +911.4  (+39%)
+line_count                 23.0        46.4         +23.4   (+102%)
+noise_ratio               0.2815      0.3129        +0.031  (+11%)  [TRAF WINS]
+keyword_density           0.0396      0.0350        -0.005  (-12%)  [TRAF WINS]
+structural_score           0.0         7.6          +7.6            [C4AI WINS]
+
+FACT PRESERVATION (atomic facts: numbers, emails, acronyms, course codes)
+-------------------
+recall_by_crawl4ai: consistently 1.0 (retrieves all facts trafilatura found)
+recall_by_traf:     0.07–0.89 depending on URL (misses facts present in C4AI)
+
+Notable: on URL homepage, trafilatura extracted 1 fact vs Crawl4AI 14 facts.
+On offerta_formativa, trafilatura extracted 0 facts vs Crawl4AI 41 facts.
+
+
+PER-URL BREAKDOWN (Level A)
+----------------------------
+URL                          | Category           | Traf len | C4AI len | Traf noise | C4AI noise | C4AI struct | Facts only-in-C4AI
+-----------------------------|--------------------|----------|----------|------------|------------|-------------|-------------------
+diem.unisa.it/               | homepage           |       70 |    1174  |     0.875  |     0.634  |          15 | 13
+diem.unisa.it/presentazione  | presentation       |     9143 |    9769  |     0.100  |     0.156  |           7 |  7
+diem.unisa.it/offerta-form.  | offerta_formativa  |       91 |    1401  |     0.333  |     0.342  |           8 | 41
+diem.unisa.it/strutture      | structures         |      [see JSON]
+diem.unisa.it/premi-ricerca  | research_prizes    |      [see JSON]
+docenti.unisa.it/home        | docente_home       |      [see JSON]
+docenti.unisa.it/didattica   | docente_didattica  |      [see JSON]
+corsi.unisa.it/inf           | course_home        |      [see JSON]
+corsi.unisa.it/insegnamenti  | course_insegnamenti|      [see JSON]
+corsi.unisa.it/immatricol.   | immatricolazioni   |      [see JSON]
+-----------------------------|--------------------|----------|----------|------------|------------|-------------|-------------------
+AVERAGE                      |                    |   2319.1 |   3230.5 |     0.2815 |     0.3129 |         7.6 |
+
+KEY OBSERVATIONS (Level A)
+---------------------------
+1. CRITICAL LOSS on JS-populated pages: trafilatura falls back to _bs4_extractor
+   when its ML classifier discards main content (e.g., homepage=70 chars,
+   offerta-formativa=91 chars). Crawl4AI correctly extracts 1174 and 1401 chars
+   respectively. These are ZERO-information failures for RAG.
+
+2. On content-rich static pages (e.g., presentazione=9143 chars), trafilatura
+   performs comparably. The 40% average gap is driven by the JS-heavy failures.
+
+3. Crawl4AI provides markdown structure (avg 7.6 headers per page) which helps
+   the LLM orient itself in long documents and may improve faithfulness.
+
+4. Noise ratio is slightly higher for Crawl4AI (+0.031 absolute) but this is
+   partially explained by including more boilerplate from footer/nav fragments
+   even after filtering. The PruningContentFilter is less aggressive than
+   trafilatura's ML classifier.
+
+5. Keyword density slightly lower for Crawl4AI (0.035 vs 0.040) because longer
+   texts dilute the domain keywords — not a quality degradation.
+
+CONCLUSION (Level A): Crawl4AI extraction is clearly superior on pages where
+trafilatura's precision filter drops main content. The noise penalty is small
+and acceptable. The fact preservation advantage is significant.
+
+
+================================================================================
+2. LEVEL B — PLAYWRIGHT FETCH vs REQUESTS FETCH
+   (PENDING — run: python scripts/compare_crawlers.py)
+================================================================================
+
+NOTE: Level B was broken in all previous runs due to using sync Playwright API
+inside an asyncio loop. Fixed in commit after 2026-05-13. Re-run the script
+and paste the table here.
+
+Expected metrics to compare:
+  - content_diff_ratio (SequenceMatcher.ratio between traf requests vs C4AI Playwright)
+  - text_length difference between Level A and Level B for Crawl4AI
+    → if Level B > Level A significantly, JS rendering is adding real content
+  - fact_preservation: does Playwright fetch capture more atomic facts?
+
+WHEN COMPLETED, FILL HERE:
+  Aggregate averages (Level B)...
+  Per-URL content_diff_ratio table...
+  Conclusion: does JS rendering help?
+
+
+================================================================================
+3. MINI-RETRIEVAL TEST
+   (PENDING — run: python scripts/compare_crawlers.py --retrieval)
+================================================================================
+
+Test setup:
+  - Corpus: Level A extracted texts for 10 benchmark URLs
+  - Chunking: RecursiveCharacterTextSplitter(chunk_size=400, overlap=50)
+  - Embeddings: intfloat/multilingual-e5-base (E5HuggingFaceEmbeddings)
+  - Queries: 19 in_scope questions from evaluation/dataset/golden_set_it.json
+  - Metrics: hit@3 (≥5 shared words with reference), overlap_score (word overlap)
+  - No cross-encoder reranking (fair comparison of raw retrieval)
+
+WHEN COMPLETED, FILL HERE:
+  hit@3 table per question...
+  Aggregate: traf hit_rate=?, c4ai hit_rate=?
+  Aggregate: traf mean_overlap=?, c4ai mean_overlap=?
+  Conclusion: which method provides better retrieval for the golden questions?
+
+
+================================================================================
+4. CONCLUSION & RECOMMENDATION
+================================================================================
+
+PARTIAL (based on Level A only, pending Levels B and retrieval test)
+----------------------------------------------------------------------
+Strong case for migrating trafilatura extraction to Crawl4AI:
+
+Evidence FOR migration:
+  [+] 39% more text extracted on average (driven by JS-page failures in traf)
+  [+] Critical zero-content failures on homepage and offerta-formativa (key pages)
+  [+] 100% fact recall by Crawl4AI vs 7%-89% by trafilatura depending on page
+  [+] Structural markdown (7.6 headers/page) may improve LLM faithfulness
+  [+] No worse on static pages (presentazione: comparable quality)
+
+Evidence AGAINST migration:
+  [-] Slightly higher noise ratio (+0.031 absolute)
+  [-] Slightly lower keyword density (dilution effect, not actual quality drop)
+  [-] Crawl4AI is a heavier dependency (Playwright browsers required)
+  [-] Level A only: all tests use static HTML — no JS rendering tested yet
+
+DECISION PENDING:
+  Level B will determine whether to migrate the FETCHER (RecursiveUrlLoader →
+  AsyncWebCrawler) in addition to the extractor.
+
+  If Level B shows minimal diff (content_diff_ratio > 0.85) →
+    Migrate extraction only (Phase 2): replace html_extractor() with Crawl4AI
+
+  If Level B shows significant Playwright content gain (diff_ratio < 0.7) →
+    Migrate both fetcher + extractor (Phase 2 + Phase 3)
+
+  Retrieval test will confirm whether extraction improvements translate to
+  measurable RAG quality gains before committing to production changes.
+
+
+================================================================================
+FILES MODIFIED/CREATED IN THIS ANALYSIS
+================================================================================
+  scripts/compare_crawlers.py         — comparison + retrieval benchmark script
+  evaluation/crawler_comparison/      — all result JSONs
+  src/prompts.py                      — fixed SYSTEM_PROMPT (scope rejection,
+                                        knowledge gap, false premise handling)
+  migration.txt                       — this document
+
+================================================================================
