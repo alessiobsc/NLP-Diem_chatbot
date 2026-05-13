@@ -35,7 +35,7 @@ from config import (
     DEFAULT_SESSION_ID
 )
 
-from src.prompts import SYSTEM_PROMPT, REWRITE_PROMPT
+from src.prompts import SYSTEM_PROMPT, REWRITE_PROMPT, REJECTION_TAGS
 from src.logger import get_logger
 
 logger = get_logger(__name__)
@@ -354,12 +354,19 @@ class DiemBrain:
             
             answer: str = result["answer"]
             sources: List[Document] = result.get("sources", [])
-            
+
             logger.info("Chat message processed successfully")
             logger.debug(f"Generated answer (length={len(answer)}): {answer[:100]}...")
 
-            formatted_sources = self._format_sources(sources)
-            return answer + formatted_sources
+            is_rejection = any(answer.startswith(t) for t in REJECTION_TAGS)
+            if is_rejection:
+                for tag in REJECTION_TAGS:
+                    if answer.startswith(tag):
+                        answer = answer[len(tag):].lstrip()
+                        break
+            else:
+                answer += self._format_sources(sources)
+            return answer
             
         except Exception as e:
             logger.exception(f"Error during chat processing: {e}")
@@ -389,19 +396,41 @@ class DiemBrain:
             "history": history_messages,
         })
 
+        _max_tag_len = max(len(t) for t in REJECTION_TAGS)
         answer = ""
+        tag_checked = False
+        is_rejection = False
+
         try:
             for chunk in self._chat_model.stream(prompt_value):
                 answer += chunk.content
-                yield answer
+                if not tag_checked and len(answer) >= _max_tag_len + 2:
+                    tag_checked = True
+                    for tag in REJECTION_TAGS:
+                        if answer.startswith(tag):
+                            is_rejection = True
+                            answer = answer[len(tag):].lstrip()
+                            break
+                if tag_checked:
+                    yield answer
         except Exception as e:
             logger.error(f"Error during streaming: {e}")
             yield "Mi dispiace, si è verificato un errore durante la generazione della risposta."
             return
 
+        if not tag_checked:
+            for tag in REJECTION_TAGS:
+                if answer.startswith(tag):
+                    is_rejection = True
+                    answer = answer[len(tag):].lstrip()
+                    break
+            if answer:
+                yield answer
+
         history.add_user_message(message)
         history.add_ai_message(answer)
 
-        sources_md = self._format_sources(reranked)
-        if sources_md:
-            yield answer + sources_md
+        if not is_rejection:
+            sources_md = self._format_sources(reranked)
+            if sources_md:
+                yield answer + sources_md
