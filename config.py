@@ -41,9 +41,16 @@ LOG_BACKUP_COUNT: int = int(os.getenv("LOG_BACKUP_COUNT", "5"))
 # =============================================================================
 # MODEL CONFIGURATION
 # =============================================================================
+# LLM provider: "ollama" (default) or "openrouter"
+LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "ollama")
+
 # LLM Settings (Ollama)
 OLLAMA_CHAT_MODEL: str = os.getenv("OLLAMA_CHAT_MODEL", "qwen2.5:7b")
 LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.1"))
+
+# OpenRouter settings (used when LLM_PROVIDER=openrouter)
+OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
+OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "qwen/qwen-2.5-7b-instruct")
 
 # Embedding Model Settings (HuggingFace)
 EMBEDDING_MODEL_NAME: str = os.getenv("EMBEDDING_MODEL_NAME", "intfloat/multilingual-e5-base")

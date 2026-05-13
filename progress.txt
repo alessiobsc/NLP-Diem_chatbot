@@ -146,6 +146,23 @@ DEBITO TECNICO / DA RIVEDERE
   ma rumore per i diff).
 
 ================================================================================
+LIMITI NOTI (tecnici / dati)
+================================================================================
+
+- Date di pubblicazione non disponibili: i CMS di diem.unisa.it, docenti.unisa.it
+  e corsi.unisa.it non espongono alcun segnale date machine-readable
+  (Last-Modified HTTP header: 0/30 pagine campionate; <time datetime>: 0/30;
+  <meta name="date"> / article:published_time: 0/30).
+  Le uniche date trovate nel testo sono "Periodo DD Mese YYYY - DD Mese YYYY"
+  dai progetti di ricerca — date di durata progetto, non di pubblicazione.
+  Conseguenza: il filtro temporale opera solo su anni nell'URL (es. ?anno=2022)
+  e su metadata espliciti (assenti nella pratica). Un recency scoring basato
+  su date di documento non e' implementabile in modo affidabile su questi siti.
+  Workaround parziale: le pagine pubblicazioni docenti hanno ?anno=YEAR nell'URL
+  (unico segnale affidabile, limitato a quel sottoinsieme).
+  Diagnostica eseguita con scripts/diagnose_date_tags.py (2026-05-13).
+
+================================================================================
 CRONOLOGIA AGGIORNAMENTI
 ================================================================================
 
