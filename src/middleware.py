@@ -32,6 +32,15 @@ _OFFENSIVE_PROMPT = (
     "Answer only 'yes' or 'no'."
 )
 
+# If NONE of these appear in the output, skip LLM check entirely.
+_OFFENSIVE_KEYWORDS = {
+    "cazzo", "vaffanculo", "stronzo", "idiota", "imbecille", "bastardo",
+    "puttana", "troia", "merda", "porco", "coglione", "figlio di",
+    "fuck", "shit", "bitch", "asshole", "bastard", "damn", "hell",
+    "kill", "murder", "hate", "die", "terrorist", "bomb", "attack",
+    "password", "carta di credito", "credit card", "ssn", "codice fiscale",
+}
+
 _SCOPE_REJECTION = (
     "This question is outside my scope. "
     "I can only answer questions about DIEM (Department of Information and Electrical Engineering "
@@ -100,6 +109,14 @@ class OffensiveContentGuardrail(AgentMiddleware):
             return None
 
         content = last_ai.content if isinstance(last_ai.content, str) else str(last_ai.content)
+
+        # Fast path: no offensive keywords → clean, skip LLM call.
+        content_lower = content.lower()
+        if not any(kw in content_lower for kw in _OFFENSIVE_KEYWORDS):
+            logger.debug("OffensiveContentGuardrail: no keywords, passing through")
+            return None
+
+        # Slow path: keyword found → LLM confirms.
         prompt = f"{_OFFENSIVE_PROMPT}\n\nText: {content[:500]}"
         try:
             response = self._model.invoke(prompt).content.strip().lower()
