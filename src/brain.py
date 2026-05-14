@@ -33,7 +33,7 @@ from config import (
 from src.models import _build_agent_model, _build_chat_model
 from src.tools import build_tools
 from src.middleware import build_middleware
-from src.prompts import SYSTEM_PROMPT
+from src.prompts import SYSTEM_PROMPT, REJECTION_TAGS
 from src.logger import get_logger
 
 logger = get_logger(__name__)
@@ -157,6 +157,12 @@ class DiemBrain:
     def _config(self, session_id: str) -> dict:
         return {"configurable": {"thread_id": session_id}, "recursion_limit": 15}
 
+    def _strip_rejection_tags(self, text: str) -> str:
+        for tag in REJECTION_TAGS:
+            if text.startswith(tag):
+                return text[len(tag):].lstrip()
+        return text
+
     # ── public API ────────────────────────────────────────────────────────────
 
     def chat(self, message: str, session_id: str = DEFAULT_SESSION_ID) -> str:
@@ -168,14 +174,20 @@ class DiemBrain:
                 {"messages": [HumanMessage(message)]},
                 config=self._config(session_id),
             )
-            answer = result["messages"][-1].content
+            answer = self._strip_rejection_tags(result["messages"][-1].content)
+            is_rejection = any(result["messages"][-1].content.startswith(t) for t in REJECTION_TAGS)
+            if is_rejection:
+                return answer
             return answer + self._format_sources(self._last_docs)
         except Exception as e:
             logger.exception(f"chat error: {e}")
             return "Mi dispiace, si è verificato un errore."
 
     def chat_stream(self, message: str, session_id: str = DEFAULT_SESSION_ID):
-        """Streaming generator: yields LLM tokens then appends sources."""
+        """Streaming generator: yields LLM tokens then appends sources.
+        Resets answer accumulator on each tools node so tool-call decision
+        text emitted by the agent model doesn't leak into the final output.
+        """
         logger.info(f"chat_stream | session={session_id}")
         self._last_docs = []
         answer = ""
@@ -186,6 +198,9 @@ class DiemBrain:
                 stream_mode="messages",
             ):
                 node = metadata.get("langgraph_node", "")
+                if node == "tools":
+                    answer = ""  # discard agent pre-tool content (<tool_call> leakage)
+                    continue
                 is_tool_call = bool(getattr(chunk, "tool_call_chunks", None))
                 if node in ("model", "agent") and not is_tool_call and hasattr(chunk, "content") and chunk.content:
                     answer += chunk.content
@@ -195,6 +210,12 @@ class DiemBrain:
             yield "Mi dispiace, si è verificato un errore."
             return
 
+        stripped = self._strip_rejection_tags(answer)
+        is_rejection = stripped != answer
+        if is_rejection:
+            if stripped:
+                yield stripped
+            return
         sources_md = self._format_sources(self._last_docs)
         if sources_md and answer:
             yield answer + sources_md
@@ -208,7 +229,8 @@ class DiemBrain:
                 {"messages": [HumanMessage(message)]},
                 config=self._config(session_id),
             )
-            answer = result["messages"][-1].content
+            raw = result["messages"][-1].content
+            answer = self._strip_rejection_tags(raw)
             return {"answer": answer, "sources": list(self._last_docs)}
         except Exception as e:
             logger.exception(f"chat_eval error: {e}")
