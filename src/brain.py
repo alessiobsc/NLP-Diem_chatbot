@@ -119,13 +119,10 @@ class DiemBrain:
             self._agent_model,
             tools=tools,
             system_prompt=SYSTEM_PROMPT + (
-                "\n6. TOOL USAGE: Call retrieve() whenever you need information from the "
-                "DIEM knowledge base to answer the question. For any new factual question "
-                "about DIEM, call retrieve() first. If the question can be answered from "
-                "the conversation history (e.g. asking to repeat or clarify a previous answer), "
-                "you may answer directly without retrieve(). "
-                "After retrieve(), call answer() with the retrieved context and return its "
-                "output verbatim as your final response."
+                "\n6. TOOL USAGE: For any factual question about DIEM, call retrieve() first "
+                "to get relevant documents, then write your response directly using the retrieved "
+                "context. If the question can be answered from conversation history alone "
+                "(e.g. asking to repeat or clarify a previous answer), answer directly."
             ),
             middleware=middleware,
             checkpointer=MemorySaver(),  # stateless per-turn (unique thread_id each call)
