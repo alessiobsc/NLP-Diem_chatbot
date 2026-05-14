@@ -115,7 +115,9 @@ class DiemBrain:
             self._agent_model,
             tools=tools,
             system_prompt=SYSTEM_PROMPT + (
-                "\n6. TOOL USAGE: Always call retrieve() before answer(). "
+                "\n6. TOOL USAGE: For EVERY new user question, you MUST call retrieve() first "
+                "with a query relevant to that specific question — do NOT reuse documents from "
+                "previous turns. Then call answer() with the retrieved context. "
                 "Return the output of answer() verbatim as your final response."
             ),
             middleware=middleware,
