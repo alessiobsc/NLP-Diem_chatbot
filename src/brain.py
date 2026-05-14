@@ -62,7 +62,7 @@ logger.info(f"Initializing reranker model: {CROSS_ENCODER_MODEL_NAME}")
 reranker = CrossEncoder(CROSS_ENCODER_MODEL_NAME)
 
 
-def rerank(query: str, documents: List[Document], top_n: int = 3) -> List[Document]:
+def rerank(query: str, documents: List[Document], top_n: int = CROSS_ENCODER_K) -> List[Document]:
     if not documents:
         return []
     pairs = [[query, d.page_content] for d in documents]
