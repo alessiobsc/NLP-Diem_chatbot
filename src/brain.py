@@ -186,7 +186,8 @@ class DiemBrain:
                 stream_mode="messages",
             ):
                 node = metadata.get("langgraph_node", "")
-                if node in ("model", "agent") and hasattr(chunk, "content") and chunk.content:
+                is_tool_call = bool(getattr(chunk, "tool_call_chunks", None))
+                if node in ("model", "agent") and not is_tool_call and hasattr(chunk, "content") and chunk.content:
                     answer += chunk.content
                     yield answer
         except Exception as e:
