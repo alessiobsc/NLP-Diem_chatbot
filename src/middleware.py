@@ -9,17 +9,23 @@ from src.logger import get_logger
 logger = get_logger(__name__)
 
 _SCOPE_PROMPT = (
-    "You are a scope filter for a chatbot about the DIEM department (Computer Science / Engineering) "
-    "at the University of Salerno, Italy. "
-    "Answer 'yes' if the question is about: DIEM courses, faculty, research, facilities, "
-    "academic regulations, enrollment, exams, graduation requirements, grade calculations "
-    "(e.g. weighted average, graduation grade from GPA), study plans, scholarships, or "
-    "anything a student or prospective student of DIEM might need to know. "
-    "Answer 'no' ONLY if the question is clearly unrelated to university or DIEM "
-    "(e.g. cooking, sports, politics, entertainment). "
-    "When in doubt, answer 'yes'. "
-    "Answer only 'yes' or 'no'."
+    "Is this question about a university, academic department, courses, exams, professors, "
+    "research, enrollment, grades, or student life? "
+    "Answer 'no' ONLY if clearly unrelated (cooking, sports, politics, entertainment). "
+    "When in doubt answer 'yes'. Answer only 'yes' or 'no'."
 )
+
+# Keywords that immediately pass the scope check without any LLM call.
+_SCOPE_KEYWORDS = {
+    "diem", "unisa", "università", "universita", "salerno", "corso", "corsi",
+    "esame", "esami", "laurea", "professore", "prof", "docente", "ricerca",
+    "dipartimento", "informatica", "ingegneria", "matematica", "voto", "voti",
+    "media", "cfu", "crediti", "tirocinio", "tesi", "iscrizione", "ammissione",
+    "orario", "aula", "laboratorio", "erasmus", "borsa", "studente", "studenti",
+    "piano", "regolamento", "offerta", "formativa", "magistrale", "triennale",
+    "dottorato", "master", "faculty", "department", "enrollment", "grade",
+    "average", "graduation", "thesis", "exam", "lecture", "semester",
+}
 
 _OFFENSIVE_PROMPT = (
     "Does this text contain offensive, harmful, or inappropriate content? "
@@ -54,6 +60,14 @@ class ScopeGuardrail(AgentMiddleware):
             return None
 
         question = last_human.content if isinstance(last_human.content, str) else str(last_human.content)
+
+        # Fast path: any academic keyword → in scope, skip LLM call entirely.
+        tokens = set(question.lower().split())
+        if tokens & _SCOPE_KEYWORDS:
+            logger.debug("ScopeGuardrail: keyword match, passing through")
+            return None
+
+        # Slow path: ambiguous query → short LLM yes/no check.
         prompt = f"{_SCOPE_PROMPT}\n\nQuestion: {question}"
         try:
             response = self._model.invoke(prompt).content.strip().lower()
