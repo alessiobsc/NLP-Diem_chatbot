@@ -54,6 +54,10 @@ def _build_chat_model():
                 api_key=OPENROUTER_API_KEY,
                 model=OPENROUTER_MODEL,
                 temperature=LLM_TEMPERATURE,
+                extra_body={
+                    "reasoning": {"enabled": False},
+                    "chat_template_kwargs": {"enable_thinking": False}
+                }
             )
         except Exception as e:
             logger.warning(f"OpenRouter init failed ({e}), falling back to Ollama")
@@ -96,7 +100,7 @@ reranker = CrossEncoder(CROSS_ENCODER_MODEL_NAME)
 def rerank(query: str, documents: List[Document], top_n: int = 3) -> List[Document]:
     """
     Reranks documents using a Cross-Encoder model to find the most relevant ones.
-    
+
     Args:
         query (str): The search query.
         documents (List[Document]): The initial list of retrieved documents.
@@ -108,7 +112,7 @@ def rerank(query: str, documents: List[Document], top_n: int = 3) -> List[Docume
     if not documents:
         logger.debug(f"No documents to rerank for query: '{query}'")
         return []
-    
+
     logger.debug(f"Reranking {len(documents)} documents for query: '{query}'")
     pairs = [[query, d.page_content] for d in documents]
     scores = reranker.predict(pairs)
@@ -118,9 +122,40 @@ def rerank(query: str, documents: List[Document], top_n: int = 3) -> List[Docume
         d.metadata["relevance_score"] = float(s)
         logger.debug(f"Reranked rank {i+1}: score={s:.4f}, source={d.metadata.get('source', 'Unknown')}")
         out.append(d)
-    
+
     logger.info(f"Selected top {len(out)} documents after reranking")
     return out
+
+
+def _format_context(inputs: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Formats retrieved documents into a single context string.
+
+    Args:
+        inputs (Dict[str, Any]): Dictionary containing 'docs'.
+
+    Returns:
+        Dict[str, Any]: Inputs augmented with the 'context' string.
+    """
+    docs: List[Document] = inputs.get("docs", [])
+    logger.debug(f"Formatting context from {len(docs)} reranked documents")
+
+    formatted_docs = []
+    for doc in docs:
+        source = doc.metadata.get("source", "Unknown Source")
+        block = (
+            "<document>\n"
+            f"<source>{source}</source>\n"
+            f"<content>\n{doc.page_content}\n</content>\n"
+            "</document>"
+        )
+        formatted_docs.append(block)
+
+    context = "\n\n".join(formatted_docs)
+    if docs:
+        logger.debug(f"Total formatted context length: {len(context)} characters")
+    return {**inputs, "context": context}
+
 
 class DiemBrain:
     """
@@ -248,7 +283,7 @@ class DiemBrain:
             | RunnablePassthrough.assign(
                 docs=lambda x: rerank(x["question"], x["docs"], top_n=CROSS_ENCODER_K) if x["docs"] else []
             )
-            | RunnableLambda(self._format_context)
+            | RunnableLambda(_format_context)
             | RunnableLambda(lambda x: {
                 "answer": self._chat_model.invoke(
                     rag_prompt.invoke({
@@ -267,38 +302,6 @@ class DiemBrain:
             | RunnablePassthrough.assign(question=conditional_rewrite_chain)
             | rag_chain
         )
-
-
-    @staticmethod
-    def _format_context(inputs: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Formats retrieved documents into a single context string.
-
-        Args:
-            inputs (Dict[str, Any]): Dictionary containing 'docs'.
-
-        Returns:
-            Dict[str, Any]: Inputs augmented with the 'context' string.
-        """
-        docs: List[Document] = inputs.get("docs", [])
-        logger.debug(f"Formatting context from {len(docs)} reranked documents")
-
-        formatted_docs = []
-        for doc in docs:
-            source = doc.metadata.get("source", "Unknown Source")
-            block = (
-                "<document>\n"
-                f"<source>{source}</source>\n"
-                f"<content>\n{doc.page_content}\n</content>\n"
-                "</document>"
-            )
-            formatted_docs.append(block)
-
-        context = "\n\n".join(formatted_docs)
-        if docs:
-            logger.debug(f"Total formatted context length: {len(context)} characters")
-        return {**inputs, "context": context}
-
 
     def _get_history(self, session_id: str) -> InMemoryChatMessageHistory:
         """
@@ -405,7 +408,7 @@ class DiemBrain:
         docs = self._retriever.invoke(rewritten)
         reranked = rerank(rewritten, docs, top_n=CROSS_ENCODER_K) if docs else []
 
-        formatted = self._format_context({"docs": reranked, "question": rewritten, "history": history_messages})
+        formatted = _format_context({"docs": reranked, "question": rewritten, "history": history_messages})
         context = formatted["context"]
         prompt_value = self._rag_prompt.invoke({
             "context": context,
