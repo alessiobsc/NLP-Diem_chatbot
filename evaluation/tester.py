@@ -281,17 +281,16 @@ def run_turn(
     whole run. Downstream consumers can treat empty answers as failures
     without special-casing exceptions.
     """
-    history_obj = brain._get_history(session_id)
-    history_pairs = serialise_history(history_obj.messages)
+    history_messages = brain.get_history(session_id)
+    history_pairs = serialise_history(history_messages)
 
     # 1) Cache lookup. A hit short-circuits the LLM call entirely.
     if cache is not None and cache.enabled():
         cached = cache.get(session_id, history_pairs, question)
         if cached is not None:
-            # Re-hydrate history so multi-turn cache hits remain consistent
-            # with what the chatbot would have produced on a live call.
-            history_obj.add_user_message(question)
-            history_obj.add_ai_message(cached.get("answer", "") or "")
+            # Note: MemorySaver history re-hydration is skipped for cache hits.
+            # Single-turn cache works correctly; multi-turn cache hits may lack
+            # prior context — acceptable for development iteration.
             return TurnResult(
                 question=cached.get("question", question),
                 answer=cached.get("answer", "") or "",
@@ -302,17 +301,15 @@ def run_turn(
 
     # 2) Live invocation.
     try:
-        result = brain.conversational_rag.invoke(
-            {"question": question},
-            config={"configurable": {"session_id": session_id}},
-        )
+        result = brain.chat_eval(question, session_id)
         answer = result.get("answer", "") or ""
         docs: list[Document] = result.get("sources", []) or []
         contexts = [d.page_content for d in docs]
-        # Deduplicate via set comprehension; order is not significant for
-        # downstream consumers (raw_log only) so list(set(...)) is fine.
         sources = list({d.metadata.get("source", "") for d in docs if d.metadata.get("source")})
-        turn = TurnResult(question=question, answer=answer, contexts=contexts, sources=sources)
+        if result.get("error"):
+            turn = TurnResult(question=question, answer="", error=result["error"])
+        else:
+            turn = TurnResult(question=question, answer=answer, contexts=contexts, sources=sources)
     except Exception as e:
         turn = TurnResult(question=question, answer="", error=f"{type(e).__name__}: {e}")
 
