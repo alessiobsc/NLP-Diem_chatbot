@@ -50,12 +50,12 @@ def test_offensive_guardrail_replaces_offensive_content():
     guardrail = OffensiveContentGuardrail(mock_model)
     state = _make_state([
         HumanMessage(content="test"),
-        AIMessage(content="offensive content here", id="msg-1"),
+        AIMessage(content="questo testo contiene cazzo e parole offensive", id="msg-1"),
     ])
     result = guardrail.after_agent(state, MagicMock())
     assert result is not None
     assert any(isinstance(m, AIMessage) for m in result.get("messages", []))
-    assert result["messages"][-1].content != "offensive content here"
+    assert result["messages"][-1].content != "questo testo contiene cazzo e parole offensive"
 
 
 def test_build_middleware_returns_list():
