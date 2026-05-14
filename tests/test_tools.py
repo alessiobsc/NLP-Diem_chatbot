@@ -12,15 +12,15 @@ def _make_tools():
     return build_tools(mock_retriever, mock_model, brain_ref, mock_prompt)
 
 
-def test_build_tools_returns_three_tools():
+def test_build_tools_returns_four_tools():
     tools = _make_tools()
-    assert len(tools) == 3
+    assert len(tools) == 4
 
 
 def test_tool_names():
     tools = _make_tools()
     names = {t.name for t in tools}
-    assert names == {"retrieve", "summarize", "calculate"}
+    assert names == {"retrieve", "summarize", "calculate", "answer"}
 
 
 def test_retrieve_updates_last_docs():

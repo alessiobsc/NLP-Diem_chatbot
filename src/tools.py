@@ -64,4 +64,20 @@ def build_tools(retriever, generation_model, brain_ref, rag_prompt) -> list:
         )
         return generation_model.invoke(prompt).content
 
-    return [retrieve, summarize, calculate]
+    @tool
+    def answer(context: str, question: str) -> str:
+        """Generate the final answer to the user question using retrieved context.
+        ALWAYS call retrieve() first, then pass its output as context here.
+        Never call this without context from retrieve()."""
+        from src.prompts import SYSTEM_PROMPT
+        from langchain_core.prompts import ChatPromptTemplate
+
+        prompt_tmpl = ChatPromptTemplate.from_messages([
+            ("system", SYSTEM_PROMPT),
+            ("human", "<context>\n{context}\n</context>\n\n<instruction>\n{question}\n</instruction>"),
+        ])
+        return generation_model.invoke(
+            prompt_tmpl.invoke({"context": context, "question": question})
+        ).content
+
+    return [retrieve, summarize, calculate, answer]
