@@ -9,8 +9,15 @@ from src.logger import get_logger
 logger = get_logger(__name__)
 
 _SCOPE_PROMPT = (
-    "Is this question about the DIEM department at the University of Salerno, "
-    "its courses, faculty, research, facilities, or academic regulations? "
+    "You are a scope filter for a chatbot about the DIEM department (Computer Science / Engineering) "
+    "at the University of Salerno, Italy. "
+    "Answer 'yes' if the question is about: DIEM courses, faculty, research, facilities, "
+    "academic regulations, enrollment, exams, graduation requirements, grade calculations "
+    "(e.g. weighted average, graduation grade from GPA), study plans, scholarships, or "
+    "anything a student or prospective student of DIEM might need to know. "
+    "Answer 'no' ONLY if the question is clearly unrelated to university or DIEM "
+    "(e.g. cooking, sports, politics, entertainment). "
+    "When in doubt, answer 'yes'. "
     "Answer only 'yes' or 'no'."
 )
 
