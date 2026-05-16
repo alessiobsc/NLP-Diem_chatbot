@@ -1,33 +1,32 @@
 """
 Core AI Brain module for the DIEM Chatbot.
-Handles the initialization of the Language Model, Document Retriever, and RAG Pipeline.
+
+Module-level symbols (embedding_model, reranker, rerank, _format_context) are kept
+so ingestion scripts and tester.py continue to import without modification.
 """
 
-from operator import itemgetter
-from typing import Any, Dict, List
+import uuid
+from typing import Any, Annotated, Dict, List
 
 from langchain_chroma import Chroma
 from langchain_classic.retrievers import ParentDocumentRetriever
 from langchain_classic.storage import LocalFileStore, create_kv_docstore
-from langchain_core.chat_history import InMemoryChatMessageHistory
-from langchain_core.documents import Document
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import Runnable, RunnableBranch, RunnableLambda, RunnablePassthrough
-from langchain_core.runnables.history import RunnableWithMessageHistory
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_ollama import ChatOllama
-from langchain_openai import ChatOpenAI
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_classic.retrievers.multi_vector import SearchType
-
+from langchain_core.documents import Document
+from langchain_core.messages import (
+    BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage,
+)
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_huggingface import HuggingFaceEmbeddings
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import StateGraph, END
+from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode
 from sentence_transformers import CrossEncoder
+from typing_extensions import TypedDict
 
 from config import (
-    LLM_PROVIDER,
-    OLLAMA_CHAT_MODEL,
-    LLM_TEMPERATURE,
-    OPENROUTER_API_KEY,
-    OPENROUTER_MODEL,
     PARENT_STORE_DIR,
     EMBEDDING_MODEL_NAME,
     CROSS_ENCODER_MODEL_NAME,
@@ -36,49 +35,30 @@ from config import (
     BI_ENCODER_K,
     CROSS_ENCODER_K,
     RETRIEVER_SCORE_THRESHOLD,
-    DEFAULT_SESSION_ID
+    DEFAULT_SESSION_ID,
+    MAX_TOOL_CALLS,
 )
-
-from src.prompts import SYSTEM_PROMPT, REWRITE_PROMPT, REJECTION_TAGS
+from src.models import _build_agent_model, _build_chat_model
+from src.tools import build_tools
+from src.middleware import (
+    ScopeGuardrail, OffensiveContentGuardrail, redact_pii, _SCOPE_REJECTION,
+)
+from src.prompts import SYSTEM_PROMPT, AGENT_SYSTEM_PROMPT, REJECTION_TAGS
 from src.logger import get_logger
 
 logger = get_logger(__name__)
 
 
-def _build_chat_model():
-    if LLM_PROVIDER == "openrouter":
-        try:
-            logger.info(f"Using OpenRouter LLM: {OPENROUTER_MODEL} (temp={LLM_TEMPERATURE})")
-            return ChatOpenAI(
-                base_url="https://openrouter.ai/api/v1",
-                api_key=OPENROUTER_API_KEY,
-                model=OPENROUTER_MODEL,
-                temperature=LLM_TEMPERATURE,
-            )
-        except Exception as e:
-            logger.warning(f"OpenRouter init failed ({e}), falling back to Ollama")
-    logger.info(f"Using Ollama LLM: {OLLAMA_CHAT_MODEL} (temp={LLM_TEMPERATURE})")
-    return ChatOllama(model=OLLAMA_CHAT_MODEL, temperature=LLM_TEMPERATURE)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Shared embedding model (used by both ingestion and app)
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Module-level symbols: unchanged (imported by ingestion scripts and tester) ──
 
 class E5HuggingFaceEmbeddings(HuggingFaceEmbeddings):
-    """
-    Custom wrapper for E5 models to automatically append 
-    'query: ' and 'passage: ' prefixes as required by the model.
-    """
+    """E5 model wrapper: prepends 'query:' / 'passage:' prefixes."""
+
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        # Append "passage: " to all documents during ingestion
-        formatted_texts = [f"passage: {text}" for text in texts]
-        return super().embed_documents(formatted_texts)
+        return super().embed_documents([f"passage: {t}" for t in texts])
 
     def embed_query(self, text: str) -> List[float]:
-        # Append "query: " to the user question during retrieval
-        formatted_text = f"query: {text}"
-        return super().embed_query(formatted_text)
+        return super().embed_query(f"query: {text}")
 
 
 logger.info(f"Initializing embedding model: {EMBEDDING_MODEL_NAME}")
@@ -87,367 +67,419 @@ embedding_model = E5HuggingFaceEmbeddings(
     encode_kwargs={"normalize_embeddings": True},
 )
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Cross-Encoder Reranker model
-# ─────────────────────────────────────────────────────────────────────────────
 logger.info(f"Initializing reranker model: {CROSS_ENCODER_MODEL_NAME}")
 reranker = CrossEncoder(CROSS_ENCODER_MODEL_NAME)
 
-def rerank(query: str, documents: List[Document], top_n: int = 3) -> List[Document]:
-    """
-    Reranks documents using a Cross-Encoder model to find the most relevant ones.
-    
-    Args:
-        query (str): The search query.
-        documents (List[Document]): The initial list of retrieved documents.
-        top_n (int): The number of top documents to return.
 
-    Returns:
-        List[Document]: Reranked and filtered documents.
-    """
+def rerank(query: str, documents: List[Document], top_n: int = CROSS_ENCODER_K) -> List[Document]:
     if not documents:
-        logger.debug(f"No documents to rerank for query: '{query}'")
         return []
-    
-    logger.debug(f"Reranking {len(documents)} documents for query: '{query}'")
     pairs = [[query, d.page_content] for d in documents]
     scores = reranker.predict(pairs)
     ranked = sorted(zip(documents, scores), key=lambda x: x[1], reverse=True)
     out = []
-    for i, (d, s) in enumerate(ranked[:top_n]):
+    for d, s in ranked[:top_n]:
         d.metadata["relevance_score"] = float(s)
-        logger.debug(f"Reranked rank {i+1}: score={s:.4f}, source={d.metadata.get('source', 'Unknown')}")
         out.append(d)
-    
-    logger.info(f"Selected top {len(out)} documents after reranking")
+    logger.info(f"Reranked: top {len(out)} of {len(documents)}")
     return out
 
-class DiemBrain:
-    """
-    Encapsulates the conversational Retrieval-Augmented Generation (RAG) system for the DIEM department.
 
-    This class is responsible for:
-    1. Setting up the LLM and prompt templates.
-    2. Configuring the document retriever.
-    3. Building the execution chain with query rewriting and history management.
+def _format_context(inputs: Dict[str, Any]) -> Dict[str, Any]:
+    docs: List[Document] = inputs.get("docs", [])
+    blocks = []
+    for doc in docs:
+        source = doc.metadata.get("source", "Unknown Source")
+        blocks.append(
+            f"<document>\n<source>{source}</source>\n"
+            f"<content>\n{doc.page_content}\n</content>\n</document>"
+        )
+    return {**inputs, "context": "\n\n".join(blocks)}
+
+
+# ── Graph State ───────────────────────────────────────────────────────────────
+
+class DiemState(TypedDict):
+    messages: Annotated[List[BaseMessage], add_messages]
+    tool_call_count: int      # increments each time the tools node fires
+    retrieved_context: str    # latest retrieve output, passed to generate node
+    last_docs: List[Document] # latest retrieved docs, used for source URL formatting
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+def _extract_text(content) -> str:
+    """Extract plain text from a message content that may be a string or a list of content blocks.
+
+    LangSmith Studio sends HumanMessage.content as a list of dicts
+    (e.g. [{"type": "text", "text": "..."}]) instead of a plain string.
     """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(
+            block.get("text", "") if isinstance(block, dict) else str(block)
+            for block in content
+        )
+    return str(content)
+
+
+# ── Routing functions (module-level so tests can import them directly) ────────
+
+def _route_scope(state: DiemState) -> str:
+    """After scope_guard: an injected AIMessage means rejection → END."""
+    last = state["messages"][-1]
+    if isinstance(last, AIMessage):
+        return "__end__"
+    return "retrieve_node"
+
+
+def _route_agent(state: DiemState) -> str:
+    """After agent: go to tools if tool_calls present and under safety cap, else generate."""
+    last = state["messages"][-1]
+    if getattr(last, "tool_calls", None) and state["tool_call_count"] < MAX_TOOL_CALLS:
+        return "tools"
+    return "generate"
+
+
+# ── DiemBrain ─────────────────────────────────────────────────────────────────
+
+class DiemBrain:
+    """Agentic RAG system for DIEM using an explicit LangGraph StateGraph."""
 
     def __init__(self, vectorstore: Chroma) -> None:
-        """
-        Initializes the DiemBrain with the specified vector store.
+        self._last_docs: List[Document] = []
 
-        Args:
-            vectorstore (Chroma): The Chroma vector store used for document retrieval.
-        """
-        self._chat_model = _build_chat_model()
-        self._store: Dict[str, InMemoryChatMessageHistory] = {}
-        
+        self._agent_model = _build_agent_model()
+        self._generation_model = _build_chat_model()
         self._retriever = self._build_retriever(vectorstore)
-        rag_chain = self._build_rag_chain(self._retriever)
-        
-        self.conversational_rag = RunnableWithMessageHistory(
-            rag_chain,
-            self._get_history,
-            input_messages_key="question",
-            output_messages_key="answer",
-            history_messages_key="history",
-        )
-        logger.info("DiemBrain initialization complete")
+
+        self._tools = build_tools(self._retriever, self._generation_model, self)
+
+        # Bind tools to 32b so it can emit tool_calls in its AIMessage output
+        self._agent_model_with_tools = self._agent_model.bind_tools(self._tools)
+
+        self._scope_guardrail = ScopeGuardrail(self._generation_model)
+        self._offensive_guardrail = OffensiveContentGuardrail(self._generation_model)
+
+        # Build generation prompt once (reused every _node_generate call)
+        self._generate_prompt = ChatPromptTemplate.from_messages([
+            ("system", SYSTEM_PROMPT),
+            ("human", "<context>\n{context}\n</context>\n\n<instruction>\n{question}\n</instruction>"),
+        ])
+
+        self._graph = self._build_graph(self._tools, checkpointer=MemorySaver())
+        logger.info("DiemBrain (explicit StateGraph) initialization complete")
+
+    # ── Retriever ─────────────────────────────────────────────────────────────
 
     def _build_retriever(self, vectorstore: Chroma) -> ParentDocumentRetriever:
-        """
-        Constructs the Parent Document Retriever.
-
-        Args:
-            vectorstore (Chroma): The underlying vector store.
-
-        Returns:
-            ParentDocumentRetriever: Configured retriever instance.
-        """
-        logger.debug(f"Building ParentDocumentRetriever (chunk_size={CHILD_CHUNK_SIZE}, overlap={CHILD_CHUNK_OVERLAP})")
         parent_doc_store = create_kv_docstore(LocalFileStore(str(PARENT_STORE_DIR)))
         child_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=CHILD_CHUNK_SIZE, 
-            chunk_overlap=CHILD_CHUNK_OVERLAP
+            chunk_size=CHILD_CHUNK_SIZE,
+            chunk_overlap=CHILD_CHUNK_OVERLAP,
         )
-        
         return ParentDocumentRetriever(
             vectorstore=vectorstore,
             docstore=parent_doc_store,
             child_splitter=child_splitter,
             search_type=SearchType.similarity_score_threshold,
-            search_kwargs={
-                "k": BI_ENCODER_K,
-                "score_threshold": RETRIEVER_SCORE_THRESHOLD
-            },
+            search_kwargs={"k": BI_ENCODER_K, "score_threshold": RETRIEVER_SCORE_THRESHOLD},
         )
 
-    def _build_rag_chain(self, retriever: ParentDocumentRetriever) -> Runnable:
+    # ── Graph construction ────────────────────────────────────────────────────
+
+    def _make_tools_node(self, tools: list):
+        """Wrap ToolNode to also update tool_call_count and retrieved_context in state.
+
+        Standard ToolNode only appends ToolMessages to `messages`. This wrapper
+        additionally increments the safety counter and, when `retrieve` was called,
+        syncs the fresh context into state so generate node always uses the latest.
         """
-        Builds the complete RAG chain including query rewriting, retrieval, cross-encoder reranking, and response generation.
+        tool_node = ToolNode(tools)
 
-        Args:
-            retriever (ParentDocumentRetriever): The configured document retriever.
+        def tools_node(state: DiemState) -> dict:
+            result = tool_node.invoke(state)
 
-        Returns:
-            Runnable: The executable LangChain runnable sequence.
-        """
-        logger.debug("Building RAG chain")
-        rag_prompt = ChatPromptTemplate.from_messages([
-            ("system", SYSTEM_PROMPT),
-            ("placeholder", "{history}"),
-            ("human", "<context>\n{context}\n</context>\n\n<instruction>\n{question}\n</instruction>"),
-        ])
+            updates = {"tool_call_count": state["tool_call_count"] + 1}
 
-        rewrite_prompt = ChatPromptTemplate.from_messages([
-            ("system", REWRITE_PROMPT),
-            ("placeholder", "{history}"),
-            ("human", "{question}"),
-        ])
-
-        def _log_rewrite(q: str) -> str:
-            logger.info(f"Rewritten query using history: '{q}'")
-            return q
-            
-        def _log_skip_rewrite(x: Dict[str, Any]) -> str:
-            logger.debug(f"Skipping query rewrite (empty history). Original query: '{x['question']}'")
-            return x["question"]
-
-        def _log_retrieved_docs(docs: List[Document]) -> List[Document]:
-            logger.info(f"Retriever fetched {len(docs)} documents")
-            return docs
-
-        # Chain to rewrite the query using context from history
-        rewrite_chain = (
-            rewrite_prompt
-            | self._chat_model
-            | RunnableLambda(lambda m: m.content.strip())
-            | RunnableLambda(_log_rewrite)
-        )
-
-        # Skip rewrite if history is empty
-        conditional_rewrite_chain = RunnableBranch(
-            (
-                lambda x: not x.get("history"),
-                RunnableLambda(_log_skip_rewrite)
-            ),
-            rewrite_chain
-        )
-
-        self._rag_prompt = rag_prompt
-        self._rewrite_chain = conditional_rewrite_chain
-
-        # Core RAG logic: Retrieve -> Rerank -> Format -> Generate
-        rag_chain = (
-            {
-                "docs": itemgetter("question") | retriever | RunnableLambda(_log_retrieved_docs),
-                "question": itemgetter("question"),
-                "history": itemgetter("history"),
-            }
-            # Add the reranking step: passing the retrieved docs and query to the cross-encoder
-            | RunnablePassthrough.assign(
-                docs=lambda x: rerank(x["question"], x["docs"], top_n=CROSS_ENCODER_K) if x["docs"] else []
+            # Check whether retrieve was called in the last AIMessage's tool_calls
+            last_ai = state["messages"][-1]
+            tool_calls = getattr(last_ai, "tool_calls", [])
+            retrieve_call = next(
+                (tc for tc in tool_calls if tc["name"] == "retrieve"), None
             )
-            | RunnableLambda(self._format_context)
-            | RunnableLambda(lambda x: {
-                "answer": self._chat_model.invoke(
-                    rag_prompt.invoke({
-                        "context": x["context"],
-                        "question": x["question"],
-                        "history": x["history"],
-                    })
-                ).content,
-                "sources": x["docs"],
-            })
+
+            if retrieve_call:
+                # Match ToolMessage by tool_call_id (handles batch tool calls correctly)
+                retrieve_msg = next(
+                    (m for m in result["messages"]
+                     if isinstance(m, ToolMessage) and m.tool_call_id == retrieve_call["id"]),
+                    None,
+                )
+                if retrieve_msg:
+                    updates["retrieved_context"] = retrieve_msg.content
+                    # self._last_docs was just updated by the retrieve tool's closure
+                    updates["last_docs"] = list(self._last_docs)
+
+            return {**result, **updates}
+
+        return tools_node
+
+    def _build_graph(self, tools: list, checkpointer=None):
+        """Build and compile the explicit StateGraph.
+
+        checkpointer=MemorySaver() for normal app use; None for langgraph dev
+        (platform handles persistence when no checkpointer is provided).
+        name='diem_rag_graph' makes every node visible by name in LangSmith Studio.
+        """
+        g = StateGraph(DiemState)
+
+        g.add_node("scope_guard", self._node_scope_guard)
+        g.add_node("retrieve_node", self._node_retrieve)
+        g.add_node("agent", self._node_agent)
+        g.add_node("tools", self._make_tools_node(tools))
+        g.add_node("generate", self._node_generate)
+        g.add_node("output_guard", self._node_output_guard)
+
+        g.set_entry_point("scope_guard")
+        g.add_conditional_edges("scope_guard", _route_scope)
+        g.add_edge("retrieve_node", "agent")
+        g.add_conditional_edges("agent", _route_agent)
+        g.add_edge("tools", "agent")
+        g.add_edge("generate", "output_guard")
+        g.add_edge("output_guard", END)
+
+        compile_kwargs: dict = {"name": "diem_rag_graph"}
+        if checkpointer is not None:
+            compile_kwargs["checkpointer"] = checkpointer
+        return g.compile(**compile_kwargs)
+
+    # ── Node implementations ──────────────────────────────────────────────────
+
+    def _node_scope_guard(self, state: DiemState) -> dict:
+        """Reject out-of-scope queries before retrieval.
+
+        Returns {} (no state change) if in scope → _route_scope sends to retrieve_node.
+        Returns {messages: [AIMessage(rejection)]} if OOT → _route_scope sends to END.
+        """
+        question = next(
+            (_extract_text(m.content) for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
+            "",
+        )
+        if not self._scope_guardrail.check(question):
+            return {"messages": [AIMessage(content=_SCOPE_REJECTION)]}
+        return {}
+
+    def _node_retrieve(self, state: DiemState) -> dict:
+        """Mandatory retrieval step — always runs before the 32b agent loop.
+
+        Injects a fake AIMessage (retrieve tool call) + ToolMessage (context) into
+        `messages` so the 32b agent sees context in the standard tool-call format
+        it was trained on. A bare ToolMessage without a preceding AIMessage tool_call
+        would violate the OpenAI message schema and cause API errors.
+        """
+        query = next(
+            (_extract_text(m.content) for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
+            "",
+        )
+        docs = self._retriever.invoke(query)
+        reranked = rerank(query, docs) if docs else []
+        context = _format_context({"docs": reranked, "question": query, "history": []})["context"]
+
+        # Sync to instance attr so chat_stream can read docs after streaming completes
+        self._last_docs = reranked
+
+        # Simulate the retrieve call so the 32b sees a proper tool call + result pair
+        tool_call_id = str(uuid.uuid4())
+        fake_ai = AIMessage(
+            content="",
+            tool_calls=[{
+                "name": "retrieve",
+                "args": {"query": query},
+                "id": tool_call_id,
+                "type": "tool_call",
+            }],
+        )
+        tool_msg = ToolMessage(
+            content=context,
+            tool_call_id=tool_call_id,
+            name="retrieve",
         )
 
-        # Combine rewrite and core RAG pipeline
-        return (
-            RunnablePassthrough()
-            | RunnablePassthrough.assign(question=conditional_rewrite_chain)
-            | rag_chain
+        return {
+            "messages": [fake_ai, tool_msg],
+            "retrieved_context": context,
+            "last_docs": reranked,
+            "tool_call_count": 0,  # reset at the start of each new turn
+        }
+
+    def _node_agent(self, state: DiemState) -> dict:
+        """32b decides whether to call more tools or let generate handle the answer.
+
+        SYSTEM_PROMPT injected as SystemMessage at position 0, which is valid for
+        all providers. The retrieved context is already in messages from retrieve_node.
+        """
+        # AGENT_SYSTEM_PROMPT: routing only — no response generation instructions
+        system = SystemMessage(content=AGENT_SYSTEM_PROMPT)
+        response = self._agent_model_with_tools.invoke([system] + list(state["messages"]))
+        return {"messages": [response]}
+
+    def _node_generate(self, state: DiemState) -> dict:
+        """9b generates the final answer from retrieved context + SYSTEM_PROMPT.
+
+        Uses state['retrieved_context'] directly (always the latest retrieve output)
+        rather than searching through messages, for reliability.
+        """
+        context = state.get("retrieved_context", "")
+        question = next(
+            (_extract_text(m.content) for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
+            "",
         )
+        logger.info(f"generate node: context_len={len(context)} question_len={len(question)}")
+        result = self._generation_model.invoke(
+            self._generate_prompt.invoke({"context": context, "question": question})
+        )
+        return {"messages": [AIMessage(content=result.content)]}
 
+    def _node_output_guard(self, state: DiemState) -> dict:
+        """Offensive content check + PII redaction on the final AIMessage.
 
-    @staticmethod
-    def _format_context(inputs: Dict[str, Any]) -> Dict[str, Any]:
+        Returns {} if content is clean (no state change).
+        Returns updated messages if content was replaced or redacted.
         """
-        Formats retrieved documents into a single context string.
+        last_ai = next(
+            (m for m in reversed(state["messages"]) if isinstance(m, AIMessage)),
+            None,
+        )
+        if last_ai is None:
+            return {}
 
-        Args:
-            inputs (Dict[str, Any]): Dictionary containing 'docs'.
+        content = last_ai.content if isinstance(last_ai.content, str) else str(last_ai.content)
 
-        Returns:
-            Dict[str, Any]: Inputs augmented with the 'context' string.
-        """
-        docs: List[Document] = inputs.get("docs", [])
-        logger.debug(f"Formatting context from {len(docs)} reranked documents")
+        # Offensive check (keyword fast path inside .check(), LLM only on hit)
+        replacement = self._offensive_guardrail.check(content)
+        if replacement is not None:
+            return {"messages": [AIMessage(id=last_ai.id, content=replacement)]}
 
-        formatted_docs = []
-        for doc in docs:
-            source = doc.metadata.get("source", "Unknown Source")
-            block = (
-                "<document>\n"
-                f"<source>{source}</source>\n"
-                f"<content>\n{doc.page_content}\n</content>\n"
-                "</document>"
-            )
-            formatted_docs.append(block)
+        # PII: email redact / credit card block via regex (no LLM call)
+        redacted = redact_pii(content)
+        if redacted != content:
+            return {"messages": [AIMessage(id=last_ai.id, content=redacted)]}
 
-        context = "\n\n".join(formatted_docs)
-        if docs:
-            logger.debug(f"Total formatted context length: {len(context)} characters")
-        return {**inputs, "context": context}
+        return {}
 
-
-    def _get_history(self, session_id: str) -> InMemoryChatMessageHistory:
-        """
-        Retrieves or creates the chat history for a given session ID.
-
-        Args:
-            session_id (str): The unique identifier for the chat session.
-
-        Returns:
-            InMemoryChatMessageHistory: The chat history object.
-        """
-        if session_id not in self._store:
-            logger.info(f"Creating new chat history for session ID: {session_id}")
-            self._store[session_id] = InMemoryChatMessageHistory()
-        else:
-            logger.debug(f"Retrieved existing chat history for session ID: {session_id}")
-            logger.debug(f"Current history length: {len(self._store[session_id].messages)} messages")
-        return self._store[session_id]
-
+    # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _format_sources(self, sources: List[Document]) -> str:
-        """
-        Extracts and formats unique source URLs from retrieved documents.
-
-        Args:
-            sources (List[Document]): The list of retrieved documents.
-
-        Returns:
-            str: Formatted markdown string of sources, or empty string if none.
-        """
         if not sources:
-            logger.debug("No sources found to format")
             return ""
-
-        seen_urls = set()
-        unique_urls = []
-        
+        seen, urls = set(), []
         for doc in sources:
             url = doc.metadata.get("source", "")
-            if url and url not in seen_urls:
-                seen_urls.add(url)
-                unique_urls.append(url)
-                
-        if unique_urls:
-            logger.debug(f"Extracted {len(unique_urls)} unique source URLs out of {len(sources)} documents")
-            return "\n\n**Sources:**\n" + "\n".join(f"- {url}" for url in unique_urls)
-            
-        logger.debug("Documents had no valid source metadata")
+            if url and url not in seen:
+                seen.add(url)
+                urls.append(url)
+        if urls:
+            return "\n\n**Sources:**\n" + "\n".join(f"- {u}" for u in urls)
         return ""
 
+    def _invoke_config(self, session_id: str) -> dict:
+        return {"configurable": {"thread_id": session_id}, "recursion_limit": 20}
+
+    def _strip_rejection_tags(self, text: str) -> str:
+        for tag in REJECTION_TAGS:
+            if text.startswith(tag):
+                return text[len(tag):].lstrip()
+        return text
+
+    # ── Public API ────────────────────────────────────────────────────────────
 
     def chat(self, message: str, session_id: str = DEFAULT_SESSION_ID) -> str:
-        """
-        Processes a user message and returns the chatbot's response.
-
-        Args:
-            message (str): The user's input message.
-            session_id (str, optional): The session identifier. Defaults to DEFAULT_SESSION_ID.
-
-        Returns:
-            str: The generated response, potentially including sources.
-        """
-        logger.info(f"--- New chat request | Session: {session_id} ---")
-        logger.debug(f"User message: '{message}'")
+        """Non-streaming chat. Returns answer string with appended source URLs."""
+        logger.info(f"chat | session={session_id} | msg={message[:60]}")
         try:
-            result = self.conversational_rag.invoke(
-                {"question": message},
-                config={"configurable": {"session_id": session_id}},
+            result = self._graph.invoke(
+                {"messages": [HumanMessage(message)]},
+                config=self._invoke_config(session_id),
             )
-            
-            answer: str = result["answer"]
-            sources: List[Document] = result.get("sources", [])
-
-            logger.info("Chat message processed successfully")
-            logger.debug(f"Generated answer (length={len(answer)}): {answer[:100]}...")
-
-            is_rejection = any(answer.startswith(t) for t in REJECTION_TAGS)
+            # Sync last_docs from final graph state
+            self._last_docs = list(result.get("last_docs", []))
+            raw = result["messages"][-1].content
+            answer = self._strip_rejection_tags(raw)
+            is_rejection = raw != answer
             if is_rejection:
-                for tag in REJECTION_TAGS:
-                    if answer.startswith(tag):
-                        answer = answer[len(tag):].lstrip()
-                        break
-            else:
-                answer += self._format_sources(sources)
-            return answer
-            
+                return answer
+            return answer + self._format_sources(self._last_docs)
         except Exception as e:
-            logger.exception(f"Error during chat processing: {e}")
-            return "Mi dispiace, si è verificato un errore durante l'elaborazione della tua richiesta."
+            logger.exception(f"chat error: {e}")
+            return "Mi dispiace, si è verificato un errore."
 
     def chat_stream(self, message: str, session_id: str = DEFAULT_SESSION_ID):
+        """Streaming generator. Yields tokens from the generate node only.
+
+        Tokens from scope_guard / retrieve_node / agent / tools nodes are discarded —
+        only the 9b final answer reaches the user. Source URLs yielded as final chunk.
+        For scope rejections (no generate node), the rejection text is yielded at end.
         """
-        Streaming generator: runs full RAG pipeline silently, then yields LLM tokens incrementally.
-        Bypasses RunnableWithMessageHistory and manages history manually.
-        """
-        history = self._get_history(session_id)
-        history_messages = history.messages
-
-        rewritten = self._rewrite_chain.invoke({
-            "question": message,
-            "history": history_messages,
-        }) if history_messages else message
-
-        docs = self._retriever.invoke(rewritten)
-        reranked = rerank(rewritten, docs, top_n=CROSS_ENCODER_K) if docs else []
-
-        formatted = self._format_context({"docs": reranked, "question": rewritten, "history": history_messages})
-        context = formatted["context"]
-        prompt_value = self._rag_prompt.invoke({
-            "context": context,
-            "question": rewritten,
-            "history": history_messages,
-        })
-
-        _max_tag_len = max(len(t) for t in REJECTION_TAGS)
+        logger.info(f"chat_stream | session={session_id}")
         answer = ""
-        tag_checked = False
-        is_rejection = False
-
+        rejection = ""
         try:
-            for chunk in self._chat_model.stream(prompt_value):
-                answer += chunk.content
-                if not tag_checked and len(answer) >= _max_tag_len + 2:
-                    tag_checked = True
-                    for tag in REJECTION_TAGS:
-                        if answer.startswith(tag):
-                            is_rejection = True
-                            answer = answer[len(tag):].lstrip()
-                            break
-                if tag_checked:
-                    yield answer
+            for chunk, metadata in self._graph.stream(
+                {"messages": [HumanMessage(message)]},
+                config=self._invoke_config(session_id),
+                stream_mode="messages",
+            ):
+                node = metadata.get("langgraph_node", "")
+                # Capture scope rejection text (graph ends before generate runs)
+                if node == "scope_guard" and isinstance(chunk, AIMessage) and chunk.content:
+                    rejection = chunk.content
+                # Only stream tokens produced by the generate node (9b final answer)
+                if node == "generate" and hasattr(chunk, "content") and chunk.content:
+                    if not getattr(chunk, "tool_call_chunks", None):
+                        content = chunk.content
+                        # Strip rejection tags inline so they never reach the user
+                        for tag in REJECTION_TAGS:
+                            content = content.replace(tag, "")
+                        answer += content
+                        if content:
+                            yield content
         except Exception as e:
-            logger.error(f"Error during streaming: {e}")
-            yield "Mi dispiace, si è verificato un errore durante la generazione della risposta."
+            logger.error(f"chat_stream error: {e}")
+            yield "Mi dispiace, si è verificato un errore."
             return
 
-        if not tag_checked:
-            for tag in REJECTION_TAGS:
-                if answer.startswith(tag):
-                    is_rejection = True
-                    answer = answer[len(tag):].lstrip()
-                    break
-            if answer:
-                yield answer
+        # If generate node never ran (scope rejection), yield the rejection text
+        if not answer:
+            if rejection:
+                yield self._strip_rejection_tags(rejection)
+            return
 
-        history.add_user_message(message)
-        history.add_ai_message(answer)
+        # self._last_docs updated by _node_retrieve (or _make_tools_node on re-retrieve)
+        sources_md = self._format_sources(self._last_docs)
+        if sources_md:
+            yield sources_md
 
-        if not is_rejection:
-            sources_md = self._format_sources(reranked)
-            if sources_md:
-                yield answer + sources_md
+    def chat_eval(self, message: str, session_id: str = DEFAULT_SESSION_ID) -> Dict[str, Any]:
+        """Evaluation interface. Returns {'answer': str, 'sources': List[Document]}."""
+        logger.info(f"chat_eval | session={session_id}")
+        try:
+            result = self._graph.invoke(
+                {"messages": [HumanMessage(message)]},
+                config=self._invoke_config(session_id),
+            )
+            raw = result["messages"][-1].content
+            answer = self._strip_rejection_tags(raw)
+            return {"answer": answer, "sources": list(result.get("last_docs", []))}
+        except Exception as e:
+            logger.exception(f"chat_eval error: {e}")
+            return {"answer": "", "sources": [], "error": f"{type(e).__name__}: {e}"}
+
+    def get_history(self, session_id: str) -> List[BaseMessage]:
+        """Return full message history from MemorySaver for this session."""
+        try:
+            state = self._graph.get_state({"configurable": {"thread_id": session_id}})
+            return list(state.values.get("messages", []))
+        except Exception:
+            return []

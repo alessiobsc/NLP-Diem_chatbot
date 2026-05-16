@@ -50,7 +50,8 @@ LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.1"))
 
 # OpenRouter settings (used when LLM_PROVIDER=openrouter)
 OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
-OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "qwen/qwen-2.5-7b-instruct")
+OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "qwen/qwen3.5-9b")
+OPENROUTER_AGENT_MODEL: str = os.getenv("OPENROUTER_AGENT_MODEL", "qwen/qwen3-32b")
 
 # Embedding Model Settings (HuggingFace)
 EMBEDDING_MODEL_NAME: str = os.getenv("EMBEDDING_MODEL_NAME", "intfloat/multilingual-e5-base")
@@ -83,3 +84,6 @@ CHILD_CHUNK_OVERLAP: int = 50
 
 # Ingestion Batching
 MAX_CHILD_CHUNKS_PER_BATCH: int = 4000
+
+# Agentic RAG: max tool calls the 32b agent can make per turn before generate is forced
+MAX_TOOL_CALLS: int = int(os.getenv("MAX_TOOL_CALLS", "6"))

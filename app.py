@@ -55,7 +55,10 @@ brain = DiemBrain(vectorstore)
 # Gradio UI
 # ─────────────────────────────────────────────────────────────────────────────
 def chat_fn(message: str, history: list):
-    yield from brain.chat_stream(message, DEFAULT_SESSION_ID)
+    accumulated = ""
+    for chunk in brain.chat_stream(message, DEFAULT_SESSION_ID):
+        accumulated += chunk
+        yield accumulated
 
 
 demo = gr.ChatInterface(

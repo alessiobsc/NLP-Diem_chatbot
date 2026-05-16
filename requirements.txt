@@ -12,6 +12,7 @@ langchain-chroma==1.1.0
 
 # --- UI ---
 gradio==6.14.0
+langgraph-cli[inmem]
 
 # --- Document Processing ---
 pypdf==6.10.2
