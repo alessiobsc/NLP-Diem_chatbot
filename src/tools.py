@@ -1,15 +1,12 @@
 """
 RAG tools for the agentic DIEM Chatbot.
 
-Provides four composable tools:
+Provides three composable tools:
 - retrieve: Search the DIEM knowledge base
 - summarize: Summarize long text
 - calculate: Apply academic calculations using retrieved formulas
-- answer: Generate final answer using retrieved context
 """
 
-from typing import List
-from langchain_core.documents import Document
 from langchain_core.tools import tool
 
 from config import CROSS_ENCODER_K
@@ -18,29 +15,18 @@ from src.logger import get_logger
 logger = get_logger(__name__)
 
 
-def build_tools(retriever, generation_model, brain_ref, rag_prompt) -> list:
-    """
-    Build the 4 RAG tools. brain_ref._last_docs is updated by retrieve()
-    so DiemBrain.chat() can access retrieved documents after agent completes.
-
-    Args:
-        retriever: Document retriever (LangChain Retriever)
-        generation_model: Language model for generation
-        brain_ref: Reference to DiemBrain instance (stores _last_docs)
-        rag_prompt: RAG prompt template (currently unused but kept for API consistency)
-
-    Returns:
-        List[tool]: List of 4 tool functions
-    """
+def build_tools(retriever, generation_model, brain_ref) -> list:
+    """Build the 3 RAG tools. brain_ref._last_docs is updated by retrieve()."""
 
     @tool
     def retrieve(query: str) -> str:
         """Search the DIEM knowledge base for documents relevant to the query.
-        Always call this before answer() or calculate()."""
+        Call this again if current context is insufficient for a multi-part question."""
         from src.brain import rerank, _format_context
 
         docs = retriever.invoke(query)
         reranked = rerank(query, docs, top_n=CROSS_ENCODER_K) if docs else []
+        # brain_ref._last_docs lets DiemBrain access the latest docs after graph completes
         brain_ref._last_docs = reranked
         logger.info(f"retrieve: {len(reranked)} docs after rerank")
         return _format_context({"docs": reranked, "question": query, "history": []})["context"]
@@ -64,20 +50,4 @@ def build_tools(retriever, generation_model, brain_ref, rag_prompt) -> list:
         )
         return generation_model.invoke(prompt).content
 
-    @tool
-    def answer(context: str, question: str) -> str:
-        """Generate the final answer to the user question using retrieved context.
-        ALWAYS call retrieve() first, then pass its output as context here.
-        Never call this without context from retrieve()."""
-        from src.prompts import SYSTEM_PROMPT
-        from langchain_core.prompts import ChatPromptTemplate
-
-        prompt_tmpl = ChatPromptTemplate.from_messages([
-            ("system", SYSTEM_PROMPT),
-            ("human", "<context>\n{context}\n</context>\n\n<instruction>\n{question}\n</instruction>"),
-        ])
-        return generation_model.invoke(
-            prompt_tmpl.invoke({"context": context, "question": question})
-        ).content
-
-    return [retrieve, summarize, calculate, answer]
+    return [retrieve, summarize, calculate]

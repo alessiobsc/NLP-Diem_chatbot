@@ -6,21 +6,20 @@ def _make_tools():
     from src.tools import build_tools
     mock_retriever = MagicMock()
     mock_model = MagicMock()
-    mock_prompt = MagicMock()
     brain_ref = MagicMock()
     brain_ref._last_docs = []
-    return build_tools(mock_retriever, mock_model, brain_ref, mock_prompt)
+    return build_tools(mock_retriever, mock_model, brain_ref)
 
 
-def test_build_tools_returns_four_tools():
+def test_build_tools_returns_three_tools():
     tools = _make_tools()
-    assert len(tools) == 4
+    assert len(tools) == 3
 
 
 def test_tool_names():
     tools = _make_tools()
     names = {t.name for t in tools}
-    assert names == {"retrieve", "summarize", "calculate", "answer"}
+    assert names == {"retrieve", "summarize", "calculate"}
 
 
 def test_retrieve_updates_last_docs():
@@ -30,13 +29,12 @@ def test_retrieve_updates_last_docs():
     mock_retriever = MagicMock()
     mock_retriever.invoke.return_value = [mock_doc]
     mock_model = MagicMock()
-    mock_prompt = MagicMock()
     brain_ref = MagicMock()
     brain_ref._last_docs = []
 
     with patch("src.brain.rerank", return_value=[mock_doc]), \
          patch("src.brain._format_context", return_value={"context": "<document>test</document>"}):
-        tools = build_tools(mock_retriever, mock_model, brain_ref, mock_prompt)
+        tools = build_tools(mock_retriever, mock_model, brain_ref)
         retrieve_tool = next(t for t in tools if t.name == "retrieve")
         result = retrieve_tool.invoke("test query")
 
@@ -50,11 +48,10 @@ def test_calculate_uses_provided_context():
     mock_retriever = MagicMock()
     mock_model = MagicMock()
     mock_model.invoke.return_value = MagicMock(content="Il voto di laurea è 107.")
-    mock_prompt = MagicMock()
     brain_ref = MagicMock()
     brain_ref._last_docs = []
 
-    tools = build_tools(mock_retriever, mock_model, brain_ref, mock_prompt)
+    tools = build_tools(mock_retriever, mock_model, brain_ref)
     calculate_tool = next(t for t in tools if t.name == "calculate")
     result = calculate_tool.invoke({
         "context": "La formula è media/30 * 110.",

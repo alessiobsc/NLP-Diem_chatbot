@@ -4,7 +4,6 @@ Module-level symbols (embedding_model, reranker, rerank, _format_context) are ke
 so ingestion scripts and evaluation/tester.py continue to import without modification.
 """
 
-import uuid
 from typing import Any, Dict, List
 
 from langchain.agents import create_agent
@@ -13,7 +12,7 @@ from langchain_classic.retrievers import ParentDocumentRetriever
 from langchain_classic.storage import LocalFileStore, create_kv_docstore
 from langchain_classic.retrievers.multi_vector import SearchType
 from langchain_core.documents import Document
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langgraph.checkpoint.memory import MemorySaver
@@ -98,10 +97,7 @@ class DiemBrain:
 
     def __init__(self, vectorstore: Chroma) -> None:
         self._last_docs: List[Document] = []
-        # Per-session history: only HumanMessage + final AIMessage (no ToolMessages).
-        # MemorySaver would accumulate ToolMessages causing the agent to skip retrieve()
-        # on subsequent turns, so history is managed manually here.
-        self._history: Dict[str, List[BaseMessage]] = {}
+        self._last_answer: str = ""
 
         self._agent_model = _build_agent_model()
         self._generation_model = _build_chat_model()
@@ -111,23 +107,15 @@ class DiemBrain:
             self._retriever,
             self._generation_model,
             self,
-            None,  # rag_prompt unused: answer tool builds its own prompt inline
         )
         middleware = build_middleware(self._generation_model)
 
         self._agent = create_agent(
             self._agent_model,
             tools=tools,
-            system_prompt=SYSTEM_PROMPT + (
-                "\n6. TOOL USAGE RULES (mandatory):\n"
-                "- NEVER say you lack information or cannot answer without first calling retrieve().\n"
-                "- For every factual question about DIEM, call retrieve() FIRST, no exceptions.\n"
-                "- After retrieve(), call answer() with the retrieved context to generate the response.\n"
-                "- Only skip retrieve() if the user is asking to repeat or clarify your previous response.\n"
-                "- If retrieve() returns empty context, pass that empty context to answer() anyway."
-            ),
+            system_prompt=SYSTEM_PROMPT,
             middleware=middleware,
-            checkpointer=MemorySaver(),  # stateless per-turn (unique thread_id each call)
+            checkpointer=MemorySaver(),
         )
         logger.info("DiemBrain (agentic) initialization complete")
 
@@ -162,10 +150,8 @@ class DiemBrain:
             return "\n\n**Sources:**\n" + "\n".join(f"- {u}" for u in urls)
         return ""
 
-    def _invoke_config(self) -> dict:
-        # Unique thread_id per call: MemorySaver is stateless between turns.
-        # History is injected manually via _history to exclude ToolMessages.
-        return {"configurable": {"thread_id": str(uuid.uuid4())}, "recursion_limit": 15}
+    def _invoke_config(self, session_id: str) -> dict:
+        return {"configurable": {"thread_id": session_id}, "recursion_limit": 15}
 
     def _strip_rejection_tags(self, text: str) -> str:
         for tag in REJECTION_TAGS:
@@ -173,30 +159,28 @@ class DiemBrain:
                 return text[len(tag):].lstrip()
         return text
 
-    def _input_messages(self, session_id: str, message: str) -> List[BaseMessage]:
-        return self._history.get(session_id, []) + [HumanMessage(message)]
-
-    def _save_turn(self, session_id: str, message: str, answer: str) -> None:
-        if session_id not in self._history:
-            self._history[session_id] = []
-        self._history[session_id].append(HumanMessage(message))
-        self._history[session_id].append(AIMessage(answer))
-
     # ── public API ────────────────────────────────────────────────────────────
 
     def chat(self, message: str, session_id: str = DEFAULT_SESSION_ID) -> str:
         """Non-streaming chat. Returns answer string (with appended sources)."""
         logger.info(f"chat | session={session_id} | msg={message[:60]}")
         self._last_docs = []
+        self._last_answer = ""
         try:
             result = self._agent.invoke(
-                {"messages": self._input_messages(session_id, message)},
-                config=self._invoke_config(),
+                {"messages": [HumanMessage(message)]},
+                config=self._invoke_config(session_id),
             )
+            tool_calls = [
+                tc["name"]
+                for m in result["messages"]
+                if hasattr(m, "tool_calls") and m.tool_calls
+                for tc in m.tool_calls
+            ]
+            logger.info(f"tools called: {tool_calls}")
             raw = result["messages"][-1].content
             answer = self._strip_rejection_tags(raw)
             is_rejection = raw != answer
-            self._save_turn(session_id, message, answer)
             if is_rejection:
                 return answer
             return answer + self._format_sources(self._last_docs)
@@ -211,20 +195,45 @@ class DiemBrain:
         """
         logger.info(f"chat_stream | session={session_id}")
         self._last_docs = []
+        self._last_answer = ""
         answer = ""
+        pre_tool_buffer = ""
+        tool_executed = False
         try:
             for chunk, metadata in self._agent.stream(
-                {"messages": self._input_messages(session_id, message)},
-                config=self._invoke_config(),
+                {"messages": [HumanMessage(message)]},
+                config=self._invoke_config(session_id),
                 stream_mode="messages",
             ):
                 node = metadata.get("langgraph_node", "")
                 if node == "tools":
-                    answer = ""  # discard pre-tool agent content (<tool_call> leakage)
+                    tool_executed = True
+                    answer = ""
+                    pre_tool_buffer = ""  # discard <tool_call> leakage
                     continue
                 is_tool_call = bool(getattr(chunk, "tool_call_chunks", None))
                 if node in ("model", "agent") and not is_tool_call and hasattr(chunk, "content") and chunk.content:
-                    answer += chunk.content
+                    if tool_executed:
+                        answer += chunk.content
+                        if "tool_call" in answer.lower():
+                            answer = ""  # inter-tool markup, discard
+                        else:
+                            yield answer
+                    else:
+                        pre_tool_buffer += chunk.content  # buffer, don't yield yet
+
+            # Fallback 1: agent answered directly without calling any tool.
+            if not tool_executed and pre_tool_buffer:
+                logger.warning("chat_stream: no tool called, yielding direct response")
+                answer = pre_tool_buffer
+                yield answer
+
+            # Fallback 2: streaming empty but answer tool stored its output.
+            if not answer:
+                stored = getattr(self, "_last_answer", "")
+                if stored:
+                    logger.warning("chat_stream: using _last_answer fallback")
+                    answer = stored
                     yield answer
         except Exception as e:
             logger.error(f"chat_stream error: {e}")
@@ -233,7 +242,6 @@ class DiemBrain:
 
         stripped = self._strip_rejection_tags(answer)
         is_rejection = stripped != answer
-        self._save_turn(session_id, message, stripped if is_rejection else answer)
         if is_rejection:
             if stripped:
                 yield stripped
@@ -246,19 +254,23 @@ class DiemBrain:
         """Evaluation interface: returns {'answer': str, 'sources': List[Document]}."""
         logger.info(f"chat_eval | session={session_id}")
         self._last_docs = []
+        self._last_answer = ""
         try:
             result = self._agent.invoke(
-                {"messages": self._input_messages(session_id, message)},
-                config=self._invoke_config(),
+                {"messages": [HumanMessage(message)]},
+                config=self._invoke_config(session_id),
             )
             raw = result["messages"][-1].content
             answer = self._strip_rejection_tags(raw)
-            self._save_turn(session_id, message, answer)
             return {"answer": answer, "sources": list(self._last_docs)}
         except Exception as e:
             logger.exception(f"chat_eval error: {e}")
             return {"answer": "", "sources": [], "error": f"{type(e).__name__}: {e}"}
 
     def get_history(self, session_id: str) -> List[BaseMessage]:
-        """Return clean message history (HumanMessage + AIMessage only) for session."""
-        return list(self._history.get(session_id, []))
+        """Return full message history (all message types) from MemorySaver."""
+        try:
+            state = self._agent.get_state({"configurable": {"thread_id": session_id}})
+            return list(state.values.get("messages", []))
+        except Exception:
+            return []
