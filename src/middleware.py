@@ -140,18 +140,3 @@ def redact_pii(text: str) -> str:
         return _PII_BLOCK_MSG
     # Email: replace with placeholder, preserve rest of text
     return _EMAIL_RE.sub("[EMAIL REDACTED]", text)
-
-
-# ── Legacy API for backward compatibility ──────────────────────────────────────
-
-def build_middleware(generation_model) -> list:
-    """
-    DEPRECATED: Return ordered list of middleware for create_agent.
-
-    Kept for backward compatibility with brain.py. The new agentic RAG
-    uses explicit graph nodes instead of middleware hooks.
-    """
-    return [
-        ScopeGuardrail(generation_model),
-        OffensiveContentGuardrail(generation_model),
-    ]

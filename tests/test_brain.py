@@ -12,13 +12,11 @@ def test_diembrain_init_creates_agent():
     with patch("src.brain._build_agent_model") as mock_agent_m, \
          patch("src.brain._build_chat_model") as mock_chat_m, \
          patch("src.brain.build_tools") as mock_tools, \
-         patch("src.brain.build_middleware") as mock_mw, \
          patch("src.brain.create_agent") as mock_ca, \
          patch("src.brain.DiemBrain._build_retriever") as mock_ret:
         mock_agent_m.return_value = MagicMock()
         mock_chat_m.return_value = MagicMock()
         mock_tools.return_value = []
-        mock_mw.return_value = []
         mock_ret.return_value = MagicMock()
         mock_ca.return_value = MagicMock()
 
@@ -33,7 +31,6 @@ def test_chat_eval_returns_answer_and_sources():
     with patch("src.brain._build_agent_model") as mock_agent_m, \
          patch("src.brain._build_chat_model") as mock_chat_m, \
          patch("src.brain.build_tools") as mock_tools, \
-         patch("src.brain.build_middleware") as mock_mw, \
          patch("src.brain.create_agent") as mock_ca, \
          patch("src.brain.DiemBrain._build_retriever") as mock_ret:
         from langchain_core.messages import AIMessage
@@ -41,7 +38,6 @@ def test_chat_eval_returns_answer_and_sources():
         mock_agent_m.return_value = MagicMock()
         mock_chat_m.return_value = MagicMock()
         mock_tools.return_value = []
-        mock_mw.return_value = []
         mock_ret.return_value = MagicMock()
 
         mock_agent = MagicMock()
@@ -64,13 +60,11 @@ def test_get_history_returns_empty_for_new_session():
     with patch("src.brain._build_agent_model") as mock_agent_m, \
          patch("src.brain._build_chat_model") as mock_chat_m, \
          patch("src.brain.build_tools") as mock_tools, \
-         patch("src.brain.build_middleware") as mock_mw, \
          patch("src.brain.create_agent") as mock_ca, \
          patch("src.brain.DiemBrain._build_retriever") as mock_ret:
         mock_agent_m.return_value = MagicMock()
         mock_chat_m.return_value = MagicMock()
         mock_tools.return_value = []
-        mock_mw.return_value = []
         mock_ret.return_value = MagicMock()
         mock_ca.return_value = MagicMock()
 

@@ -32,7 +32,7 @@ from config import (
 )
 from src.models import _build_agent_model, _build_chat_model
 from src.tools import build_tools
-from src.middleware import build_middleware
+from src.middleware import ScopeGuardrail, OffensiveContentGuardrail
 from src.prompts import SYSTEM_PROMPT, REJECTION_TAGS
 from src.logger import get_logger
 
@@ -108,7 +108,8 @@ class DiemBrain:
             self._generation_model,
             self,
         )
-        middleware = build_middleware(self._generation_model)
+        # Middleware will be handled by explicit graph nodes in Task 4
+        middleware = []
 
         self._agent = create_agent(
             self._agent_model,
