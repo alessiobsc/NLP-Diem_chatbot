@@ -70,22 +70,49 @@ REWRITE_PROMPT = (
 )
 
 CONTEXT_HEADER_PROMPT = """
-ROLE: Assistant for Academic Data Indexing.
-TASK: Analyze the provided text from the University of Salerno, DIEM department.
-OUTPUT: A single informative sentence in Italian, around 30-45 words when enough evidence is available, identifying the subject and context.
+ROLE: Conservative metadata writer for a DIEM retrieval index.
+TASK: Write one short retrieval label that helps a vector search engine route this DIEM/UNISA text.
 
-CONTEXT RULES:
-If it is a person: "Profile and contact info of Prof. [Name] (DIEM)."
-If it is a course: "Syllabus and info for the course [Course Name] (DIEM)."
-If it is a location or office page: "Physical location, office hours, and contact points for DIEM."
-If it is a notice: "Official notice regarding [Subject] at DIEM."
-If the subject is unclear: "General information page about DIEM."
+OUTPUT:
+One Italian label, maximum 12 words.
+
+FORMAT:
+[tipo documento]
+or
+[tipo documento] - [argomento esplicito]
+
+Use the second part only if the specific topic is clearly visible in the local parent chunk text.
+
+GUIDANCE:
+Prefer stable document-type labels when clearly supported by TEXT, GLOBAL METADATA, or URL.
+
+Useful DIEM-oriented label families include:
+- docente/personale: profilo docente, pubblicazioni docente, curriculum docente, ricevimento docente, didattica docente, docenti e personale DIEM
+- didattica: didattica DIEM, offerta formativa DIEM, consigli didattici DIEM, focus didattica DIEM, scheda insegnamento, pagina corso di studio, regolamento corso di studio, scheda SUA corso di studio
+- dipartimento: organi collegiali DIEM, commissioni e delegati DIEM, commissione paritetica docenti-studenti DIEM, strutture DIEM, dipartimento di eccellenza DIEM
+- ricerca: aree di ricerca DIEM, focus ricerca DIEM, progetti finanziati DIEM, premi ricerca DIEM, laboratorio DIEM
+- terza missione: terza missione DIEM, trasferimento tecnologico DIEM, impatto sociale DIEM
+- international: accordi Erasmus Plus DIEM, accordi di cooperazione internazionale DIEM, mobilità internazionale DIEM
+- comunicazioni: news DIEM, evento DIEM, avviso DIEM, bando DIEM
+- servizi: servizi e contatti DIEM, pagina DIEM
+
+These labels are guidance, not answers to copy blindly. Choose a label only when it is supported by the provided evidence.
 
 RULES:
-Do not invent names, course titles, or subjects.
-Use only information explicitly present in the text or URL.
-Return only the sentence.
-Do not add explanations, bullets, quotes, or labels.
+- Use GLOBAL METADATA and SOURCE URL to identify the source document or page type.
+- Use the local parent chunk text to identify the specific section or topic.
+- Use only evidence present in TEXT, GLOBAL METADATA, or URL.
+- Do not add facts, names, offices, universities, courses, teachers, or subjects that are not visible.
+- Choose the most specific label clearly supported by TEXT, GLOBAL METADATA, or URL.
+- If the document type is clear but the local topic is not clear, return only the document type.
+- If neither document type nor local topic is clear, return a neutral label based on the visible source, such as "Pagina DIEM".
+- Add a subtopic after "-" only if it is explicit in the local parent chunk.
+- Prefer exact words from URL, title, source_page, first meaningful lines, and key passages.
+- Do not write summaries or claims.
+- Avoid verbs such as gestisce, fornisce, prepara, consente, permette, contiene.
+- Avoid vague labels like "pagina generale", "servizio", or "informazioni" when URL, metadata, or TEXT shows a clearer type.
+- Do not call text "progetto di ricerca" unless URL, metadata, or TEXT explicitly says research project, funded project, or project funding.
+- Return only the label. No explanations, bullets, quotes, markdown, or "Context:" prefix.
 
 TEXT:
 {text}

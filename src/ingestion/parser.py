@@ -12,6 +12,7 @@ logger = get_logger(__name__)
 
 YEAR_CUTOFF = 2020
 TEMPORAL_SCAN_CHARS = 2500
+RAW_PDF_SCAN_CHARS = 2500
 
 METADATA_DATE_KEYS = (
     "date", "created", "creation_date", "creationdate", "moddate",
@@ -27,6 +28,17 @@ _DATE_META_NAMES = frozenset({
 
 # lang attribute prefixes considered non-Italian → drop
 NON_ITALIAN_LANG_PREFIXES = ("en", "zh")
+
+RAW_PDF_MARKERS = (
+    "%pdf-",
+    "/type /page",
+    "/mediabox",
+    "/cropbox",
+    "/contents",
+    "/resources",
+    " endobj",
+    " startxref",
+)
 
 
 def extract_html_metadata(html: str) -> dict:
@@ -172,6 +184,54 @@ def filter_recent_documents(docs: list) -> list:
         f"  -> Temporal filter kept {len(kept)}/{len(docs)} documents "
         f"(cutoff year: {YEAR_CUTOFF}, dropped: {dropped})"
     )
+    return kept
+
+
+def is_raw_pdf_artifact(text: str) -> bool:
+    """Detect PDF object streams accidentally indexed as plain text."""
+    if not text:
+        return False
+
+    scan = text[:RAW_PDF_SCAN_CHARS].lower()
+    if scan.lstrip().startswith("%pdf-"):
+        return True
+
+    marker_hits = sum(marker in scan for marker in RAW_PDF_MARKERS)
+    object_hits = len(re.findall(r"\b\d+\s+\d+\s+obj\b", scan))
+    if marker_hits >= 3 and object_hits >= 1:
+        return True
+    if marker_hits >= 4:
+        return True
+    return False
+
+
+def is_low_text_quality_document(doc) -> tuple[bool, str]:
+    """Return whether a document should be dropped before enrichment/indexing."""
+    if is_raw_pdf_artifact(doc.page_content):
+        return True, "raw PDF object stream"
+    return False, ""
+
+
+def filter_low_quality_documents(docs: list) -> list:
+    """Drop documents whose extracted text is not useful natural language."""
+    kept = []
+    dropped_reasons: dict[str, int] = {}
+
+    for doc in docs:
+        drop, reason = is_low_text_quality_document(doc)
+        if drop:
+            dropped_reasons[reason] = dropped_reasons.get(reason, 0) + 1
+            source = doc.metadata.get("source", "unknown source")
+            logger.debug(f"  SKIP low-quality document ({reason}): {source}")
+            continue
+        kept.append(doc)
+
+    dropped = len(docs) - len(kept)
+    if dropped:
+        details = ", ".join(f"{reason}: {count}" for reason, count in sorted(dropped_reasons.items()))
+        logger.info(f"  -> Quality filter kept {len(kept)}/{len(docs)} documents (dropped: {dropped}; {details})")
+    else:
+        logger.info(f"  -> Quality filter kept {len(kept)}/{len(docs)} documents (dropped: 0)")
     return kept
 
 

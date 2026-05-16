@@ -86,6 +86,59 @@ def rerank(query: str, documents: List[Document], top_n: int = CROSS_ENCODER_K) 
 
 
 def _format_context(inputs: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Formats retrieved documents into a single context string.
+
+    Args:
+        inputs (Dict[str, Any]): Dictionary containing 'docs'.
+
+    Returns:
+        Dict[str, Any]: Inputs augmented with the 'context' string.
+    """
+    docs: List[Document] = inputs.get("docs", [])
+    logger.debug(f"Formatting context from {len(docs)} reranked documents")
+
+    formatted_docs = []
+    for doc in docs:
+        source = doc.metadata.get("source", "Unknown Source")
+        content = _strip_context_header_from_content(doc)
+        block = (
+            "<document>\n"
+            f"<source>{source}</source>\n"
+            f"<content>\n{content}\n</content>\n"
+            "</document>"
+        )
+        formatted_docs.append(block)
+
+    context = "\n\n".join(formatted_docs)
+    if docs:
+        logger.debug(f"Total formatted context length: {len(context)} characters")
+    return {**inputs, "context": context}
+
+
+def _strip_context_header_from_content(doc: Document) -> str:
+    """
+    Remove generated retrieval headers before sending evidence to the answer model.
+    """
+    content = doc.page_content or ""
+    header = doc.metadata.get("context_header", "")
+
+    if isinstance(header, str) and header:
+        stripped = content.lstrip()
+        if stripped.startswith(header):
+            return stripped[len(header):].lstrip()
+
+    stripped = content.lstrip()
+    if stripped.lower().startswith("context:"):
+        lines = stripped.splitlines()
+        if lines:
+            return "\n".join(lines[1:]).lstrip()
+
+    return content
+
+
+
+def _format_context(inputs: Dict[str, Any]) -> Dict[str, Any]:
     docs: List[Document] = inputs.get("docs", [])
     blocks = []
     for doc in docs:

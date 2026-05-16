@@ -24,6 +24,7 @@ from config import (
     CHILD_CHUNK_SIZE,
     CHILD_CHUNK_OVERLAP
 )
+from src.ingestion.enrichment import generate_context_header
 from src.logger import get_logger
 
 logger = get_logger(__name__)
@@ -136,20 +137,6 @@ class DocumentIndexer:
             chunk_overlap=CHILD_CHUNK_OVERLAP
         )
 
-    @staticmethod
-    def _add_context_headers_to_documents(docs: List[Document]) -> int:
-        """
-        Ensures each parent document carries its context header in page_content.
-        """
-        updated = 0
-        for doc in docs:
-            header = _get_context_header(doc)
-            if not header:
-                continue
-            doc.page_content = _add_context_header(doc.page_content, header)
-            updated += 1
-        return updated
-
     def _get_collection_count(self) -> Optional[int]:
         """
         Safely retrieves the number of items in the underlying Chroma collection.
@@ -162,6 +149,56 @@ class DocumentIndexer:
         except Exception as e:
             logger.warning(f"Could not retrieve collection count: {e}")
             return None
+
+    @staticmethod
+    def _add_context_headers_to_parent_documents(docs: List[Document]) -> tuple[int, int]:
+        """
+        Generate parent-specific context headers and store them only in metadata.
+        """
+        generated = 0
+        missing = 0
+        total = len(docs)
+        start_time = time.time()
+
+        logger.info("=" * 60)
+        logger.info("PHASE 2B - Generating parent context headers")
+        logger.info("=" * 60)
+
+        for index, doc in enumerate(docs, 1):
+            previous_header = _get_context_header(doc)
+            if previous_header:
+                doc.page_content = _strip_context_header(doc.page_content, previous_header)
+
+            source = doc.metadata.get("source", "")
+            title = str(doc.metadata.get("title", ""))[:120]
+            parent_chars = len(doc.page_content or "")
+            logger.debug(
+                "Header generation parent start: "
+                f"{index}/{total}; chars={parent_chars}; source={source}; title={title}"
+            )
+            try:
+                header = generate_context_header(doc.page_content, source, doc.metadata)
+            except Exception as e:
+                logger.warning(f"Could not generate context header for parent from {source}: {e}")
+                header = ""
+
+            if header:
+                doc.metadata["context_header"] = header
+                generated += 1
+            else:
+                doc.metadata.pop("context_header", None)
+                missing += 1
+
+            if index % 25 == 0 or index == total:
+                elapsed_mins = (time.time() - start_time) / 60
+                logger.info(
+                    "  -> Header generation progress: "
+                    f"{index}/{total} parents "
+                    f"({index / total:.1%}); generated={generated}; missing={missing}; "
+                    f"elapsed={elapsed_mins:.1f} min; last_source={source}"
+                )
+
+        return generated, missing
 
     def index(self, all_docs: List[Document]) -> Chroma:
         """
@@ -179,11 +216,13 @@ class DocumentIndexer:
         logger.info("=" * 60)
         
         parent_docs = self._parent_splitter.split_documents(all_docs)
-        parents_with_header = self._add_context_headers_to_documents(parent_docs)
         total_parents = len(parent_docs)
         logger.info(f"  -> Generated {total_parents} parent documents from {len(all_docs)} sources")
 
-        logger.info(f"  -> Context headers applied to {parents_with_header} parent documents")
+        headers_generated, parents_without_header = self._add_context_headers_to_parent_documents(parent_docs)
+        logger.info(f"  -> Context headers generated for {headers_generated} parent documents")
+        logger.info(f"  -> Parent documents without context header: {parents_without_header}")
+        logger.info("  -> Context headers stored in metadata only; parent content remains clean")
 
         logger.info("=" * 60)
         logger.info("PHASE 3 - Embedding child chunks and indexing parents")
