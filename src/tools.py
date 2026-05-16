@@ -1,13 +1,18 @@
 """
 RAG tools for the agentic DIEM Chatbot.
 
-Provides three composable tools:
+Provides four composable tools:
+- rewrite: Rewrite ambiguous query into standalone question using history
 - retrieve: Search the DIEM knowledge base
 - summarize: Summarize long text
 - calculate: Apply academic calculations using retrieved formulas
 """
 
+from typing import Annotated
+
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool
+from langgraph.prebuilt import InjectedState
 
 from config import CROSS_ENCODER_K
 from src.logger import get_logger
@@ -16,7 +21,35 @@ logger = get_logger(__name__)
 
 
 def build_tools(retriever, generation_model, brain_ref) -> list:
-    """Build the 3 RAG tools. brain_ref._last_docs is updated by retrieve()."""
+    """Build the 4 RAG tools. brain_ref._last_docs is updated by retrieve()."""
+
+    @tool
+    def rewrite(query: str, state: Annotated[dict, InjectedState]) -> str:
+        """Rewrite an ambiguous query into a standalone question using conversation history.
+        Call this when the query contains pronouns (lui, lei, suoi, questo) or refers to
+        something mentioned earlier. Returns the rewritten query — then call retrieve() with it."""
+        from src.brain import _extract_text
+        from src.prompts import REWRITE_PROMPT
+
+        messages = state.get("messages", [])
+        history_lines = []
+        for msg in messages[:-1]:  # exclude current HumanMessage
+            if isinstance(msg, HumanMessage) and not getattr(msg, "tool_calls", None):
+                history_lines.append(f"User: {_extract_text(msg.content)}")
+            elif isinstance(msg, AIMessage) and not getattr(msg, "tool_calls", None):
+                text = _extract_text(msg.content)
+                if text:
+                    history_lines.append(f"AI: {text}")
+        history_str = "\n".join(history_lines[-6:])
+
+        prompt = f"<history>\n{history_str}\n</history>\n<user_latest>{query}</user_latest>"
+        result = generation_model.invoke([
+            SystemMessage(content=REWRITE_PROMPT),
+            HumanMessage(content=prompt),
+        ])
+        rewritten = result.content.strip()
+        logger.info(f"rewrite: '{query}' → '{rewritten}'")
+        return rewritten
 
     @tool
     def retrieve(query: str) -> str:
@@ -50,4 +83,4 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
         )
         return generation_model.invoke(prompt).content
 
-    return [retrieve, summarize, calculate]
+    return [rewrite, retrieve, summarize, calculate]

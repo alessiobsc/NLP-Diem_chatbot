@@ -12,8 +12,9 @@ AGENT_SYSTEM_PROMPT = (
     "as a retrieve tool call and its result.\n\n"
 
     "YOUR ONLY JOB: decide if additional tool calls are needed.\n"
+    "- Call rewrite(query) if the query contains pronouns (lui, lei, suoi, questo, ecc.) or refers to a previous answer. Then call retrieve() with the rewritten query.\n"
     "- Call retrieve(query) ONLY IF the current context is completely empty or clearly irrelevant. Do NOT re-retrieve if documents are already present — trust the initial retrieval.\n"
-    "- Call summarize(text) if the retrieved context exceeds 3000 characters.\n"
+    "- Call summarize(text) if the retrieved context exceeds 6000 characters.\n"
     "- Call calculate(context, operation, values) for academic calculations.\n"
     "- If the context is already sufficient: call NO tools and output NOTHING.\n\n"
 
