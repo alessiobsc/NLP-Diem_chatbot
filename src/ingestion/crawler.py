@@ -1,15 +1,30 @@
 import json
 import re
+import ssl
 import time
 from urllib.parse import urldefrag, urljoin, urlparse
 
 import requests
+import urllib3
+from requests import Session
 from bs4 import BeautifulSoup
 from langchain_community.document_loaders import RecursiveUrlLoader
 
 from src.logger import get_logger
 
 logger = get_logger(__name__)
+
+# UNISA certificates are not in certifi's bundle on Windows.
+# urllib3 bypasses Python's ssl module, so ssl._create_default_https_context
+# doesn't help. Instead patch requests.Session.request so that every caller
+# (including RecursiveUrlLoader's internal session) defaults to verify=False.
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+ssl._create_default_https_context = ssl._create_unverified_context
+_orig_request = Session.request
+def _no_ssl_verify(self, method, url, **kwargs):
+    kwargs.setdefault("verify", False)
+    return _orig_request(self, method, url, **kwargs)
+Session.request = _no_ssl_verify
 
 HTML_LINK_REGEX = r"""<a\s+(?:[^>]*?\s+)?href=["']([^"']*)["']"""
 
@@ -18,6 +33,7 @@ EXCLUDE_DIRS = [
     ".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ".svg",
     ".ico", ".woff", ".woff2", ".ttf", ".eot",
     "/idp/", "/password-recovery", "/login",
+    "/print()", "/history.go(", "@",
 ]
 
 OFFERTA_FORMATIVA_PATH = "/didattica/offerta-formativa"
@@ -69,7 +85,7 @@ def extract_html_sitemap_urls(sitemap_url: str, base_url: str) -> list[str]:
     """Extract deterministic section URLs from UNISA HTML sitemap pages."""
     try:
         logger.info(f"Fetching HTML sitemap: {sitemap_url}")
-        resp = requests.get(sitemap_url, timeout=15)
+        resp = requests.get(sitemap_url, timeout=15, verify=False)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
 
@@ -159,7 +175,7 @@ def extract_diem_faculty_urls() -> list[str]:
     """
     try:
         logger.info(f"Fetching faculty list from {DIEM_PERSONALE_URL}")
-        resp = requests.get(DIEM_PERSONALE_URL, timeout=15)
+        resp = requests.get(DIEM_PERSONALE_URL, timeout=15, verify=False)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
 
@@ -178,7 +194,7 @@ def extract_diem_faculty_urls() -> list[str]:
         urls: list[str] = []
         for i, mid in enumerate(matricole, 1):
             try:
-                r = requests.get(rubrica_links[mid], timeout=10)
+                r = requests.get(rubrica_links[mid], timeout=10, verify=False)
                 r.raise_for_status()
                 rubrica_soup = BeautifulSoup(r.text, "html.parser")
                 has_profile = any(

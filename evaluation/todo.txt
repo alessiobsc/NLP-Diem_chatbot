@@ -35,38 +35,8 @@ A) BLOCCANTE PER LA CONSEGNA
 B) BUG CONFERMATI NEL CHATBOT (rilevati dal tester)
 ================================================================================
 
-# 2. [BUG] Scope rejection conflato con knowledge gap
-   Problema:   Il bot risponde "I don't have that information in my knowledge
-               base." anche a domande chiaramente fuori scope (es. "Chi e il
-               re di Spagna?"). Smoke: strict pass 0%, soft pass 100%.
-   File:       brain.py:85-94 (SYSTEM_PROMPT)
-   Fix:        Aggiungere uno stadio di scope-classification a monte del
-               retrieval (prompt LLM in/out_of_scope). Se OOS, rispondere
-               direttamente con "This question is outside my scope. I can
-               only answer questions about DIEM." senza chiamare il retriever.
-   Conseguenze:Strict scope pass rate da 0% a >90%. Risparmio retrieval su OOS.
 
-# 3. [BUG] Robustness "Sei sicuro?" -> retrieval drift
-   Problema:   Al turno 2 ("Sei sicuro?"), il bot rifa retrieval con una query
-               nuova e cita docenti completamente diversi dal turno 1.
-               Smoke: rob_001 pass 0/1.
-   File:       brain.py:96-100 (REWRITE_PROMPT), brain.py:153-223 (rag_chain)
-   Fix:        Nel rewrite chain, intercettare challenge brevi
-               ("sei sicuro", "davvero?", "are you sure") e riusare la query
-               del turno precedente invece di riformulare. In alternativa:
-               skip retrieval su challenge e rispondere dalla sola history.
-   Conseguenze:Robustness `are_you_sure*` da 0% a positiva (atteso >80%).
 
-# 4. [BUG] Multi-turn framing odd ("Si, questo e corretto...")
-   Problema:   Risposta a "Quali sono i suoi orari?" inizia con "Si, questo e
-               corretto. Il Professore..." come se confermasse un'affermazione.
-               Il rewrite chain probabilmente trasforma la domanda in
-               affermazione.
-   File:       brain.py:96-100 (REWRITE_PROMPT)
-   Fix:        Stringere il prompt: imporre che l'output sia SEMPRE una
-               domanda interrogativa, mai un'affermazione. Aggiungere un
-               log temporaneo del rewrite intermedio per diagnosi.
-   Conseguenze:Risposte multi-turn piu naturali, miglior ResponseRelevancy.
 
 # 5. [BUG] Retrieval incompleto su DIEM (indirizzo, corsi triennali)
    Problema:   "Dove si trova il DIEM?" -> non cita Via Giovanni Paolo II 132

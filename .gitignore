@@ -14,3 +14,5 @@ logs/
 chroma_diem.backup_header_bad/
 evaluation/results/*
 !evaluation/results/.gitkeep
+evaluation/full_comparison/*
+evaluation/parser_comparison/*
