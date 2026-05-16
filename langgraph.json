@@ -1,0 +1,7 @@
+{
+    "dependencies": ["."],
+    "graphs": {
+      "agent": "./src/graph_dev.py:diem_rag_graph"
+    },
+    "env": ".env"
+  }

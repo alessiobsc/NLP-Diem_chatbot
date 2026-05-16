@@ -13,3 +13,6 @@ logs/
 chroma_diem.backup_header_bad/
 evaluation/results/*
 !evaluation/results/.gitkeep
+src/data/badwords.b64
+tests/*
+.langgraph_api/*

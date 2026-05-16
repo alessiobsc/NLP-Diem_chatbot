@@ -13,11 +13,8 @@ from src.logger import get_logger
 
 logger = get_logger(__name__)
 
-_QWEN3_EXTRA = {"extra_body": {"thinking": False}}
-
-
 def _build_chat_model():
-    """9b generation model: answer tool, summarize tool, guardrail yes/no checks."""
+    """Generation model: final answer generation, summarize, guardrail checks."""
     if LLM_PROVIDER == "openrouter":
         try:
             logger.info(f"Chat model: OpenRouter {OPENROUTER_MODEL}")
@@ -26,7 +23,7 @@ def _build_chat_model():
                 api_key=OPENROUTER_API_KEY,
                 model=OPENROUTER_MODEL,
                 temperature=LLM_TEMPERATURE,
-                **_QWEN3_EXTRA,
+                timeout=60,
             )
         except Exception as e:
             logger.warning(f"OpenRouter chat init failed ({e}), falling back to Ollama")
@@ -35,7 +32,7 @@ def _build_chat_model():
 
 
 def _build_agent_model():
-    """32b routing model: agent reasoning and tool selection."""
+    """Routing model: tool selection and reasoning."""
     if LLM_PROVIDER == "openrouter":
         try:
             logger.info(f"Agent model: OpenRouter {OPENROUTER_AGENT_MODEL}")
@@ -44,7 +41,7 @@ def _build_agent_model():
                 api_key=OPENROUTER_API_KEY,
                 model=OPENROUTER_AGENT_MODEL,
                 temperature=LLM_TEMPERATURE,
-                **_QWEN3_EXTRA,
+                timeout=120,
             )
         except Exception as e:
             logger.warning(f"OpenRouter agent init failed ({e}), falling back to Ollama")

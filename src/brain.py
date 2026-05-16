@@ -43,7 +43,7 @@ from src.tools import build_tools
 from src.middleware import (
     ScopeGuardrail, OffensiveContentGuardrail, redact_pii, _SCOPE_REJECTION,
 )
-from src.prompts import SYSTEM_PROMPT, REJECTION_TAGS
+from src.prompts import SYSTEM_PROMPT, AGENT_SYSTEM_PROMPT, REJECTION_TAGS
 from src.logger import get_logger
 
 logger = get_logger(__name__)
@@ -106,6 +106,24 @@ class DiemState(TypedDict):
     last_docs: List[Document] # latest retrieved docs, used for source URL formatting
 
 
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+def _extract_text(content) -> str:
+    """Extract plain text from a message content that may be a string or a list of content blocks.
+
+    LangSmith Studio sends HumanMessage.content as a list of dicts
+    (e.g. [{"type": "text", "text": "..."}]) instead of a plain string.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(
+            block.get("text", "") if isinstance(block, dict) else str(block)
+            for block in content
+        )
+    return str(content)
+
+
 # ── Routing functions (module-level so tests can import them directly) ────────
 
 def _route_scope(state: DiemState) -> str:
@@ -136,10 +154,10 @@ class DiemBrain:
         self._generation_model = _build_chat_model()
         self._retriever = self._build_retriever(vectorstore)
 
-        tools = build_tools(self._retriever, self._generation_model, self)
+        self._tools = build_tools(self._retriever, self._generation_model, self)
 
         # Bind tools to 32b so it can emit tool_calls in its AIMessage output
-        self._agent_model_with_tools = self._agent_model.bind_tools(tools)
+        self._agent_model_with_tools = self._agent_model.bind_tools(self._tools)
 
         self._scope_guardrail = ScopeGuardrail(self._generation_model)
         self._offensive_guardrail = OffensiveContentGuardrail(self._generation_model)
@@ -150,7 +168,7 @@ class DiemBrain:
             ("human", "<context>\n{context}\n</context>\n\n<instruction>\n{question}\n</instruction>"),
         ])
 
-        self._graph = self._build_graph(tools)
+        self._graph = self._build_graph(self._tools, checkpointer=MemorySaver())
         logger.info("DiemBrain (explicit StateGraph) initialization complete")
 
     # ── Retriever ─────────────────────────────────────────────────────────────
@@ -208,9 +226,11 @@ class DiemBrain:
 
         return tools_node
 
-    def _build_graph(self, tools: list):
+    def _build_graph(self, tools: list, checkpointer=None):
         """Build and compile the explicit StateGraph.
 
+        checkpointer=MemorySaver() for normal app use; None for langgraph dev
+        (platform handles persistence when no checkpointer is provided).
         name='diem_rag_graph' makes every node visible by name in LangSmith Studio.
         """
         g = StateGraph(DiemState)
@@ -230,7 +250,10 @@ class DiemBrain:
         g.add_edge("generate", "output_guard")
         g.add_edge("output_guard", END)
 
-        return g.compile(checkpointer=MemorySaver(), name="diem_rag_graph")
+        compile_kwargs: dict = {"name": "diem_rag_graph"}
+        if checkpointer is not None:
+            compile_kwargs["checkpointer"] = checkpointer
+        return g.compile(**compile_kwargs)
 
     # ── Node implementations ──────────────────────────────────────────────────
 
@@ -241,7 +264,7 @@ class DiemBrain:
         Returns {messages: [AIMessage(rejection)]} if OOT → _route_scope sends to END.
         """
         question = next(
-            (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
+            (_extract_text(m.content) for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
             "",
         )
         if not self._scope_guardrail.check(question):
@@ -257,7 +280,7 @@ class DiemBrain:
         would violate the OpenAI message schema and cause API errors.
         """
         query = next(
-            (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
+            (_extract_text(m.content) for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
             "",
         )
         docs = self._retriever.invoke(query)
@@ -297,7 +320,8 @@ class DiemBrain:
         SYSTEM_PROMPT injected as SystemMessage at position 0, which is valid for
         all providers. The retrieved context is already in messages from retrieve_node.
         """
-        system = SystemMessage(content=SYSTEM_PROMPT)
+        # AGENT_SYSTEM_PROMPT: routing only — no response generation instructions
+        system = SystemMessage(content=AGENT_SYSTEM_PROMPT)
         response = self._agent_model_with_tools.invoke([system] + list(state["messages"]))
         return {"messages": [response]}
 
@@ -309,9 +333,10 @@ class DiemBrain:
         """
         context = state.get("retrieved_context", "")
         question = next(
-            (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
+            (_extract_text(m.content) for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
             "",
         )
+        logger.info(f"generate node: context_len={len(context)} question_len={len(question)}")
         result = self._generation_model.invoke(
             self._generate_prompt.invoke({"context": context, "question": question})
         )
@@ -413,8 +438,13 @@ class DiemBrain:
                 # Only stream tokens produced by the generate node (9b final answer)
                 if node == "generate" and hasattr(chunk, "content") and chunk.content:
                     if not getattr(chunk, "tool_call_chunks", None):
-                        answer += chunk.content
-                        yield chunk.content
+                        content = chunk.content
+                        # Strip rejection tags inline so they never reach the user
+                        for tag in REJECTION_TAGS:
+                            content = content.replace(tag, "")
+                        answer += content
+                        if content:
+                            yield content
         except Exception as e:
             logger.error(f"chat_stream error: {e}")
             yield "Mi dispiace, si è verificato un errore."
@@ -424,13 +454,6 @@ class DiemBrain:
         if not answer:
             if rejection:
                 yield self._strip_rejection_tags(rejection)
-            return
-
-        stripped = self._strip_rejection_tags(answer)
-        is_rejection = stripped != answer
-        if is_rejection:
-            if stripped:
-                yield stripped
             return
 
         # self._last_docs updated by _node_retrieve (or _make_tools_node on re-retrieve)
