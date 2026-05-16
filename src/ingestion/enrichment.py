@@ -6,7 +6,9 @@ from urllib.parse import unquote, urlparse
 import requests
 from dotenv import load_dotenv
 
-from config import OPENROUTER_API_KEY
+from config import OPENROUTER_API_KEY, MAX_OPENROUTER_FAILURES, OPENROUTER_TIMEOUT_SECONDS, \
+    OPENROUTER_CONTEXT_HEADER_MODEL, OPENROUTER_ENDPOINT, OLLAMA_TIMEOUT_SECONDS, OLLAMA_MODEL, OLLAMA_ENDPOINT, \
+    MAX_OLLAMA_FAILURES
 from .parser import clean_text
 from src.logger import get_logger
 from src.prompts import CONTEXT_HEADER_PROMPT
@@ -14,11 +16,6 @@ from src.prompts import CONTEXT_HEADER_PROMPT
 load_dotenv()
 
 logger = get_logger(__name__)
-OPENROUTER_ENDPOINT = os.getenv("OPENROUTER_ENDPOINT", "https://openrouter.ai/api/v1/chat/completions")
-OPENROUTER_CONTEXT_HEADER_MODEL = os.getenv("OPENROUTER_CONTEXT_HEADER_MODEL", "mistralai/mistral-nemo")
-OPENROUTER_TIMEOUT_SECONDS = float(os.getenv("OPENROUTER_CONTEXT_HEADER_TIMEOUT", "30"))
-OLLAMA_MODEL = os.getenv("OLLAMA_ENRICHMENT_MODEL", "qwen2.5:3b")
-OLLAMA_ENDPOINT = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434/api/generate")
 
 # TODO (Software Architect): Refactor global state variables (`_HEADER_CACHE`, `_OLLAMA_DISABLED`) into a dedicated class for better state management.
 _HEADER_CACHE: dict = {}
@@ -26,9 +23,6 @@ _OPENROUTER_DISABLED = False
 _OPENROUTER_FAILURES = 0
 _OLLAMA_DISABLED = False
 _OLLAMA_FAILURES = 0
-MAX_OPENROUTER_FAILURES = int(os.getenv("OPENROUTER_CONTEXT_HEADER_MAX_FAILURES", "3"))
-MAX_OLLAMA_FAILURES = int(os.getenv("OLLAMA_ENRICHMENT_MAX_FAILURES", "5"))
-OLLAMA_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_ENRICHMENT_TIMEOUT", "10"))
 HEADER_MAX_WORDS = 18
 HEADER_INPUT_MAX_CHARS = 2200
 
