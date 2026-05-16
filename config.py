@@ -84,3 +84,6 @@ CHILD_CHUNK_OVERLAP: int = 50
 
 # Ingestion Batching
 MAX_CHILD_CHUNKS_PER_BATCH: int = 4000
+
+# Agentic RAG: max tool calls the 32b agent can make per turn before generate is forced
+MAX_TOOL_CALLS: int = int(os.getenv("MAX_TOOL_CALLS", "6"))
