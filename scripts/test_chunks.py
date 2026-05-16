@@ -4,11 +4,12 @@ Verifica corretta separazione, metadati, e qualità del contenuto (trafilatura o
 """
 
 import io
-import re
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 from urllib.parse import urlparse
+
+from app import embedding_model
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
@@ -20,7 +21,6 @@ from config import (
     CHROMA_DIR, COLLECTION_NAME, PARENT_STORE_DIR,
     CHILD_CHUNK_SIZE, PARENT_CHUNK_SIZE, EMBEDDING_DIMENSION
 )
-from src.brain import embedding_model
 
 BATCH_SIZE = 2000
 

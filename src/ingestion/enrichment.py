@@ -1,4 +1,3 @@
-import os
 import re
 import time
 from urllib.parse import unquote, urlparse
@@ -10,7 +9,7 @@ from config import OPENROUTER_API_KEY, MAX_OPENROUTER_FAILURES, OPENROUTER_TIMEO
     OPENROUTER_CONTEXT_HEADER_MODEL, OPENROUTER_ENDPOINT, OLLAMA_TIMEOUT_SECONDS, OLLAMA_MODEL, OLLAMA_ENDPOINT, \
     MAX_OLLAMA_FAILURES
 from .parser import clean_text
-from src.logger import get_logger
+from src.utils.logger import get_logger
 from src.prompts import CONTEXT_HEADER_PROMPT
 
 load_dotenv()

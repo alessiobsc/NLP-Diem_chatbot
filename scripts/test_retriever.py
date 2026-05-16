@@ -5,6 +5,8 @@ Allows the user to input a query and a score threshold, displaying the retrieved
 import sys
 from pathlib import Path
 
+from app import embedding_model
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -14,7 +16,6 @@ from langchain_classic.retrievers import ParentDocumentRetriever
 from langchain_classic.storage import LocalFileStore, create_kv_docstore
 from langchain_classic.retrievers.multi_vector import SearchType
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from src.brain import embedding_model
 from config import CHROMA_DIR_NAME, COLLECTION_NAME, PARENT_STORE_DIR, CHILD_CHUNK_SIZE, CHILD_CHUNK_OVERLAP, EMBEDDING_DIMENSION
 
 

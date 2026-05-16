@@ -14,6 +14,8 @@ from urllib.parse import urlparse
 import requests
 from bs4 import BeautifulSoup
 
+from app import embedding_model
+
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -21,7 +23,6 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from config import CHROMA_DIR, COLLECTION_NAME, EMBEDDING_DIMENSION
-from src.brain import embedding_model
 
 SAMPLE_PER_DOMAIN = 10
 FETCH_TIMEOUT = 10

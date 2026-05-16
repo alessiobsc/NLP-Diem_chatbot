@@ -10,7 +10,7 @@ from requests import Session
 from bs4 import BeautifulSoup
 from langchain_community.document_loaders import RecursiveUrlLoader
 
-from src.logger import get_logger
+from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 

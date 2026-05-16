@@ -15,7 +15,8 @@ from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedState
 
 from config import CROSS_ENCODER_K
-from src.logger import get_logger
+from src.utils.logger import get_logger
+
 
 logger = get_logger(__name__)
 
@@ -28,16 +29,16 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
         """Rewrite an ambiguous query into a standalone question using conversation history.
         Call this when the query contains pronouns (lui, lei, suoi, questo) or refers to
         something mentioned earlier. Returns the rewritten query — then call retrieve() with it."""
-        from src.brain import _extract_text
+        from src.agent.brain import extract_text
         from src.prompts import REWRITE_PROMPT
 
         messages = state.get("messages", [])
         history_lines = []
         for msg in messages[:-1]:  # exclude current HumanMessage
             if isinstance(msg, HumanMessage) and not getattr(msg, "tool_calls", None):
-                history_lines.append(f"User: {_extract_text(msg.content)}")
+                history_lines.append(f"User: {extract_text(msg.content)}")
             elif isinstance(msg, AIMessage) and not getattr(msg, "tool_calls", None):
-                text = _extract_text(msg.content)
+                text = extract_text(msg.content)
                 if text:
                     history_lines.append(f"AI: {text}")
         history_str = "\n".join(history_lines[-6:])
@@ -55,14 +56,14 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
     def retrieve(query: str) -> str:
         """Search the DIEM knowledge base for documents relevant to the query.
         Call this again if current context is insufficient for a multi-part question."""
-        from src.brain import rerank, _format_context
+        from src.agent.brain import rerank, format_context
 
         docs = retriever.invoke(query)
         reranked = rerank(query, docs, top_n=CROSS_ENCODER_K) if docs else []
         # brain_ref._last_docs lets DiemBrain access the latest docs after graph completes
         brain_ref._last_docs = reranked
         logger.info(f"retrieve: {len(reranked)} docs after rerank")
-        return _format_context({"docs": reranked, "question": query, "history": []})["context"]
+        return format_context({"docs": reranked, "question": query, "history": []})["context"]
 
     @tool
     def summarize(text: str) -> str:

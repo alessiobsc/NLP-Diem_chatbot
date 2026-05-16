@@ -5,6 +5,9 @@ and trafilatura content quality.
 
 import io
 import sys
+
+from app import embedding_model
+
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 from collections import Counter
 from pathlib import Path
@@ -15,7 +18,6 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from langchain_chroma import Chroma
-from src.brain import embedding_model
 from config import CHROMA_DIR, COLLECTION_NAME, EMBEDDING_DIMENSION
 
 

@@ -1,6 +1,6 @@
 from langchain_ollama import ChatOllama
 from langchain_openai import ChatOpenAI
-
+from src.utils.logger import get_logger
 from config import (
     LLM_PROVIDER,
     LLM_TEMPERATURE,
@@ -9,11 +9,11 @@ from config import (
     OPENROUTER_AGENT_MODEL,
     OPENROUTER_MODEL,
 )
-from src.logger import get_logger
 
 logger = get_logger(__name__)
 
-def _build_chat_model():
+
+def build_chat_model():
     """Generation model: final answer generation, summarize, guardrail checks."""
     if LLM_PROVIDER == "openrouter":
         try:
@@ -31,7 +31,7 @@ def _build_chat_model():
     return ChatOllama(model=OLLAMA_CHAT_MODEL, temperature=LLM_TEMPERATURE)
 
 
-def _build_agent_model():
+def build_agent_model():
     """Routing model: tool selection and reasoning."""
     if LLM_PROVIDER == "openrouter":
         try:

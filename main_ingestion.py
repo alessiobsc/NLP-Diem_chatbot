@@ -2,6 +2,8 @@ import argparse
 import datetime
 import os
 
+from app import embedding_model
+
 os.environ.setdefault("PYTHONUNBUFFERED", "1")
 
 from dotenv import load_dotenv
@@ -27,7 +29,7 @@ from src.ingestion.parser import (
     NON_ITALIAN_LANG_PREFIXES,
 )
 from src.ingestion.database import index_documents
-from src.logger import get_logger
+from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -211,7 +213,6 @@ def main() -> None:
 
     # --full
     # TODO (Software Architect): Avoid importing `embedding_model` locally here to prevent circular dependencies or hidden side effects.
-    from src.brain import embedding_model
     run_full_pipeline(embedding_model)
 
 

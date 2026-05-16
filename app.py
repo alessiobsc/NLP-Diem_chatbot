@@ -3,13 +3,19 @@ import sys
 from config import CHROMA_DIR_NAME, COLLECTION_NAME, DEFAULT_SESSION_ID, EMBEDDING_DIMENSION
 from dotenv import load_dotenv
 from langchain_chroma import Chroma
-from src.brain import embedding_model, DiemBrain
 import gradio as gr
-from src.logger import get_logger
+
+from src.agent.brain import DiemBrain
+from src.embeddings.embedding_init import build_embedding_model
+from src.utils.logger import get_logger
 
 load_dotenv()
 
 logger = get_logger(__name__)
+
+
+# Global embedding model instance
+embedding_model = build_embedding_model()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Configuration

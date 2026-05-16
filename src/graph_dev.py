@@ -8,8 +8,10 @@ Kept separate from brain.py so DiemBrain has no langgraph-dev-specific code.
 """
 
 from langchain_chroma import Chroma
-from src.brain import embedding_model, DiemBrain
-from src.logger import get_logger
+
+from app import embedding_model
+from src.agent.brain import DiemBrain
+from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
