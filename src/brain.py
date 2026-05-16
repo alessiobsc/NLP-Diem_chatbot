@@ -279,10 +279,12 @@ class DiemBrain:
         it was trained on. A bare ToolMessage without a preceding AIMessage tool_call
         would violate the OpenAI message schema and cause API errors.
         """
-        query = next(
+        raw_query = next(
             (_extract_text(m.content) for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
             "",
         )
+        from src.rewriter import rewrite_query
+        query = rewrite_query(self._generation_model, state["messages"], raw_query)
         docs = self._retriever.invoke(query)
         reranked = rerank(query, docs) if docs else []
         context = _format_context({"docs": reranked, "question": query, "history": []})["context"]
