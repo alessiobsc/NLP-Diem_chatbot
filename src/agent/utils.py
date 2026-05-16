@@ -6,6 +6,7 @@ so ingestion scripts and tester.py continue to import without modification.
 """
 from typing import Any, Dict, List
 from langchain_core.documents import Document
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from src.utils.logger import get_logger
 
 
@@ -67,6 +68,42 @@ def strip_context_header_from_content(doc: Document) -> str:
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
+def rewrite_query(query: str, state: dict, lightweight_model) -> str:
+    """Rewrite query using conversation history if pronouns/references are present.
+
+    Called by retrieve_node before initial retrieval on turn 2+.
+    Uses the lightweight model to minimize latency overhead.
+    """
+    from src.prompts import REWRITE_PROMPT
+
+    messages = state.get("messages", [])
+    history_lines = []
+    for msg in messages[:-1]:
+        if isinstance(msg, HumanMessage) and not getattr(msg, "tool_calls", None):
+            history_lines.append(f"User: {extract_text(msg.content)}")
+        elif isinstance(msg, AIMessage) and not getattr(msg, "tool_calls", None):
+            text = extract_text(msg.content)
+            if text:
+                history_lines.append(f"AI: {text}")
+
+    if not history_lines:
+        return query
+
+    history_str = "\n".join(history_lines[-6:])
+    prompt = f"<history>\n{history_str}\n</history>\n<user_latest>{query}</user_latest>"
+    try:
+        result = lightweight_model.invoke([
+            SystemMessage(content=REWRITE_PROMPT),
+            HumanMessage(content=prompt),
+        ])
+        rewritten = result.content.strip()
+        logger.info(f"rewrite_query: '{query}' → '{rewritten}'")
+        return rewritten
+    except Exception as e:
+        logger.warning(f"rewrite_query failed ({e}), using raw query")
+        return query
+
 
 def extract_text(content) -> str:
     """Extract plain text from a message content that may be a string or a list of content blocks.

@@ -14,7 +14,6 @@ from langchain_core.documents import Document
 from langchain_core.messages import (
     BaseMessage, HumanMessage, AIMessage, AIMessageChunk, SystemMessage, ToolMessage,
 )
-from langchain_core.prompts import ChatPromptTemplate
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, END
@@ -28,13 +27,13 @@ from config import (
     DEFAULT_SESSION_ID, MAX_TOOL_CALLS
 )
 from src.embeddings.reranker import rerank
-from src.agent.utils import extract_text, format_context
-from src.agent.init_models import build_agent_model, build_chat_model
+from src.agent.utils import extract_text, format_context, rewrite_query
+from src.agent.init_models import build_agent_model, build_lightweight_model
 from src.agent.tools import build_tools
 from src.middleware import (
     ScopeGuardrail, OffensiveContentGuardrail, redact_pii, _SCOPE_REJECTION,
 )
-from src.prompts import SYSTEM_PROMPT, AGENT_SYSTEM_PROMPT, REJECTION_TAGS
+from src.prompts import AGENT_SYSTEM_PROMPT, REJECTION_TAGS
 from src.utils.logger import get_logger
 from langgraph.graph.message import add_messages
 
@@ -53,6 +52,14 @@ class DiemState(TypedDict):
 
 # ── Routing functions (module-level so tests can import them directly) ────────
 
+def _route_input(state: DiemState) -> str:
+    """After input_guard: an injected AIMessage means offensive input → END."""
+    last = state["messages"][-1]
+    if isinstance(last, AIMessage):
+        return "__end__"
+    return "scope_guard"
+
+
 def _route_scope(state: DiemState) -> str:
     """After scope_guard: an injected AIMessage means rejection → END."""
     last = state["messages"][-1]
@@ -62,11 +69,11 @@ def _route_scope(state: DiemState) -> str:
 
 
 def _route_agent(state: DiemState) -> str:
-    """After agent: go to tools if tool_calls present and under safety cap, else generate."""
+    """After agent: tools if tool_calls present, else output_guard."""
     last = state["messages"][-1]
     if getattr(last, "tool_calls", None) and state["tool_call_count"] < MAX_TOOL_CALLS:
         return "tools"
-    return "generate"
+    return "output_guard"
 
 
 # ── DiemBrain ─────────────────────────────────────────────────────────────────
@@ -78,22 +85,16 @@ class DiemBrain:
         self._last_docs: List[Document] = []
 
         self._agent_model = build_agent_model()
-        self._generation_model = build_chat_model()
+        self._lightweight_model = build_lightweight_model()
         self._retriever = self._build_retriever(vectorstore)
 
-        self._tools = build_tools(self._retriever, self._generation_model, self)
+        self._tools = build_tools(self._retriever, self._lightweight_model, self)
 
         # Bind tools to agent model so it can emit tool_calls in its AIMessage output
         self._agent_model_with_tools = self._agent_model.bind_tools(self._tools)
 
-        self._scope_guardrail = ScopeGuardrail(self._generation_model)
-        self._offensive_guardrail = OffensiveContentGuardrail(self._generation_model)
-
-        # Build generation prompt once (reused every _node_generate call)
-        self._generate_prompt = ChatPromptTemplate.from_messages([
-            ("system", SYSTEM_PROMPT),
-            ("human", "<context>\n{context}\n</context>\n\n<instruction>\n{question}\n</instruction>"),
-        ])
+        self._scope_guardrail = ScopeGuardrail(self._lightweight_model)
+        self._offensive_guardrail = OffensiveContentGuardrail()
 
         self._graph = self._build_graph(self._tools, checkpointer=MemorySaver())
         logger.info("DiemBrain (explicit StateGraph) initialization complete")
@@ -162,19 +163,19 @@ class DiemBrain:
         """
         g = StateGraph(DiemState)
 
+        g.add_node("input_guard", self._node_input_guard)
         g.add_node("scope_guard", self._node_scope_guard)
         g.add_node("retrieve_node", self._node_retrieve)
         g.add_node("agent", self._node_agent)
         g.add_node("tools", self._make_tools_node(tools))
-        g.add_node("generate", self._node_generate)
         g.add_node("output_guard", self._node_output_guard)
 
-        g.set_entry_point("scope_guard")
+        g.set_entry_point("input_guard")
+        g.add_conditional_edges("input_guard", _route_input)
         g.add_conditional_edges("scope_guard", _route_scope)
         g.add_edge("retrieve_node", "agent")
         g.add_conditional_edges("agent", _route_agent)
         g.add_edge("tools", "agent")
-        g.add_edge("generate", "output_guard")
         g.add_edge("output_guard", END)
 
         compile_kwargs: dict = {"name": "diem_rag_graph"}
@@ -183,6 +184,24 @@ class DiemBrain:
         return g.compile(**compile_kwargs)
 
     # ── Node implementations ──────────────────────────────────────────────────
+
+    def _block_if_offensive(self, content: str, msg_id: str | None = None) -> dict:
+        """Return state update that replaces/injects AIMessage if content is offensive, else {}."""
+        replacement = self._offensive_guardrail.check(content)
+        if replacement is None:
+            return {}
+        kwargs: dict = {"content": replacement}
+        if msg_id is not None:
+            kwargs["id"] = msg_id
+        return {"messages": [AIMessage(**kwargs)]}
+
+    def _node_input_guard(self, state: DiemState) -> dict:
+        """Reject offensive user input before scope check."""
+        question = next(
+            (extract_text(m.content) for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
+            "",
+        )
+        return self._block_if_offensive(question)
 
     def _node_scope_guard(self, state: DiemState) -> dict:
         """Reject out-of-scope queries before retrieval.
@@ -206,10 +225,16 @@ class DiemBrain:
         it was trained on. A bare ToolMessage without a preceding AIMessage tool_call
         would violate the OpenAI message schema and cause API errors.
         """
-        query = next(
+        raw_query = next(
             (extract_text(m.content) for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
             "",
         )
+        has_history = any(
+            isinstance(m, HumanMessage)
+            for m in state["messages"][:-1]
+            if not getattr(m, "tool_calls", None)
+        )
+        query = rewrite_query(raw_query, state, self._lightweight_model) if has_history else raw_query
         docs = self._retriever.invoke(query)
         reranked = rerank(query, docs) if docs else []
         context = format_context({"docs": reranked, "question": query, "history": []})["context"]
@@ -252,23 +277,6 @@ class DiemBrain:
         response = self._agent_model_with_tools.invoke([system] + list(state["messages"]))
         return {"messages": [response]}
 
-    def _node_generate(self, state: DiemState) -> dict:
-        """Generator produces the final answer from retrieved context + SYSTEM_PROMPT.
-
-        Uses state['retrieved_context'] directly (always the latest retrieve output)
-        rather than searching through messages, for reliability.
-        """
-        context = state.get("retrieved_context", "")
-        question = next(
-            (extract_text(m.content) for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
-            "",
-        )
-        logger.info(f"generate node: context_len={len(context)} question_len={len(question)}")
-        result = self._generation_model.invoke(
-            self._generate_prompt.invoke({"context": context, "question": question})
-        )
-        return {"messages": [AIMessage(content=result.content)]}
-
     def _node_output_guard(self, state: DiemState) -> dict:
         """Offensive content check + PII redaction on the final AIMessage.
 
@@ -284,10 +292,9 @@ class DiemBrain:
 
         content = last_ai.content if isinstance(last_ai.content, str) else str(last_ai.content)
 
-        # Offensive check (keyword fast path inside .check(), LLM only on hit)
-        replacement = self._offensive_guardrail.check(content)
-        if replacement is not None:
-            return {"messages": [AIMessage(id=last_ai.id, content=replacement)]}
+        blocked = self._block_if_offensive(content, msg_id=last_ai.id)
+        if blocked:
+            return blocked
 
         # PII: email redact / credit card block via regex (no LLM call)
         redacted = redact_pii(content)
@@ -359,11 +366,12 @@ class DiemBrain:
                 stream_mode="messages",
             ):
                 node = metadata.get("langgraph_node", "")
-                # Capture scope rejection text (graph ends before generate runs)
-                if node == "scope_guard" and isinstance(chunk, AIMessage) and chunk.content:
+                # Capture early rejection text (input_guard or scope_guard)
+                if node in ("input_guard", "scope_guard") and isinstance(chunk, AIMessage) and chunk.content:
                     rejection = chunk.content
-                # Only stream tokens produced by the generate node (generator final answer)
-                if node == "generate" and hasattr(chunk, "content") and chunk.content:
+                # Stream tokens from agent node only — tool_call_chunks guard filters
+                # out intermediate tool-call emissions from the agent routing steps.
+                if node == "agent" and hasattr(chunk, "content") and chunk.content:
                     if not getattr(chunk, "tool_call_chunks", None):
                         is_partial = isinstance(chunk, AIMessageChunk)
                         # LangGraph stream_mode="messages" emits both per-token

@@ -18,6 +18,16 @@ from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# Load once at module level — avoids 20s reload on every retrieve call
+_local_reranker: CrossEncoder | None = None
+
+def _get_local_reranker() -> CrossEncoder:
+    global _local_reranker
+    if _local_reranker is None:
+        logger.info(f"Loading local reranker model: {LOCAL_RERANKER_MODEL}")
+        _local_reranker = CrossEncoder(LOCAL_RERANKER_MODEL)
+    return _local_reranker
+
 
 def _rerank_with_openrouter(query: str, documents: List[Document], top_n: int) -> List[Document]:
     """Reranks documents using the official OpenRouter rerank endpoint."""
@@ -72,12 +82,7 @@ def _rerank_local(query: str, documents: List[Document], top_n: int) -> List[Doc
 
     logger.debug(f"Reranking {len(documents)} documents for query: '{query}' with local model: {LOCAL_RERANKER_MODEL}")
 
-    try:
-        reranker = CrossEncoder(LOCAL_RERANKER_MODEL)
-    except Exception as e:
-        logger.error(f"Failed to load local reranker model '{LOCAL_RERANKER_MODEL}': {e}")
-        raise e
-
+    reranker = _get_local_reranker()
     pairs = [[query, d.page_content] for d in documents]
     scores = reranker.predict(pairs, show_progress_bar=False)
 
