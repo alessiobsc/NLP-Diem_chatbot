@@ -144,6 +144,12 @@ class DiemBrain:
         self._scope_guardrail = ScopeGuardrail(self._generation_model)
         self._offensive_guardrail = OffensiveContentGuardrail(self._generation_model)
 
+        # Build generation prompt once (reused every _node_generate call)
+        self._generate_prompt = ChatPromptTemplate.from_messages([
+            ("system", SYSTEM_PROMPT),
+            ("human", "<context>\n{context}\n</context>\n\n<instruction>\n{question}\n</instruction>"),
+        ])
+
         self._graph = self._build_graph(tools)
         logger.info("DiemBrain (explicit StateGraph) initialization complete")
 
@@ -306,12 +312,8 @@ class DiemBrain:
             (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
             "",
         )
-        prompt_tmpl = ChatPromptTemplate.from_messages([
-            ("system", SYSTEM_PROMPT),
-            ("human", "<context>\n{context}\n</context>\n\n<instruction>\n{question}\n</instruction>"),
-        ])
         result = self._generation_model.invoke(
-            prompt_tmpl.invoke({"context": context, "question": question})
+            self._generate_prompt.invoke({"context": context, "question": question})
         )
         return {"messages": [AIMessage(content=result.content)]}
 
@@ -393,9 +395,11 @@ class DiemBrain:
 
         Tokens from scope_guard / retrieve_node / agent / tools nodes are discarded —
         only the 9b final answer reaches the user. Source URLs yielded as final chunk.
+        For scope rejections (no generate node), the rejection text is yielded at end.
         """
         logger.info(f"chat_stream | session={session_id}")
         answer = ""
+        rejection = ""
         try:
             for chunk, metadata in self._graph.stream(
                 {"messages": [HumanMessage(message)]},
@@ -403,6 +407,9 @@ class DiemBrain:
                 stream_mode="messages",
             ):
                 node = metadata.get("langgraph_node", "")
+                # Capture scope rejection text (graph ends before generate runs)
+                if node == "scope_guard" and isinstance(chunk, AIMessage) and chunk.content:
+                    rejection = chunk.content
                 # Only stream tokens produced by the generate node (9b final answer)
                 if node == "generate" and hasattr(chunk, "content") and chunk.content:
                     if not getattr(chunk, "tool_call_chunks", None):
@@ -413,7 +420,10 @@ class DiemBrain:
             yield "Mi dispiace, si è verificato un errore."
             return
 
+        # If generate node never ran (scope rejection), yield the rejection text
         if not answer:
+            if rejection:
+                yield self._strip_rejection_tags(rejection)
             return
 
         stripped = self._strip_rejection_tags(answer)

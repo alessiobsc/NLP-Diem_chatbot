@@ -174,3 +174,137 @@ def test_get_history_returns_empty_for_new_session():
     brain._graph = MagicMock()
     brain._graph.get_state.return_value = MagicMock(values={"messages": []})
     assert brain.get_history("new-session-xyz") == []
+
+
+# ── Node: generate ────────────────────────────────────────────────────────────
+
+def test_node_generate_invokes_generation_model():
+    brain = _make_brain()
+    brain._generation_model = MagicMock()
+    brain._generation_model.invoke.return_value = MagicMock(content="Il DIEM si trova a Fisciano.")
+
+    from src.brain import DiemState
+    state = DiemState(
+        messages=[HumanMessage(content="Dove si trova il DIEM?")],
+        tool_call_count=0,
+        retrieved_context="<document>Il DIEM è a Fisciano.</document>",
+        last_docs=[],
+    )
+    result = brain._node_generate(state)
+
+    brain._generation_model.invoke.assert_called_once()
+    assert len(result["messages"]) == 1
+    assert isinstance(result["messages"][0], AIMessage)
+    assert result["messages"][0].content == "Il DIEM si trova a Fisciano."
+
+
+# ── Node: output_guard ────────────────────────────────────────────────────────
+
+def test_node_output_guard_passes_clean_content():
+    brain = _make_brain()
+    brain._offensive_guardrail = MagicMock()
+    brain._offensive_guardrail.check.return_value = None  # clean
+
+    from src.brain import DiemState
+    state = DiemState(
+        messages=[AIMessage(content="Il DIEM si trova a Fisciano.")],
+        tool_call_count=0, retrieved_context="", last_docs=[],
+    )
+    result = brain._node_output_guard(state)
+    assert result == {}  # no state change
+
+
+def test_node_output_guard_replaces_offensive_content():
+    brain = _make_brain()
+    brain._offensive_guardrail = MagicMock()
+    brain._offensive_guardrail.check.return_value = "Non posso fornire questa risposta."
+
+    from src.brain import DiemState
+    state = DiemState(
+        messages=[AIMessage(content="contenuto offensivo")],
+        tool_call_count=0, retrieved_context="", last_docs=[],
+    )
+    result = brain._node_output_guard(state)
+    assert len(result["messages"]) == 1
+    assert result["messages"][0].content == "Non posso fornire questa risposta."
+
+
+def test_node_output_guard_redacts_pii():
+    brain = _make_brain()
+    brain._offensive_guardrail = MagicMock()
+    brain._offensive_guardrail.check.return_value = None  # not offensive
+
+    from src.brain import DiemState
+    state = DiemState(
+        messages=[AIMessage(content="Contattami a test@example.com per info.")],
+        tool_call_count=0, retrieved_context="", last_docs=[],
+    )
+    result = brain._node_output_guard(state)
+    assert len(result["messages"]) == 1
+    assert "test@example.com" not in result["messages"][0].content
+    assert "[EMAIL REDACTED]" in result["messages"][0].content
+
+
+# ── Public API: chat ──────────────────────────────────────────────────────────
+
+def test_chat_returns_answer_with_sources():
+    brain = _make_brain()
+    mock_doc = Document(page_content="test", metadata={"source": "http://test.com"})
+    brain._graph = MagicMock()
+    brain._graph.invoke.return_value = {
+        "messages": [AIMessage(content="Il DIEM si trova a Fisciano.")],
+        "last_docs": [mock_doc],
+    }
+
+    result = brain.chat("Dove si trova il DIEM?", "test-session")
+    assert "Il DIEM si trova a Fisciano." in result
+    assert "http://test.com" in result
+
+
+def test_chat_returns_rejection_without_sources():
+    from src.middleware import _SCOPE_REJECTION
+    brain = _make_brain()
+    brain._graph = MagicMock()
+    brain._graph.invoke.return_value = {
+        "messages": [AIMessage(content=_SCOPE_REJECTION)],
+        "last_docs": [],
+    }
+
+    result = brain.chat("Chi ha vinto il Mondiale?", "test-session")
+    # Rejection text is returned; no sources appended
+    assert "Sources" not in result
+    assert _SCOPE_REJECTION in result
+
+
+# ── Public API: chat_stream ───────────────────────────────────────────────────
+
+def test_chat_stream_yields_generate_tokens():
+    brain = _make_brain()
+
+    # Simulate stream: one chunk from 'generate' node
+    generate_chunk = AIMessage(content="Il DIEM è a Fisciano.")
+    brain._graph = MagicMock()
+    brain._graph.stream.return_value = iter([
+        (generate_chunk, {"langgraph_node": "generate"}),
+    ])
+    brain._last_docs = []
+
+    tokens = list(brain.chat_stream("Dove?", "test-session"))
+    assert any("DIEM" in t for t in tokens)
+
+
+def test_chat_stream_yields_rejection_on_scope_guard():
+    from src.middleware import _SCOPE_REJECTION
+    brain = _make_brain()
+
+    # Simulate stream: scope_guard emits rejection AIMessage, no generate node runs
+    rejection_chunk = AIMessage(content=_SCOPE_REJECTION)
+    brain._graph = MagicMock()
+    brain._graph.stream.return_value = iter([
+        (rejection_chunk, {"langgraph_node": "scope_guard"}),
+    ])
+
+    tokens = list(brain.chat_stream("Chi vince il Mondiale?", "test-session"))
+    # Must yield something (the rejection), not empty
+    assert len(tokens) > 0
+    assert any(t.strip() for t in tokens)
