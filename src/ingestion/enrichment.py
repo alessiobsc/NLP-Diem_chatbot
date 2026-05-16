@@ -6,6 +6,7 @@ from urllib.parse import unquote, urlparse
 import requests
 from dotenv import load_dotenv
 
+from config import OPENROUTER_API_KEY
 from .parser import clean_text
 from src.logger import get_logger
 from src.prompts import CONTEXT_HEADER_PROMPT
@@ -13,7 +14,6 @@ from src.prompts import CONTEXT_HEADER_PROMPT
 load_dotenv()
 
 logger = get_logger(__name__)
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_ENDPOINT = os.getenv("OPENROUTER_ENDPOINT", "https://openrouter.ai/api/v1/chat/completions")
 OPENROUTER_CONTEXT_HEADER_MODEL = os.getenv("OPENROUTER_CONTEXT_HEADER_MODEL", "mistralai/mistral-nemo")
 OPENROUTER_TIMEOUT_SECONDS = float(os.getenv("OPENROUTER_CONTEXT_HEADER_TIMEOUT", "30"))

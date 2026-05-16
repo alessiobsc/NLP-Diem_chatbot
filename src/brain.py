@@ -4,10 +4,10 @@ Core AI Brain module for the DIEM Chatbot.
 Module-level symbols (embedding_model, reranker, rerank, _format_context) are kept
 so ingestion scripts and tester.py continue to import without modification.
 """
-
+import json
 import uuid
 from typing import Any, Annotated, Dict, List
-
+import requests
 from langchain_chroma import Chroma
 from langchain_classic.retrievers import ParentDocumentRetriever
 from langchain_classic.storage import LocalFileStore, create_kv_docstore
@@ -25,18 +25,16 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 from sentence_transformers import CrossEncoder
 from typing_extensions import TypedDict
-
+from openai import OpenAI
 from config import (
     PARENT_STORE_DIR,
-    EMBEDDING_MODEL_NAME,
-    CROSS_ENCODER_MODEL_NAME,
     CHILD_CHUNK_SIZE,
     CHILD_CHUNK_OVERLAP,
     BI_ENCODER_K,
-    CROSS_ENCODER_K,
     RETRIEVER_SCORE_THRESHOLD,
     DEFAULT_SESSION_ID,
-    MAX_TOOL_CALLS,
+    MAX_TOOL_CALLS, EMBEDDING_PROVIDER, LOCAL_RERANKER_MODEL, OPENROUTER_EMBEDDING_MODEL, LOCAL_EMBEDDING_MODEL,
+    OPENROUTER_API_KEY, OPENROUTER_RERANKER_MODEL,
 )
 from src.models import _build_agent_model, _build_chat_model
 from src.tools import build_tools
