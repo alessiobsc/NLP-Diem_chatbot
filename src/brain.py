@@ -137,19 +137,6 @@ def _strip_context_header_from_content(doc: Document) -> str:
     return content
 
 
-
-def _format_context(inputs: Dict[str, Any]) -> Dict[str, Any]:
-    docs: List[Document] = inputs.get("docs", [])
-    blocks = []
-    for doc in docs:
-        source = doc.metadata.get("source", "Unknown Source")
-        blocks.append(
-            f"<document>\n<source>{source}</source>\n"
-            f"<content>\n{doc.page_content}\n</content>\n</document>"
-        )
-    return {**inputs, "context": "\n\n".join(blocks)}
-
-
 # ── Graph State ───────────────────────────────────────────────────────────────
 
 class DiemState(TypedDict):
