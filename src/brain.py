@@ -14,7 +14,7 @@ from langchain_classic.storage import LocalFileStore, create_kv_docstore
 from langchain_classic.retrievers.multi_vector import SearchType
 from langchain_core.documents import Document
 from langchain_core.messages import (
-    BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage,
+    BaseMessage, HumanMessage, AIMessage, AIMessageChunk, SystemMessage, ToolMessage,
 )
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -635,13 +635,17 @@ class DiemBrain:
                 # Only stream tokens produced by the generate node (9b final answer)
                 if node == "generate" and hasattr(chunk, "content") and chunk.content:
                     if not getattr(chunk, "tool_call_chunks", None):
-                        content = chunk.content
-                        # Strip rejection tags inline so they never reach the user
-                        for tag in REJECTION_TAGS:
-                            content = content.replace(tag, "")
-                        answer += content
-                        if content:
-                            yield content
+                        is_partial = isinstance(chunk, AIMessageChunk)
+                        # LangGraph stream_mode="messages" emits both per-token
+                        # AIMessageChunk objects and the final complete AIMessage
+                        # written to state — skip the latter to avoid duplication.
+                        if is_partial or not answer:
+                            content = chunk.content
+                            for tag in REJECTION_TAGS:
+                                content = content.replace(tag, "")
+                            answer += content
+                            if content:
+                                yield content
         except Exception as e:
             logger.error(f"chat_stream error: {e}")
             yield "Mi dispiace, si è verificato un errore."
