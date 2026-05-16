@@ -20,12 +20,12 @@ from src.ingestion.crawler import (
 )
 from src.ingestion.parser import (
     extract_html_metadata,
+    filter_low_quality_documents,
     filter_recent_documents,
     html_extractor,
     load_pdfs_from_links,
     NON_ITALIAN_LANG_PREFIXES,
 )
-from src.ingestion.enrichment import add_context_headers
 from src.ingestion.database import index_documents
 from src.logger import get_logger
 
@@ -165,6 +165,7 @@ def run_full_pipeline(embedding_model) -> None:
     logger.info(f"Total documents after URL + language filters, before temporal filtering: {len(all_docs)}")
 
     all_docs = filter_recent_documents(all_docs)
+    all_docs = filter_low_quality_documents(all_docs)
 
     # Save after ALL filters so JSON reflects exactly what enters the vector store
     html_final = [d for d in all_docs if ".pdf" not in d.metadata.get("source", "").lower()]
@@ -172,9 +173,7 @@ def run_full_pipeline(embedding_model) -> None:
     save_crawled_urls_to_json(html_final, "crawled_urls.json")
     save_crawled_pdfs_to_json(pdf_final, "crawled_pdfs.json")
 
-    add_context_headers(all_docs)
-    logger.info(f"Total documents after enrichment: {len(all_docs)}")
-
+    logger.info(f"Total documents ready for indexing: {len(all_docs)}")
     index_documents(all_docs, embedding_model)
 
 
