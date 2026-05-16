@@ -155,6 +155,78 @@
       "tags": ["phd", "doctorate"],
       "question": "Il DIEM offre corsi di dottorato?",
       "reference": "Si, il DIEM e coinvolto in corsi di dottorato, in particolare nel Dottorato in Ingegneria dell'Informazione e in altri corsi di dottorato correlati. Informazioni su ammissione, curricula e dottorandi attuali sono pubblicate nella sezione Ricerca / Dottorato del sito DIEM."
+    },
+
+    {
+      "id": "is_news_001",
+      "persona": "current_student",
+      "tags": ["homepage", "news", "lessons"],
+      "question": "Quali avvisi recenti sono pubblicati sulla homepage del DIEM riguardo modifiche di lezioni o cambi d'aula?",
+      "reference": "La homepage del DIEM pubblica nella sezione 'ultime news' avvisi su modifiche di lezioni, cambi d'aula e sospensioni didattiche, tra cui avvisi per il II anno di Ingegneria Informatica (canale A-H), per il I anno (canale I-Z), avvisi su modifiche di orari e aule e comunicazioni sull'avvio del tutorato didattico. I contenuti variano nel tempo."
+    },
+    {
+      "id": "is_news_002",
+      "persona": "external",
+      "tags": ["homepage", "ranking", "research_quality"],
+      "question": "Quale risultato di classifica nazionale viene rivendicato dal DIEM sulla homepage?",
+      "reference": "Sulla homepage del DIEM e riportata la dichiarazione 'Il DIEM in vetta alla classifica dei dipartimenti italiani per la qualita della ricerca', con riferimento a una valutazione nazionale della qualita della ricerca."
+    },
+    {
+      "id": "is_offer_001",
+      "persona": "prospective_student",
+      "tags": ["offerta_formativa", "triennale", "degree_programs"],
+      "question": "Quali corsi di laurea triennale sono elencati nella pagina dell'offerta formativa del DIEM?",
+      "reference": "La pagina dell'offerta formativa del DIEM elenca i corsi di laurea triennale in Ingegneria Informatica e Ingegneria Elettronica, con link alle rispettive pagine su corsi.unisa.it."
+    },
+    {
+      "id": "is_offer_002",
+      "persona": "prospective_student",
+      "tags": ["offerta_formativa", "magistrale", "degree_programs"],
+      "question": "Quali corsi di laurea magistrale del DIEM sono elencati nella pagina dell'offerta formativa?",
+      "reference": "La pagina dell'offerta formativa del DIEM elenca i corsi di laurea magistrale in Ingegneria Informatica, Ingegneria Elettronica e Information Engineering for Digital Medicine, con link alle rispettive pagine su corsi.unisa.it."
+    },
+    {
+      "id": "is_imm_001",
+      "persona": "prospective_student",
+      "tags": ["homepage", "immatricolazioni", "admission"],
+      "question": "C'e una sezione dedicata alle immatricolazioni sulla homepage del DIEM?",
+      "reference": "Si, la homepage del DIEM include una sezione 'IMMATRICOLAZIONI' nello slideshow principale, con informazioni e link per le procedure di immatricolazione ai corsi di laurea del dipartimento."
+    },
+
+    {
+      "id": "is_addr_001",
+      "persona": "external",
+      "tags": ["address", "vat", "contact"],
+      "question": "Qual e la partita IVA dell'Universita di Salerno indicata sul sito DIEM?",
+      "reference": "La partita IVA dell'Universita degli Studi di Salerno indicata nel footer del sito DIEM e 00851300657."
+    },
+    {
+      "id": "is_addr_002",
+      "persona": "external",
+      "tags": ["address", "codice_fiscale", "contact"],
+      "question": "Qual e il codice fiscale di UNISA pubblicato nel footer del sito DIEM?",
+      "reference": "Il codice fiscale dell'Universita degli Studi di Salerno indicato nel footer del sito DIEM e 80018670655."
+    },
+    {
+      "id": "is_pres_001",
+      "persona": "external",
+      "tags": ["presentation", "mission", "multidisciplinary"],
+      "question": "Cosa caratterizza la missione del DIEM secondo la pagina di presentazione del dipartimento?",
+      "reference": "Il DIEM si presenta come un dipartimento multidisciplinare che integra ricerca e didattica nelle aree dell'ingegneria dell'informazione, dell'ingegneria elettrica ed elettronica, dell'ingegneria gestionale ed economica e della matematica applicata, come descritto nella sezione 'Presentazione' del sito ufficiale."
+    },
+    {
+      "id": "is_res_001",
+      "persona": "external",
+      "tags": ["research", "areas", "software_engineering"],
+      "question": "Quali temi di ricerca sono sviluppati nell'area di Ingegneria del Software al DIEM?",
+      "reference": "L'area di Ingegneria del Software al DIEM copre temi quali modelli di processo software, ingegneria dei requisiti, architettura software, design pattern, testing, qualita del software e gestione dei progetti. Le attivita di ricerca specifiche sono dettagliate nelle pagine dei laboratori e dei docenti afferenti a questa area."
+    },
+    {
+      "id": "is_lab_001",
+      "persona": "external",
+      "tags": ["laboratories", "equipment", "research"],
+      "question": "Quali tipi di strumentazione e infrastruttura sono tipicamente disponibili nei laboratori di ricerca del DIEM?",
+      "reference": "I laboratori di ricerca del DIEM ospitano infrastrutture e strumentazione nelle aree di robotica (robot industriali e collaborativi), computer vision, elettronica, telecomunicazioni, calcolo scientifico e networking. I dettagli specifici per ciascun laboratorio sono pubblicati nella sezione Ricerca del sito DIEM."
     }
   ],
 
