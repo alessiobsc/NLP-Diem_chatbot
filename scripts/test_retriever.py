@@ -15,7 +15,7 @@ from langchain_classic.storage import LocalFileStore, create_kv_docstore
 from langchain_classic.retrievers.multi_vector import SearchType
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from src.brain import embedding_model
-from config import CHROMA_DIR_NAME, COLLECTION_NAME, PARENT_STORE_DIR, CHILD_CHUNK_SIZE, CHILD_CHUNK_OVERLAP
+from config import CHROMA_DIR_NAME, COLLECTION_NAME, PARENT_STORE_DIR, CHILD_CHUNK_SIZE, CHILD_CHUNK_OVERLAP, EMBEDDING_DIMENSION
 
 
 def get_retriever(k: int = 5, score_threshold: float = 0.7) -> ParentDocumentRetriever:
@@ -33,7 +33,7 @@ def get_retriever(k: int = 5, score_threshold: float = 0.7) -> ParentDocumentRet
         collection_name=COLLECTION_NAME,
         embedding_function=embedding_model,
         persist_directory=CHROMA_DIR_NAME,
-        collection_metadata={"hnsw:space": "cosine"},
+        collection_metadata={"hnsw:space": "cosine", "dimension": EMBEDDING_DIMENSION},
     )
     
     parent_doc_store = create_kv_docstore(LocalFileStore(str(PARENT_STORE_DIR)))

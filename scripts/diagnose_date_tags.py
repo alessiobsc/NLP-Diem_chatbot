@@ -20,7 +20,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from config import CHROMA_DIR, COLLECTION_NAME
+from config import CHROMA_DIR, COLLECTION_NAME, EMBEDDING_DIMENSION
 from src.brain import embedding_model
 
 SAMPLE_PER_DOMAIN = 10
@@ -61,7 +61,7 @@ def fetch_urls_from_chroma() -> dict[str, list[str]]:
         collection_name=COLLECTION_NAME,
         embedding_function=embedding_model,
         persist_directory=str(CHROMA_DIR),
-        collection_metadata={"hnsw:space": "cosine"},
+        collection_metadata={"hnsw:space": "cosine", "dimension": EMBEDDING_DIMENSION},
     )
     domain_urls: dict[str, set[str]] = defaultdict(set)
     offset = 0

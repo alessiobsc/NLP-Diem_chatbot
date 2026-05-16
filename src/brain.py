@@ -51,38 +51,197 @@ logger = get_logger(__name__)
 
 # ── Module-level symbols: unchanged (imported by ingestion scripts and tester) ──
 
-class E5HuggingFaceEmbeddings(HuggingFaceEmbeddings):
-    """E5 model wrapper: prepends 'query:' / 'passage:' prefixes."""
+class OpenRouterEmbeddings:
+    """Custom Langchain Embeddings wrapper for OpenRouter API using the official OpenAI client."""
+    def __init__(self, model_name: str, api_key: str):
+        self.client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=api_key,
+        )
+        self.model_name = model_name
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        return super().embed_documents([f"passage: {t}" for t in texts])
+        # Prevent API calls if the Langchain batch is empty
+        if not texts:
+            return []
+
+        try:
+            res = self.client.embeddings.create(
+                model=self.model_name,
+                input=texts,
+                encoding_format="float"
+            )
+
+            # Check if res.data is present and is not None before iterating
+            if hasattr(res, 'data') and res.data is not None:
+                return [d.embedding if hasattr(d, 'embedding') else d['embedding'] for d in res.data]
+            elif isinstance(res, dict) and res.get('data') is not None:
+                return [d.get('embedding', []) for d in res['data']]
+
+            # Log the unexpected response to help debug if OpenRouter sends a silent error
+            logger.warning(f"OpenRouter API returned an unexpected response format: {res}")
+            return []
+
+        except Exception as e:
+            logger.error(f"Error calling OpenRouter embeddings API: {e}")
+            raise e
 
     def embed_query(self, text: str) -> List[float]:
-        return super().embed_query(f"query: {text}")
+        # Handle empty query strings safely
+        if not text or not text.strip():
+            return []
+
+        try:
+            res = self.client.embeddings.create(
+                model=self.model_name,
+                input=text,
+                encoding_format="float"
+            )
+
+            # Safely check for data existence
+            if hasattr(res, 'data') and res.data is not None and len(res.data) > 0:
+                data = res.data[0]
+                return data.embedding if hasattr(data, 'embedding') else data['embedding']
+            elif isinstance(res, dict) and res.get('data') is not None and len(res['data']) > 0:
+                return res['data'][0].get('embedding', [])
+
+            logger.warning(f"OpenRouter API returned an unexpected response format for query: {res}")
+            return []
+
+        except Exception as e:
+            logger.error(f"Error calling OpenRouter embedding API: {e}")
+            raise e
 
 
-logger.info(f"Initializing embedding model: {EMBEDDING_MODEL_NAME}")
-embedding_model = E5HuggingFaceEmbeddings(
-    model_name=EMBEDDING_MODEL_NAME,
-    encode_kwargs={"normalize_embeddings": True},
-)
+class E5HuggingFaceEmbeddings(HuggingFaceEmbeddings):
+    """
+    Custom wrapper for E5 models to automatically append 
+    'query: ' and 'passage: ' prefixes as required by the model.
+    """
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        # Append "passage: " to all documents during ingestion
+        formatted_texts = [f"passage: {text}" for text in texts]
+        return super().embed_documents(formatted_texts)
 
-logger.info(f"Initializing reranker model: {CROSS_ENCODER_MODEL_NAME}")
-reranker = CrossEncoder(CROSS_ENCODER_MODEL_NAME)
+    def embed_query(self, text: str) -> List[float]:
+        # Append "query: " to the user question during retrieval
+        formatted_text = f"query: {text}"
+        return super().embed_query(formatted_text)
 
 
-def rerank(query: str, documents: List[Document], top_n: int = CROSS_ENCODER_K) -> List[Document]:
+def _build_embedding_model():
+    """Builds the embedding model based on the configured provider."""
+    if EMBEDDING_PROVIDER == "openrouter":
+        logger.info(f"Using OpenRouter embedding model: {OPENROUTER_EMBEDDING_MODEL}")
+        return OpenRouterEmbeddings(
+            model_name=OPENROUTER_EMBEDDING_MODEL,
+            api_key=OPENROUTER_API_KEY
+        )
+    elif EMBEDDING_PROVIDER == "local":
+        # Use local model directly (with prefix logic for e5 models)
+        logger.info(f"Initializing local embedding model: {LOCAL_EMBEDDING_MODEL}")
+
+        if "e5" in LOCAL_EMBEDDING_MODEL.lower():
+            return E5HuggingFaceEmbeddings(
+                model_name=LOCAL_EMBEDDING_MODEL,
+                encode_kwargs={"normalize_embeddings": True},
+            )
+        else:
+            return HuggingFaceEmbeddings(
+                model_name=LOCAL_EMBEDDING_MODEL,
+                encode_kwargs={"normalize_embeddings": True},
+            )
+    else:
+        raise NotImplementedError(f"EMBEDDING_PROVIDER '{EMBEDDING_PROVIDER}' is not supported. Use 'local' or 'openrouter'.")
+
+embedding_model = _build_embedding_model()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Reranker model
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _rerank_with_openrouter(query: str, documents: List[Document], top_n: int) -> List[Document]:
+    """Reranks documents using the official OpenRouter rerank endpoint."""
     if not documents:
         return []
+
+    logger.debug(f"Reranking {len(documents)} documents for query: '{query}' with OpenRouter: {OPENROUTER_RERANKER_MODEL}")
+
+    docs_content = [d.page_content for d in documents]
+
+    try:
+        response = requests.post(
+            url="https://openrouter.ai/api/v1/rerank",
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            data=json.dumps({
+                "model": OPENROUTER_RERANKER_MODEL,
+                "query": query,
+                "documents": docs_content,
+                "top_n": top_n
+            }),
+            timeout=15
+        )
+        response.raise_for_status()
+        results = response.json().get("results", [])
+
+        if not results:
+            raise ValueError("No results returned from OpenRouter rerank API.")
+
+        reranked_docs = []
+        for result in results:
+            doc = documents[result["index"]]
+            score = result["relevance_score"]
+            doc.metadata["relevance_score"] = score
+            logger.debug(f"Reranked doc (score={score:.4f}): {doc.metadata.get('source', 'Unknown')}")
+            reranked_docs.append(doc)
+
+        logger.info(f"Selected top {len(reranked_docs)} documents after OpenRouter reranking")
+        return reranked_docs
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error calling OpenRouter rerank API: {e}")
+        raise e
+
+
+def _rerank_local(query: str, documents: List[Document], top_n: int) -> List[Document]:
+    """Reranks documents using a local Cross-Encoder model."""
+    if not documents:
+        return []
+
+    logger.debug(f"Reranking {len(documents)} documents for query: '{query}' with local model: {LOCAL_RERANKER_MODEL}")
+
+    try:
+        reranker = CrossEncoder(LOCAL_RERANKER_MODEL)
+    except Exception as e:
+        logger.error(f"Failed to load local reranker model '{LOCAL_RERANKER_MODEL}': {e}")
+        raise e
+
     pairs = [[query, d.page_content] for d in documents]
-    scores = reranker.predict(pairs)
+    scores = reranker.predict(pairs, show_progress_bar=False)
+
     ranked = sorted(zip(documents, scores), key=lambda x: x[1], reverse=True)
+
     out = []
-    for d, s in ranked[:top_n]:
+    for i, (d, s) in enumerate(ranked[:top_n]):
         d.metadata["relevance_score"] = float(s)
+        logger.debug(f"Reranked rank {i+1}: score={s:.4f}, source={d.metadata.get('source', 'Unknown')}")
         out.append(d)
-    logger.info(f"Reranked: top {len(out)} of {len(documents)}")
+
+    logger.info(f"Selected top {len(out)} documents after local reranking")
     return out
+
+
+def rerank(query: str, documents: List[Document], top_n: int = 3) -> List[Document]:
+    """Dispatches to the appropriate reranking function based on the provider."""
+    if EMBEDDING_PROVIDER == "openrouter":
+        return _rerank_with_openrouter(query, documents, top_n)
+    elif EMBEDDING_PROVIDER == "local":
+        return _rerank_local(query, documents, top_n)
+    else:
+        raise NotImplementedError(f"EMBEDDING_PROVIDER '{EMBEDDING_PROVIDER}' is not supported. Use 'local' or 'openrouter'.")
 
 
 def _format_context(inputs: Dict[str, Any]) -> Dict[str, Any]:

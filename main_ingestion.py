@@ -49,6 +49,7 @@ def dedupe_docs_by_source(docs: list) -> list:
 # Returns (raw_html_docs, pdf_docs) — html_extractor NOT yet applied.
 # load_pdfs_from_links is called here because it needs raw HTML to find links.
 # ─────────────────────────────────────────────────────────────────────────────
+# TODO (Software Architect): Break down `crawl_phase` into smaller, single-responsibility functions.
 def crawl_phase() -> tuple[list, list]:
     logger.info("=" * 60)
     logger.info("PHASE 1 – Loading web pages")
@@ -209,6 +210,7 @@ def main() -> None:
         return
 
     # --full
+    # TODO (Software Architect): Avoid importing `embedding_model` locally here to prevent circular dependencies or hidden side effects.
     from src.brain import embedding_model
     run_full_pipeline(embedding_model)
 

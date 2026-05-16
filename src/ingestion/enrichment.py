@@ -19,6 +19,8 @@ OPENROUTER_CONTEXT_HEADER_MODEL = os.getenv("OPENROUTER_CONTEXT_HEADER_MODEL", "
 OPENROUTER_TIMEOUT_SECONDS = float(os.getenv("OPENROUTER_CONTEXT_HEADER_TIMEOUT", "30"))
 OLLAMA_MODEL = os.getenv("OLLAMA_ENRICHMENT_MODEL", "qwen2.5:3b")
 OLLAMA_ENDPOINT = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434/api/generate")
+
+# TODO (Software Architect): Refactor global state variables (`_HEADER_CACHE`, `_OLLAMA_DISABLED`) into a dedicated class for better state management.
 _HEADER_CACHE: dict = {}
 _OPENROUTER_DISABLED = False
 _OPENROUTER_FAILURES = 0

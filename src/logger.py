@@ -16,6 +16,7 @@ def get_logger(name: str) -> logging.Logger:
     Returns:
         A configured logger instance.
     """
+    # TODO (Code Refactorer): Cache loggers based on their name to avoid adding multiple handlers to the same logger if get_logger is called multiple times.
     logger = logging.getLogger(name)
     if not logger.handlers:
         # Use LOG_LEVEL from config, which already handles the .env and default

@@ -18,7 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from config import (
     CHROMA_DIR, COLLECTION_NAME, PARENT_STORE_DIR,
-    CHILD_CHUNK_SIZE, PARENT_CHUNK_SIZE
+    CHILD_CHUNK_SIZE, PARENT_CHUNK_SIZE, EMBEDDING_DIMENSION
 )
 from src.brain import embedding_model
 
@@ -89,7 +89,7 @@ def main() -> None:
         collection_name=COLLECTION_NAME,
         embedding_function=embedding_model,
         persist_directory=str(CHROMA_DIR),
-        collection_metadata={"hnsw:space": "cosine"},
+        collection_metadata={"hnsw:space": "cosine", "dimension": EMBEDDING_DIMENSION},
     )
 
     # ── Child chunks ──────────────────────────────────────────────────────────
