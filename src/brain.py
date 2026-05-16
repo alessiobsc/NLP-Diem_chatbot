@@ -353,7 +353,7 @@ class DiemBrain:
 
         self._tools = build_tools(self._retriever, self._generation_model, self)
 
-        # Bind tools to 32b so it can emit tool_calls in its AIMessage output
+        # Bind tools to agent model so it can emit tool_calls in its AIMessage output
         self._agent_model_with_tools = self._agent_model.bind_tools(self._tools)
 
         self._scope_guardrail = ScopeGuardrail(self._generation_model)
@@ -469,10 +469,10 @@ class DiemBrain:
         return {}
 
     def _node_retrieve(self, state: DiemState) -> dict:
-        """Mandatory retrieval step — always runs before the 32b agent loop.
+        """Mandatory retrieval step — always runs before the agent loop.
 
         Injects a fake AIMessage (retrieve tool call) + ToolMessage (context) into
-        `messages` so the 32b agent sees context in the standard tool-call format
+        `messages` so the agent sees context in the standard tool-call format
         it was trained on. A bare ToolMessage without a preceding AIMessage tool_call
         would violate the OpenAI message schema and cause API errors.
         """
@@ -487,7 +487,7 @@ class DiemBrain:
         # Sync to instance attr so chat_stream can read docs after streaming completes
         self._last_docs = reranked
 
-        # Simulate the retrieve call so the 32b sees a proper tool call + result pair
+        # Simulate the retrieve call so the agent sees a proper tool call + result pair
         tool_call_id = str(uuid.uuid4())
         fake_ai = AIMessage(
             content="",
@@ -512,7 +512,7 @@ class DiemBrain:
         }
 
     def _node_agent(self, state: DiemState) -> dict:
-        """32b decides whether to call more tools or let generate handle the answer.
+        """Agent decides whether to call more tools or let generate handle the answer.
 
         SYSTEM_PROMPT injected as SystemMessage at position 0, which is valid for
         all providers. The retrieved context is already in messages from retrieve_node.
@@ -523,7 +523,7 @@ class DiemBrain:
         return {"messages": [response]}
 
     def _node_generate(self, state: DiemState) -> dict:
-        """9b generates the final answer from retrieved context + SYSTEM_PROMPT.
+        """Generator produces the final answer from retrieved context + SYSTEM_PROMPT.
 
         Uses state['retrieved_context'] directly (always the latest retrieve output)
         rather than searching through messages, for reliability.
@@ -616,7 +616,7 @@ class DiemBrain:
         """Streaming generator. Yields tokens from the generate node only.
 
         Tokens from scope_guard / retrieve_node / agent / tools nodes are discarded —
-        only the 9b final answer reaches the user. Source URLs yielded as final chunk.
+        only the generator's final answer reaches the user. Source URLs yielded as final chunk.
         For scope rejections (no generate node), the rejection text is yielded at end.
         """
         logger.info(f"chat_stream | session={session_id}")
@@ -632,7 +632,7 @@ class DiemBrain:
                 # Capture scope rejection text (graph ends before generate runs)
                 if node == "scope_guard" and isinstance(chunk, AIMessage) and chunk.content:
                     rejection = chunk.content
-                # Only stream tokens produced by the generate node (9b final answer)
+                # Only stream tokens produced by the generate node (generator final answer)
                 if node == "generate" and hasattr(chunk, "content") and chunk.content:
                     if not getattr(chunk, "tool_call_chunks", None):
                         is_partial = isinstance(chunk, AIMessageChunk)
