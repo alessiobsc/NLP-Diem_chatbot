@@ -71,6 +71,7 @@ def extract_html_sitemap_urls(sitemap_url: str, base_url: str) -> list[str]:
         logger.info(f"Fetching HTML sitemap: {sitemap_url}")
         resp = requests.get(sitemap_url, timeout=15)
         resp.raise_for_status()
+        # TODO (Bug Hunter): Use lxml for parsing large HTML sitemaps to prevent silent parsing errors.
         soup = BeautifulSoup(resp.text, "html.parser")
 
         base_netloc = urlparse(base_url).netloc
@@ -257,6 +258,7 @@ def save_crawled_urls_to_json(docs: list, filename: str) -> None:
         title = doc.metadata.get("title", "")
         if not title:
             try:
+                # TODO (Bug Hunter): Consider using lxml for parsing as fallback.
                 soup = BeautifulSoup(doc.page_content, "html.parser")
                 title_tag = soup.find("title")
                 if title_tag:

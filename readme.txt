@@ -73,9 +73,12 @@ configurazioni dell'applicazione. Carica `.env` con python-dotenv.
 Costanti principali:
 - PROJECT_ROOT, CHROMA_DIR, PARENT_STORE_DIR: path assoluti del progetto.
 - LOG_LEVEL, LOG_DIR, LOG_FILE, MAX_LOG_SIZE_MB, LOG_BACKUP_COUNT.
+- LLM_PROVIDER (local o openrouter).
 - OLLAMA_CHAT_MODEL (default qwen2.5:7b), LLM_TEMPERATURE (0.1).
-- EMBEDDING_MODEL_NAME (intfloat/multilingual-e5-small).
-- CROSS_ENCODER_MODEL_NAME (cross-encoder/mmarco-mMiniLMv2-L12-H384-v1).
+- LOCAL_EMBEDDING_MODEL (intfloat/multilingual-e5-base).
+- LOCAL_RERANKER_MODEL (BAAI/bge-reranker-base).
+- OPENROUTER_MODEL, OPENROUTER_EMBEDDING_MODEL (baai/bge-m3),
+  OPENROUTER_RERANKER_MODEL (cohere/rerank-v3.5).
 - COLLECTION_NAME ("diem_collect_HeaderContext_new_Italiano"),
   DEFAULT_SESSION_ID.
 - BI_ENCODER_K=20, CROSS_ENCODER_K=3, RETRIEVER_SCORE_THRESHOLD=0.7.
@@ -509,7 +512,7 @@ E) Evaluation
 Tutte opzionali; ognuna ha un default in config.py. Le piu rilevanti:
   LOG_LEVEL, MAX_LOG_SIZE_MB, LOG_BACKUP_COUNT
   OLLAMA_CHAT_MODEL, LLM_TEMPERATURE
-  EMBEDDING_MODEL_NAME, CROSS_ENCODER_MODEL_NAME
+  LOCAL_EMBEDDING_MODEL, LOCAL_RERANKER_MODEL
   BI_ENCODER_K, CROSS_ENCODER_K, RETRIEVER_SCORE_THRESHOLD
   OLLAMA_ENDPOINT (usato da enrichment.py)
 

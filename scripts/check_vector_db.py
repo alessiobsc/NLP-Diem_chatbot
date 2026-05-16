@@ -16,7 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from langchain_chroma import Chroma
 from src.brain import embedding_model
-from config import CHROMA_DIR, COLLECTION_NAME
+from config import CHROMA_DIR, COLLECTION_NAME, EMBEDDING_DIMENSION
 
 
 def domain_of(url: str) -> str:
@@ -64,7 +64,7 @@ def main() -> None:
         collection_name=COLLECTION_NAME,
         embedding_function=embedding_model,
         persist_directory=str(CHROMA_DIR),
-        collection_metadata={"hnsw:space": "cosine"},
+        collection_metadata={"hnsw:space": "cosine", "dimension": EMBEDDING_DIMENSION},
     )
 
     docs, metas = fetch_child_chunks(vectorstore)

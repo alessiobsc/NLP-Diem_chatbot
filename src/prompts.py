@@ -3,6 +3,8 @@ Prompts repository for the DIEM Chatbot.
 Centralizes all the prompts used across different components of the system.
 """
 
+# TODO (Software Architect): Consider moving prompt templates out of code to a dedicated configuration file (e.g., JSON or YAML) for easier management without code changes.
+
 SYSTEM_PROMPT = (
     "You are a knowledgeable and professional virtual assistant for the DIEM department "
     "(Department of Information and Electrical Engineering and Applied Mathematics) "

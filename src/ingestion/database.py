@@ -11,7 +11,7 @@ from langchain_chroma import Chroma
 from langchain_classic.retrievers import ParentDocumentRetriever
 from langchain_classic.storage import LocalFileStore, create_kv_docstore
 from langchain_core.documents import Document
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_core.embeddings import Embeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from config import (
@@ -22,7 +22,8 @@ from config import (
     PARENT_CHUNK_SIZE,
     PARENT_CHUNK_OVERLAP,
     CHILD_CHUNK_SIZE,
-    CHILD_CHUNK_OVERLAP
+    CHILD_CHUNK_OVERLAP,
+    EMBEDDING_DIMENSION
 )
 from src.logger import get_logger
 
@@ -86,12 +87,12 @@ class DocumentIndexer:
     using a Parent-Child Document Retriever strategy.
     """
 
-    def __init__(self, embedding_model: HuggingFaceEmbeddings) -> None:
+    def __init__(self, embedding_model: Embeddings) -> None:
         """
         Initializes the indexer with the given embedding model and sets up the storage.
 
         Args:
-            embedding_model (HuggingFaceEmbeddings): The model to generate embeddings.
+            embedding_model (Embeddings): The model to generate embeddings.
         """
         self._embedding_model = embedding_model
         self._setup_storage()
@@ -101,7 +102,7 @@ class DocumentIndexer:
             collection_name=COLLECTION_NAME,
             embedding_function=self._embedding_model,
             persist_directory=str(CHROMA_DIR),
-            collection_metadata={"hnsw:space": "cosine"},
+            collection_metadata={"hnsw:space": "cosine", "dimension": EMBEDDING_DIMENSION},
         )
         
         self._retriever = ParentDocumentRetriever(
@@ -158,6 +159,7 @@ class DocumentIndexer:
             Optional[int]: The count of items if successful, None otherwise.
         """
         try:
+            # TODO (Code Refactorer): Avoid accessing private `_collection` attribute directly. Provide a better API or check for `__len__`.
             return self._child_vectorstore._collection.count()
         except Exception as e:
             logger.warning(f"Could not retrieve collection count: {e}")
@@ -242,14 +244,14 @@ class DocumentIndexer:
         return self._child_vectorstore
 
 
-def index_documents(all_docs: List[Document], embedding_model: HuggingFaceEmbeddings) -> Chroma:
+def index_documents(all_docs: List[Document], embedding_model: Embeddings) -> Chroma:
     """
     Main entry point for document indexing. Wraps the DocumentIndexer class 
     to maintain backward compatibility with the existing functional API.
 
     Args:
         all_docs (List[Document]): The raw documents to index.
-        embedding_model (HuggingFaceEmbeddings): The model to generate embeddings.
+        embedding_model (Embeddings): The model to generate embeddings.
 
     Returns:
         Chroma: The initialized and populated Chroma vector store.

@@ -41,22 +41,37 @@ LOG_BACKUP_COUNT: int = int(os.getenv("LOG_BACKUP_COUNT", "5"))
 # =============================================================================
 # MODEL CONFIGURATION
 # =============================================================================
-# LLM provider: "ollama" (default) or "openrouter"
-LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "ollama")
+# LLM provider: "local" (default) or "openrouter"
+LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "local")
 
-# LLM Settings (Ollama)
+if LLM_PROVIDER not in ["local", "openrouter"]:
+    raise NotImplementedError(f"LLM_PROVIDER '{LLM_PROVIDER}' is not supported. Use 'local' or 'openrouter'.")
+
+# Embedding/Reranking provider: "local" (default, huggingface) or "openrouter"
+EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "local")
+
+if EMBEDDING_PROVIDER not in ["local", "openrouter"]:
+    raise NotImplementedError(f"EMBEDDING_PROVIDER '{EMBEDDING_PROVIDER}' is not supported. Use 'local' or 'openrouter'.")
+
+
+# LLM Settings (Local - Ollama)
 OLLAMA_CHAT_MODEL: str = os.getenv("OLLAMA_CHAT_MODEL", "qwen2.5:7b")
 LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.1"))
 
-# OpenRouter settings (used when LLM_PROVIDER=openrouter)
+# Local Embedding & Reranking Settings (used when EMBEDDING_PROVIDER=local)
+LOCAL_EMBEDDING_MODEL: str = os.getenv("LOCAL_EMBEDDING_MODEL", "intfloat/multilingual-e5-base")
+LOCAL_RERANKER_MODEL: str = os.getenv("LOCAL_RERANKER_MODEL", "BAAI/bge-reranker-base")
+
+# OpenRouter settings (used when LLM_PROVIDER=openrouter or EMBEDDING_PROVIDER=openrouter)
 OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "qwen/qwen-2.5-7b-instruct")
 
-# Embedding Model Settings (HuggingFace)
-EMBEDDING_MODEL_NAME: str = os.getenv("EMBEDDING_MODEL_NAME", "intfloat/multilingual-e5-base")
+# Embedding Model Settings (OpenRouter API)
+OPENROUTER_EMBEDDING_MODEL: str = os.getenv("OPENROUTER_EMBEDDING_MODEL", "baai/bge-m3")
+EMBEDDING_DIMENSION: int = int(os.getenv("EMBEDDING_DIMENSION", "1024"))
 
-# Cross-Encoder Model Settings
-CROSS_ENCODER_MODEL_NAME: str = os.getenv("CROSS_ENCODER_MODEL_NAME", "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1")
+# Reranker Model Settings (OpenRouter API)
+OPENROUTER_RERANKER_MODEL: str = os.getenv("OPENROUTER_RERANKER_MODEL", "cohere/rerank-v3.5")
 
 # =============================================================================
 # RAG & VECTOR DATABASE CONFIGURATION
@@ -74,6 +89,7 @@ RETRIEVER_SCORE_THRESHOLD: float = float(os.getenv("RETRIEVER_SCORE_THRESHOLD", 
 
 # Document Splitting Settings (Parent-Child Strategy)
 # Parent Document Settings (Broad context)
+# TODO (Software Architect): Consider making chunk sizes configurable via environment variables.
 PARENT_CHUNK_SIZE: int = 2000
 PARENT_CHUNK_OVERLAP: int = 200
 

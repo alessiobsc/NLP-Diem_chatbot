@@ -3,7 +3,7 @@ from urllib.parse import urlparse, urldefrag, urljoin
 
 import trafilatura
 from bs4 import BeautifulSoup
-from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.document_loaders import PDFPlumberLoader
 
 from src.ingestion.crawler import is_pre_2020_url
 from src.logger import get_logger
@@ -41,6 +41,7 @@ def extract_html_metadata(html: str) -> dict:
     """
     meta: dict = {}
     try:
+        # TODO (Bug Hunter): Consider using a more robust parser like lxml for BeautifulSoup to handle heavily malformed HTML better.
         soup = BeautifulSoup(html, "html.parser")
 
         title_tag = soup.find("title")
@@ -79,6 +80,7 @@ def clean_text(text: str) -> str:
 
 
 def _bs4_extractor(html: str) -> str:
+    # TODO (Code Refactorer): Repeated parsing with BeautifulSoup. If possible, parse once and pass the tree around.
     soup = BeautifulSoup(html, "html.parser")
     for tag in soup(["script", "style", "nav", "footer", "header",
                      "noscript", "aside", "iframe"]):
@@ -187,6 +189,7 @@ def load_pdfs_from_links(raw_docs: list, seen_urls: set | None = None) -> list:
     for doc in raw_docs:
         page_url = doc.metadata.get("source", "")
         try:
+            # TODO (Bug Hunter): Consider using `lxml` here as well for better performance and error handling.
             soup = BeautifulSoup(doc.page_content, "html.parser")
             for a in soup.find_all("a", href=True):
                 href = a["href"].strip()
@@ -204,7 +207,8 @@ def load_pdfs_from_links(raw_docs: list, seen_urls: set | None = None) -> list:
                     continue
 
                 try:
-                    docs = PyPDFLoader(pdf_url).load()
+                    # TODO (Software Architect): Replaced PyPDFLoader with PDFPlumberLoader for better table and layout extraction.
+                    docs = PDFPlumberLoader(pdf_url).load()
                     for pdf_doc in docs:
                         pdf_doc.metadata.setdefault("source", pdf_url)
                         pdf_doc.metadata.setdefault("source_page", page_url)

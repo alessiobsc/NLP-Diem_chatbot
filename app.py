@@ -1,6 +1,6 @@
 import os
 import sys
-from config import CHROMA_DIR_NAME, COLLECTION_NAME, DEFAULT_SESSION_ID
+from config import CHROMA_DIR_NAME, COLLECTION_NAME, DEFAULT_SESSION_ID, EMBEDDING_DIMENSION
 from dotenv import load_dotenv
 from langchain_chroma import Chroma
 from src.brain import embedding_model, DiemBrain
@@ -14,6 +14,7 @@ logger = get_logger(__name__)
 # ─────────────────────────────────────────────────────────────────────────────
 # Configuration
 # ─────────────────────────────────────────────────────────────────────────────
+# TODO (Code Refactorer): Use argparse instead of checking sys.argv directly for better CLI handling.
 FORCE_REINDEX = "--reindex" in sys.argv
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -29,7 +30,7 @@ if FORCE_REINDEX or not os.path.exists(db_file):
         collection_name=COLLECTION_NAME,
         embedding_function=embedding_model,
         persist_directory=CHROMA_DIR_NAME,
-        collection_metadata={"hnsw:space": "cosine"}
+        collection_metadata={"hnsw:space": "cosine", "dimension": EMBEDDING_DIMENSION}
     )
 else:
     logger.info("Loading existing Chroma index...")
@@ -37,9 +38,10 @@ else:
         collection_name=COLLECTION_NAME,
         embedding_function=embedding_model,
         persist_directory=CHROMA_DIR_NAME,
-        collection_metadata={"hnsw:space": "cosine"}
+        collection_metadata={"hnsw:space": "cosine", "dimension": EMBEDDING_DIMENSION}
     )
     try:
+        # TODO (Code Refactorer): Avoid accessing private attribute `_collection` of Chroma. Provide a public method if possible.
         logger.info(f"  -> {vectorstore._collection.count()} chunks in index")
     except Exception as e:
         logger.warning(f"  -> Could not count chunks in index: {e}")

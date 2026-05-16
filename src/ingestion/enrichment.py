@@ -13,6 +13,8 @@ load_dotenv()
 logger = get_logger(__name__)
 OLLAMA_MODEL = os.getenv("OLLAMA_ENRICHMENT_MODEL", "llama3.2:3b")
 OLLAMA_ENDPOINT = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434/api/generate")
+
+# TODO (Software Architect): Refactor global state variables (`_HEADER_CACHE`, `_OLLAMA_DISABLED`) into a dedicated class for better state management.
 _HEADER_CACHE: dict = {}
 _OLLAMA_DISABLED = False
 HEADER_MAX_WORDS = 45
