@@ -1,18 +1,18 @@
 """
 Core AI Brain module for the DIEM Chatbot.
 
-Module-level symbols (embedding_model, reranker, rerank, _format_context) are kept
-so ingestion scripts and tester.py continue to import without modification.
+Module-level symbols (rerank, format_context) are kept so ingestion scripts
+and tester.py continue to import without modification.
 """
-import uuid
-from typing import Any, Annotated, Dict, List, TypedDict
+from typing import Any, Dict, List
+
 from langchain_chroma import Chroma
 from langchain_classic.retrievers import ParentDocumentRetriever
 from langchain_classic.storage import LocalFileStore, create_kv_docstore
 from langchain_classic.retrievers.multi_vector import SearchType
 from langchain_core.documents import Document
 from langchain_core.messages import (
-    BaseMessage, HumanMessage, AIMessage, AIMessageChunk, SystemMessage, ToolMessage,
+    BaseMessage, HumanMessage, AIMessage, AIMessageChunk, ToolMessage,
 )
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langgraph.checkpoint.memory import MemorySaver
@@ -24,30 +24,20 @@ from config import (
     CHILD_CHUNK_OVERLAP,
     BI_ENCODER_K,
     RETRIEVER_SCORE_THRESHOLD,
-    DEFAULT_SESSION_ID, MAX_RETRIEVE_CALLS
+    DEFAULT_SESSION_ID,
+    MAX_RETRIEVE_CALLS,
 )
+from src.agent.state import DiemState
+from src.agent.nodes import DiemNodes
 from src.agent.utils import extract_text, format_context, rewrite_query
 from src.agent.init_models import build_agent_model, build_lightweight_model
 from src.agent.tools import build_tools
 from src.encoders.reranker import rerank
-from src.middleware import (
-    ScopeGuardrail, OffensiveContentGuardrail, redact_pii, _SCOPE_REJECTION, _OFFENSIVE_FALLBACK,
-)
+from src.middleware import ScopeGuardrail, OffensiveContentGuardrail
 from src.prompts import AGENT_SYSTEM_PROMPT, REJECTION_TAGS
 from src.utils.logger import get_logger
-from langgraph.graph.message import add_messages
 
 logger = get_logger(__name__)
-
-# ── Module-level symbols: unchanged (imported by ingestion scripts and tester) ──
-
-# ── Graph State ───────────────────────────────────────────────────────────────
-
-class DiemState(TypedDict):
-    messages: Annotated[List[BaseMessage], add_messages]
-    tool_call_count: int      # increments each time retrieve() fires; cap = MAX_RETRIEVE_CALLS
-    retrieved_context: str    # latest retrieve output, passed to generate node
-    last_docs: List[Document] # latest retrieved docs, used for source URL formatting
 
 
 # ── Routing functions (module-level so tests can import them directly) ────────
@@ -87,7 +77,7 @@ def _route_agent(state: DiemState) -> str:
 
 # ── DiemBrain ─────────────────────────────────────────────────────────────────
 
-class DiemBrain:
+class DiemBrain(DiemNodes):
     """Agentic RAG system for DIEM using an explicit LangGraph StateGraph."""
 
     def __init__(self, vectorstore: Chroma) -> None:
@@ -130,8 +120,8 @@ class DiemBrain:
         """Wrap ToolNode to also update tool_call_count and retrieved_context in state.
 
         Standard ToolNode only appends ToolMessages to `messages`. This wrapper
-        additionally increments the safety counter and, when `retrieve` was called,
-        syncs the fresh context into state so generate node always uses the latest.
+        additionally increments the retrieve counter and syncs retrieved_context
+        and last_docs into state when retrieve() was called.
         """
         tool_node = ToolNode(tools)
 
@@ -153,7 +143,6 @@ class DiemBrain:
             )
 
             if retrieve_call:
-                # Match ToolMessage by tool_call_id (handles batch tool calls correctly)
                 retrieve_msg = next(
                     (m for m in result["messages"]
                      if isinstance(m, ToolMessage) and m.tool_call_id == retrieve_call["id"]),
@@ -201,206 +190,6 @@ class DiemBrain:
             compile_kwargs["checkpointer"] = checkpointer
         return g.compile(**compile_kwargs)
 
-    # ── Node implementations ──────────────────────────────────────────────────
-
-    def _block_if_offensive(self, content: str, msg_id: str | None = None) -> dict:
-        """Return state update that replaces/injects AIMessage if content is offensive, else {}."""
-        replacement = self._offensive_guardrail.check(content)
-        if replacement is None:
-            return {}
-        kwargs: dict = {"content": replacement}
-        if msg_id is not None:
-            kwargs["id"] = msg_id
-        return {"messages": [AIMessage(**kwargs)]}
-
-    def _node_input_guard(self, state: DiemState) -> dict:
-        """Reject offensive user input before scope check."""
-        question = next(
-            (extract_text(m.content) for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
-            "",
-        )
-        return self._block_if_offensive(question)
-
-    def _node_scope_guard(self, state: DiemState) -> dict:
-        """Reject out-of-scope queries before retrieval.
-
-        Returns {} (no state change) if in scope → _route_scope sends to reset_state.
-        Returns {messages: [AIMessage(rejection)]} if OOT → _route_scope sends to END.
-        """
-        question = next(
-            (extract_text(m.content) for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
-            "",
-        )
-        if not self._scope_guardrail.check(question):
-            return {"messages": [AIMessage(content=_SCOPE_REJECTION)]}
-        return {}
-
-    def _node_reset_state(self, state: DiemState) -> dict:
-        """Reset turn state before entering the agent loop.
-
-        Zeros tool_call_count, retrieved_context, and last_docs so each turn
-        starts fresh. The agent will call retrieve() as its first action to get context.
-        """
-        question = next(
-            (extract_text(m.content) for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
-            "",
-        )
-        logger.info(f"new_turn | user_question='{question[:120]}'")
-        return {"tool_call_count": 0, "retrieved_context": "", "last_docs": []}
-
-    def _node_agent(self, state: DiemState) -> dict:
-        """Agent decides whether to call more tools or let generate handle the answer.
-
-        No context is pre-loaded. The agent must call retrieve() as its first action.
-        SYSTEM_PROMPT injected as SystemMessage at position 0, which is valid for all providers.
-        Dynamic hint injected when tool_call_count==0 and no context yet retrieved — ensures
-        the agent calls retrieve() on the very first invocation of each turn.
-        """
-        system_content = AGENT_SYSTEM_PROMPT
-        if state["tool_call_count"] == 0 and not state["retrieved_context"]:
-            system_content += (
-                "\n\nIMPORTANT: This is a new user question — process it completely independently. "
-                "You MUST call retrieve() before generating any answer — retrieve is always mandatory. "
-                "rewrite() is optional preparation before retrieve(), not a substitute for it. "
-                "Rules for handling history:\n"
-                "- Tool results from PREVIOUS questions must NOT be used as context for the current question.\n"
-                "- If a previous question was rejected, unanswered, or handled poorly, ignore it — "
-                "it has NO bearing on whether or how you should answer the current question.\n"
-                "- Always call retrieve() for each new question, even after calling rewrite()."
-            )
-        system = SystemMessage(content=system_content)
-        # Replace guardrail-injected AIMessages with a neutral placeholder before
-        # passing history to the model. Removing them entirely leaves orphaned
-        # HumanMessages with no response, causing the model to try answering all
-        # previous questions at once. The placeholder preserves Q&A pair structure
-        # without exposing rejection/fallback text that causes pattern-matching.
-        _GUARDRAIL_PREFIXES = (
-            _SCOPE_REJECTION[:40],
-            _OFFENSIVE_FALLBACK[:40],
-            "Mi dispiace, non sono riuscito",
-        ) + tuple(t[:10] for t in REJECTION_TAGS)
-        _PLACEHOLDER = "[Risposta non disponibile per questo turno.]"
-        clean_messages = []
-        for m in state["messages"]:
-            if (
-                isinstance(m, AIMessage)
-                and not getattr(m, "tool_calls", None)
-                and (
-                    not (m.content if isinstance(m.content, str) else "").strip()
-                    or any(
-                        (m.content if isinstance(m.content, str) else "").startswith(p)
-                        for p in _GUARDRAIL_PREFIXES
-                    )
-                )
-            ):
-                clean_messages.append(AIMessage(id=m.id, content=_PLACEHOLDER))
-            else:
-                clean_messages.append(m)
-        response = self._agent_model_with_tools.invoke([system] + clean_messages)
-        tool_calls = getattr(response, "tool_calls", None)
-        if tool_calls:
-            names = [tc["name"] for tc in tool_calls]
-            logger.info(f"agent | retrieve_count={state['tool_call_count']} | calling tools={names}")
-        else:
-            logger.info(
-                f"agent | retrieve_count={state['tool_call_count']} | generating final answer "
-                f"| answer_len={len(response.content) if isinstance(response.content, str) else 0}"
-            )
-        return {"messages": [response]}
-
-    def _node_forced_retrieve(self, state: DiemState) -> dict:
-        """Agent generated empty content without calling retrieve — force a retrieve.
-
-        Extracts the current user question, calls the retriever directly, and injects
-        a synthetic AIMessage+ToolMessage pair so the subsequent agent invocation
-        receives valid context. Only triggered when tool_call_count==0 and
-        retrieved_context=="" (i.e. agent skipped all tools on the very first call).
-        """
-        question = next(
-            (extract_text(m.content) for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
-            "",
-        )
-        logger.warning(f"forced_retrieve | agent skipped tools, forcing retrieve | query='{question[:80]}'")
-        docs = self._retriever.invoke(question)
-        reranked = rerank(question, docs, top_n=3) if docs else []
-        self._last_docs = reranked
-        context = format_context({"docs": reranked, "question": question, "history": []})["context"]
-        logger.info(f"forced_retrieve | reranked={len(reranked)} | context_len={len(context)}")
-        tc_id = str(uuid.uuid4())
-        ai_msg = AIMessage(
-            content="",
-            tool_calls=[{"name": "retrieve", "args": {"query": question}, "id": tc_id, "type": "tool_call"}],
-        )
-        tool_msg = ToolMessage(content=context, tool_call_id=tc_id, name="retrieve")
-        return {
-            "messages": [ai_msg, tool_msg],
-            "tool_call_count": 1,
-            "retrieved_context": context,
-            "last_docs": reranked,
-        }
-
-    def _node_force_answer(self, state: DiemState) -> dict:
-        """Cap hit with pending tool_calls: stub unresolved calls, then force final answer.
-
-        Called when _route_agent finds tool_calls in last AIMessage but tool_call_count
-        has reached MAX_TOOL_CALLS. Synthetic ToolMessages resolve the dangling tool_calls
-        so the message history stays valid for the model API, then the agent model
-        (without tools bound) generates a final answer from whatever context exists.
-        """
-        messages = list(state["messages"])
-        last_ai = messages[-1]
-        extra: List[ToolMessage] = []
-        for tc in getattr(last_ai, "tool_calls", []):
-            extra.append(ToolMessage(
-                content="[Tool call limit reached — result unavailable]",
-                tool_call_id=tc["id"],
-                name=tc["name"],
-            ))
-        logger.warning(
-            f"force_answer | MAX_RETRIEVE_CALLS reached | stubbed {len(extra)} pending tool_call(s)"
-        )
-        system = SystemMessage(content=AGENT_SYSTEM_PROMPT + (
-            "\n\nIMPORTANT: You have reached the maximum number of tool calls. "
-            "Generate a final answer NOW based on the context already retrieved. "
-            "Do NOT call any more tools."
-        ))
-        response = self._agent_model.invoke([system] + messages + extra)
-        return {"messages": extra + [response]}
-
-    def _node_output_guard(self, state: DiemState) -> dict:
-        """Offensive content check + PII redaction on the final AIMessage.
-
-        Returns {} if content is clean (no state change).
-        Returns updated messages if content was replaced or redacted.
-        """
-        last_ai = next(
-            (m for m in reversed(state["messages"]) if isinstance(m, AIMessage)),
-            None,
-        )
-        if last_ai is None:
-            return {}
-
-        content = last_ai.content if isinstance(last_ai.content, str) else str(last_ai.content)
-
-        # Empty answer: replace with fallback so history never contains a blank AIMessage.
-        if not content.strip():
-            logger.warning("output_guard: empty answer from agent, replacing with fallback")
-            return {"messages": [AIMessage(
-                id=last_ai.id,
-                content="Mi dispiace, non sono riuscito a trovare informazioni sufficienti per rispondere a questa domanda.",
-            )]}
-
-        blocked = self._block_if_offensive(content, msg_id=last_ai.id)
-        if blocked:
-            return blocked
-
-        # PII: email redact / credit card block via regex (no LLM call)
-        redacted = redact_pii(content)
-        if redacted != content:
-            return {"messages": [AIMessage(id=last_ai.id, content=redacted)]}
-
-        return {}
-
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _format_sources(self, sources: List[Document]) -> str:
@@ -435,7 +224,6 @@ class DiemBrain:
                 {"messages": [HumanMessage(message)]},
                 config=self._invoke_config(session_id),
             )
-            # Sync last_docs from final graph state
             self._last_docs = list(result.get("last_docs", []))
             raw = result["messages"][-1].content
             answer = self._strip_rejection_tags(raw)
@@ -448,11 +236,11 @@ class DiemBrain:
             return "Mi dispiace, si è verificato un errore."
 
     def chat_stream(self, message: str, session_id: str = DEFAULT_SESSION_ID):
-        """Streaming generator. Yields tokens from the generate node only.
+        """Streaming generator. Yields tokens from the agent node only.
 
-        Tokens from scope_guard / reset_state / agent / tools nodes are discarded —
-        only the generator's final answer reaches the user. Source URLs yielded as final chunk.
-        For scope rejections (no generate node), the rejection text is yielded at end.
+        Tokens from guard/reset/tools nodes are discarded — only the final answer
+        reaches the user. Source URLs yielded as final chunk.
+        For scope rejections the rejection text is yielded at end.
         """
         logger.info(f"chat_stream | session={session_id}")
         answer = ""
@@ -464,17 +252,13 @@ class DiemBrain:
                 stream_mode="messages",
             ):
                 node = metadata.get("langgraph_node", "")
-                # Capture early rejection text (input_guard or scope_guard)
                 if node in ("input_guard", "scope_guard") and isinstance(chunk, AIMessage) and chunk.content:
                     rejection = chunk.content
-                # Stream tokens from agent node only — tool_call_chunks guard filters
-                # out intermediate tool-call emissions from the agent routing steps.
                 if node == "agent" and hasattr(chunk, "content") and chunk.content:
                     if not getattr(chunk, "tool_call_chunks", None):
                         is_partial = isinstance(chunk, AIMessageChunk)
-                        # LangGraph stream_mode="messages" emits both per-token
-                        # AIMessageChunk objects and the final complete AIMessage
-                        # written to state — skip the latter to avoid duplication.
+                        # stream_mode="messages" emits both per-token AIMessageChunks and the
+                        # final complete AIMessage written to state — skip the latter to avoid duplication.
                         if is_partial or not answer:
                             content = chunk.content
                             for tag in REJECTION_TAGS:
@@ -487,13 +271,11 @@ class DiemBrain:
             yield "Mi dispiace, si è verificato un errore."
             return
 
-        # If generate node never ran (scope rejection), yield the rejection text
         if not answer:
             if rejection:
                 yield self._strip_rejection_tags(rejection)
             return
 
-        # self._last_docs updated by _make_tools_node when retrieve tool is called
         sources_md = self._format_sources(self._last_docs)
         if sources_md:
             yield sources_md
