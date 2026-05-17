@@ -39,6 +39,11 @@ from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+_TAG_FALLBACKS = {
+    "[KNOWLEDGE_GAP]": "Non ho trovato informazioni sufficienti per rispondere a questa domanda.",
+    "[FUORI_SCOPE]": "Mi dispiace, posso rispondere solo a domande riguardanti il DIEM e l'Università di Salerno.",
+}
+
 
 # ── Routing functions (module-level so tests can import them directly) ────────
 
@@ -206,12 +211,13 @@ class DiemBrain(DiemNodes):
         return ""
 
     def _invoke_config(self, session_id: str) -> dict:
-        return {"configurable": {"thread_id": session_id}, "recursion_limit": 20}
+        return {"configurable": {"thread_id": session_id}, "recursion_limit": 35}
 
     def _strip_rejection_tags(self, text: str) -> str:
         for tag in REJECTION_TAGS:
             if text.startswith(tag):
-                return text[len(tag):].lstrip()
+                remainder = text[len(tag):].lstrip()
+                return remainder if remainder else _TAG_FALLBACKS.get(tag, "")
         return text
 
     # ── Public API ────────────────────────────────────────────────────────────
