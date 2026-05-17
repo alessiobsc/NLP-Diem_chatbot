@@ -278,7 +278,7 @@ class DiemBrain:
         """Agent decides whether to call more tools or let generate handle the answer.
 
         SYSTEM_PROMPT injected as SystemMessage at position 0, which is valid for
-        all providers. The retrieved context is already in messages from retrieve_node.
+        all providers. No context is pre-loaded. The agent must call retrieve() as its first action.
         """
         # AGENT_SYSTEM_PROMPT: routing only — no response generation instructions
         system = SystemMessage(content=AGENT_SYSTEM_PROMPT)
@@ -360,7 +360,7 @@ class DiemBrain:
     def chat_stream(self, message: str, session_id: str = DEFAULT_SESSION_ID):
         """Streaming generator. Yields tokens from the generate node only.
 
-        Tokens from scope_guard / retrieve_node / agent / tools nodes are discarded —
+        Tokens from scope_guard / reset_state / agent / tools nodes are discarded —
         only the generator's final answer reaches the user. Source URLs yielded as final chunk.
         For scope rejections (no generate node), the rejection text is yielded at end.
         """
@@ -403,7 +403,7 @@ class DiemBrain:
                 yield self._strip_rejection_tags(rejection)
             return
 
-        # self._last_docs updated by _node_retrieve (or _make_tools_node on re-retrieve)
+        # self._last_docs updated by _make_tools_node when retrieve tool is called
         sources_md = self._format_sources(self._last_docs)
         if sources_md:
             yield sources_md
