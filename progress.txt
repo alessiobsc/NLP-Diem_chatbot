@@ -319,6 +319,71 @@ CRONOLOGIA AGGIORNAMENTI
   84cb20d feat: update prompts for fully agentic RAG with year injection
   cf4303d feat: remove retrieve_node — fully agentic RAG complete
 
+2026-05-17 - Fully Agentic: bug fix, refactoring, robustezza grafo
+
+  REFACTORING
+  -----------
+  brain.py (~520 righe) suddiviso in 3 file:
+  - src/agent/state.py: DiemState TypedDict
+  - src/agent/nodes.py: DiemNodes mixin con tutti i _node_* methods
+  - src/agent/brain.py: DiemBrain(DiemNodes), routing, graph, public API
+
+  BUG FIX
+  -------
+  - MAX_TOOL_CALLS → MAX_RETRIEVE_CALLS=3: solo retrieve conta verso il cap
+    (rewrite/summarize/calculate non consumano il limite)
+  - forced_retrieve node: safety net graph-level quando agent genera output
+    vuoto senza aver chiamato retrieve (tool_call_count==0, retrieved_context=="")
+  - Guardrail contamination: AIMessages di scope_guard/input_guard in
+    MemorySaver confondevano il modello sui turni successivi.
+    Fix: sostituzione con placeholder neutro in _node_agent clean_messages
+  - Credit card regex: era troppo broad (matchava ID numerici).
+    Fix: richiede separatori espliciti (XXXX XXXX XXXX XXXX)
+  - Scope guard falsi negativi su "chi è [prof]?": aggiunto keywords
+    accademici specifici (insegna, ricercatore, pubblicazioni, curriculum)
+  - Rewrite sostituiva domanda corrente con precedente: aggiunta Rule 0
+    in REWRITE_PROMPT; rewrite tool filtra guardrail messages da history
+  - force_answer: implementato nodo mancante (stub ToolMessages pendenti
+    + agent model senza tools per risposta finale)
+  - KNOWLEDGE_GAP/FUORI_SCOPE senza testo: _TAG_FALLBACKS in brain.py
+    restituisce messaggio italiano se tag è l'unico contenuto
+  - Recursion limit: alzato 20→35 per gestire query con rewrite multipli
+
+  PROMPT
+  ------
+  - Dynamic hint: "Tool results from PREVIOUS questions must NOT be used"
+  - retrieve: "call rewrite() first" per contenuto accademico senza anno
+  - retrieve: "call rewrite() at most once per retrieve() attempt"
+  - Regola NEVER EMPTY (rule 4): rispondere sempre se contesto disponibile
+  - KNOWLEDGE_GAP: soglia allentata ("nothing useful" vs "no relevant info")
+    + obbligo spiegazione italiana dopo il tag
+
+  HISTORY / CONTEXT
+  -----------------
+  - Old-turn ToolMessages pruned in _node_agent: solo coppie Human/AI
+    dai turni precedenti, eliminando i retrieved docs storici dalla
+    context window (riduce token bloat senza perdere contesto conversazionale)
+
+  SCRIPTS
+  -------
+  - scripts/test_chatbot.py: test interattivo CLI (no Gradio/LangGraph)
+  - scripts/test_chatbot_auto.py: test automatico su 6 query predefinite
+
+  TEST RISULTATI (test_chatbot_auto.py)
+  -------------------------------------
+  - "Chi è Mario Vento?" → retrieve autonomo, risposta dettagliata ✓
+  - follow-up "Quanti anni ha di esperienza?" → rewrite risolve pronome ✓
+  - "Chi è Pippo Franco?" → scope guard, fallback italiano ✓
+  - "Esami terzo anno informatica" → rewrite+anno, 3 retrieve, KNOWLEDGE_GAP ✓
+  - "Capienza Aula De Candia" → 3 retrieve, force_answer, KNOWLEDGE_GAP ✓
+    (info non nel KB — comportamento corretto)
+  - "Chi è Antonio Greco?" → retrieve autonomo, PII redacted ✓
+
+  COMMIT
+  ------
+  39a408b refactor: split brain.py into state.py + nodes.py + brain.py
+  ee2036c fix: improve agent robustness, prompts, and history management
+
 # Template per aggiornamenti futuri:
 # YYYY-MM-DD - <titolo breve>
 #   - cosa e' cambiato (file/modulo)
