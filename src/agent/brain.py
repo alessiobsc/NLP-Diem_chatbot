@@ -253,12 +253,13 @@ class DiemBrain:
         if state["tool_call_count"] == 0 and not state["retrieved_context"]:
             system_content += (
                 "\n\nIMPORTANT: This is a new user question — process it completely independently. "
-                "You MUST call rewrite() or retrieve() before generating any answer. "
+                "You MUST call retrieve() before generating any answer — retrieve is always mandatory. "
+                "rewrite() is optional preparation before retrieve(), not a substitute for it. "
                 "Rules for handling history:\n"
                 "- Tool results from PREVIOUS questions must NOT be used as context for the current question.\n"
                 "- If a previous question was rejected, unanswered, or handled poorly, ignore it — "
                 "it has NO bearing on whether or how you should answer the current question.\n"
-                "- Always run the full tool flow (retrieve at minimum) for each new question."
+                "- Always call retrieve() for each new question, even after calling rewrite()."
             )
         system = SystemMessage(content=system_content)
         # Strip guardrail-injected AIMessages before passing history to the model.

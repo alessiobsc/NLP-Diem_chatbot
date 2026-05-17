@@ -33,7 +33,8 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
         - is incomplete or poorly phrased
         - concerns academic content (courses, regulations, exams, degree programs) AND does not
           specify an academic year → the rewrite appends 'anno accademico 2025/2026'
-        Returns the rewritten query as a string. Pass this EXACT string to retrieve() — do not modify it."""
+        Returns the rewritten query as a string. After calling this tool you MUST immediately
+        call retrieve() with the returned string as the query — do not modify it, do not generate an answer first."""
         from src.agent.brain import extract_text
         from src.prompts import REWRITE_PROMPT, REJECTION_TAGS
         from src.middleware import _SCOPE_REJECTION, _OFFENSIVE_FALLBACK
