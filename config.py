@@ -10,6 +10,7 @@ across the entire application.
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+from distutils.util import strtobool
 
 os.environ.setdefault("PYTHONUNBUFFERED", "1")
 
@@ -110,12 +111,16 @@ CHILD_CHUNK_SIZE: int = 400
 CHILD_CHUNK_OVERLAP: int = 50
 
 # Ingestion Batching
-MAX_CHILD_CHUNKS_PER_BATCH: int = 4000
+MAX_CHILD_CHUNKS_PER_BATCH: int = 100
 
 
 # =============================================================================
 # AGENTIC RAG & ENRICHMENT CONFIGURATION
 # =============================================================================
+# Context Header Generation Mode
+# Determines whether to use LLM (OpenRouter/Ollama) or fallback deterministic rules
+USE_LLM_CONTEXT_HEADERS = strtobool(os.getenv("USE_LLM_CONTEXT_HEADERS", "True"))
+
 # Agentic RAG Settings
 # Max tool calls the 32b agent can make per turn before generate is forced
 MAX_TOOL_CALLS: int = int(os.getenv("MAX_TOOL_CALLS", "6"))
