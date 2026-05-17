@@ -271,6 +271,54 @@ CRONOLOGIA AGGIORNAMENTI
   Tools disponibili: rewrite, retrieve, summarize, calculate
   MAX_TOOL_CALLS = 6
 
+2026-05-17 - Fully Agentic RAG: rimozione retrieve_node fisso
+
+  CAMBIO ARCHITETTURALE
+  ---------------------
+  Rimosso `retrieve_node` come nodo obbligatorio del grafo. Il retrieval
+  diventa una decisione esclusiva dell'agent (gpt-oss-120b).
+
+  STATO GRAFO PRECEDENTE
+  ----------------------
+  input_guard → scope_guard → retrieve_node → agent ↔ tools → output_guard
+
+  STATO GRAFO ATTUALE
+  -------------------
+  input_guard → scope_guard → reset_state → agent ↔ tools → output_guard
+
+  MODIFICHE (2 file, modifiche chirurgiche):
+  ------------------------------------------
+  src/agent/brain.py:
+  - Rimosso _node_retrieve (48 righe + import uuid) — era il nodo che
+    eseguiva retrieval obbligatorio e iniettava fake AIMessage+ToolMessage
+    nel message history per simulare una tool call pregresso.
+  - Aggiunto _node_reset_state (3 righe) — azzera tool_call_count=0,
+    retrieved_context="", last_docs=[] all'inizio di ogni turn.
+  - _route_scope ora punta a "reset_state" invece di "retrieve_node".
+  - _node_agent: hint dinamico iniettato nel system prompt quando
+    tool_call_count==0 e retrieved_context=="" — forza il modello a
+    chiamare retrieve() come primo tool del turn senza fallback in codice.
+
+  src/prompts.py:
+  - AGENT_SYSTEM_PROMPT: rimossa riga "context already retrieved",
+    riscritta STEP 1 con istruzioni esplicite per rewrite() e retrieve().
+    rewrite() istruito su: follow-up con pronomi, query incomplete,
+    query su contenuto accademico senza anno → append "a.a. 2025/2026".
+  - REWRITE_PROMPT: aggiunta Rule 6 (year injection) + 2 esempi.
+
+  IMPATTO LATENZA
+  ---------------
+  +1 LLM call per turn minimo (agent decide→retrieve→agent genera).
+  Accettato in favore di architettura più flessibile.
+
+  COMMIT
+  ------
+  8f5a2a9 feat: replace retrieve_node with reset_state in graph
+  7138154 docs: update stale docstrings after retrieve_node removal
+  1e77a93 feat: add dynamic retrieve hint in agent node
+  84cb20d feat: update prompts for fully agentic RAG with year injection
+  cf4303d feat: remove retrieve_node — fully agentic RAG complete
+
 # Template per aggiornamenti futuri:
 # YYYY-MM-DD - <titolo breve>
 #   - cosa e' cambiato (file/modulo)
