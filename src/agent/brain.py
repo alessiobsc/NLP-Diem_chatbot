@@ -4,7 +4,6 @@ Core AI Brain module for the DIEM Chatbot.
 Module-level symbols (embedding_model, reranker, rerank, _format_context) are kept
 so ingestion scripts and tester.py continue to import without modification.
 """
-import uuid
 from typing import Any, Annotated, Dict, List, TypedDict
 from langchain_chroma import Chroma
 from langchain_classic.retrievers import ParentDocumentRetriever
@@ -224,55 +223,6 @@ class DiemBrain:
         starts fresh. The agent will call retrieve() as its first action to get context.
         """
         return {"tool_call_count": 0, "retrieved_context": "", "last_docs": []}
-
-    def _node_retrieve(self, state: DiemState) -> dict:
-        """Mandatory retrieval step — always runs before the agent loop.
-
-        Injects a fake AIMessage (retrieve tool call) + ToolMessage (context) into
-        `messages` so the agent sees context in the standard tool-call format
-        it was trained on. A bare ToolMessage without a preceding AIMessage tool_call
-        would violate the OpenAI message schema and cause API errors.
-        """
-        raw_query = next(
-            (extract_text(m.content) for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
-            "",
-        )
-        has_history = any(
-            isinstance(m, HumanMessage)
-            for m in state["messages"][:-1]
-            if not getattr(m, "tool_calls", None)
-        )
-        query = rewrite_query(raw_query, state, self._lightweight_model) if has_history else raw_query
-        docs = self._retriever.invoke(query)
-        reranked = rerank(query, docs) if docs else []
-        context = format_context({"docs": reranked, "question": query, "history": []})["context"]
-
-        # Sync to instance attr so chat_stream can read docs after streaming completes
-        self._last_docs = reranked
-
-        # Simulate the retrieve call so the agent sees a proper tool call + result pair
-        tool_call_id = str(uuid.uuid4())
-        fake_ai = AIMessage(
-            content="",
-            tool_calls=[{
-                "name": "retrieve",
-                "args": {"query": query},
-                "id": tool_call_id,
-                "type": "tool_call",
-            }],
-        )
-        tool_msg = ToolMessage(
-            content=context,
-            tool_call_id=tool_call_id,
-            name="retrieve",
-        )
-
-        return {
-            "messages": [fake_ai, tool_msg],
-            "retrieved_context": context,
-            "last_docs": reranked,
-            "tool_call_count": 0,  # reset at the start of each new turn
-        }
 
     def _node_agent(self, state: DiemState) -> dict:
         """Agent decides whether to call more tools or let generate handle the answer.
