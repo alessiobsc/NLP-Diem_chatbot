@@ -277,11 +277,18 @@ class DiemBrain:
     def _node_agent(self, state: DiemState) -> dict:
         """Agent decides whether to call more tools or let generate handle the answer.
 
-        SYSTEM_PROMPT injected as SystemMessage at position 0, which is valid for
-        all providers. No context is pre-loaded. The agent must call retrieve() as its first action.
+        No context is pre-loaded. The agent must call retrieve() as its first action.
+        SYSTEM_PROMPT injected as SystemMessage at position 0, which is valid for all providers.
+        Dynamic hint injected when tool_call_count==0 and no context yet retrieved — ensures
+        the agent calls retrieve() on the very first invocation of each turn.
         """
-        # AGENT_SYSTEM_PROMPT: routing only — no response generation instructions
-        system = SystemMessage(content=AGENT_SYSTEM_PROMPT)
+        system_content = AGENT_SYSTEM_PROMPT
+        if state["tool_call_count"] == 0 and not state["retrieved_context"]:
+            system_content += (
+                "\n\nIMPORTANT: No retrieve has been called yet this turn. "
+                "You MUST call retrieve() before generating any answer."
+            )
+        system = SystemMessage(content=system_content)
         response = self._agent_model_with_tools.invoke([system] + list(state["messages"]))
         return {"messages": [response]}
 
