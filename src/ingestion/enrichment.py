@@ -69,6 +69,25 @@ NOISE_LINES = {
     "×", "-", "‹", "›",
 }
 
+GENERIC_LOCAL_THEMES = {
+    "",
+    "documento",
+    "pagina",
+    "pagina corso di studio",
+    "profilo docente",
+    "docente",
+    "docenti",
+    "docente/personale",
+    "docente/personale - profilo docente",
+    "docente - profilo docente",
+    "scheda corso di studio",
+    "scheda sua corso di studio",
+    "scheda sua",
+    "corso di studio",
+    "regolamento corso di studio",
+    "regolamento",
+}
+
 
 def title_from_url(url: str) -> str:
     path = unquote(urlparse(url).path).strip("/")
@@ -167,6 +186,128 @@ def classify_context_header(text: str, url: str, metadata: dict | None = None) -
 
 def fallback_context_header(text: str, url: str, metadata: dict | None = None) -> str:
     return classify_context_header(text, url, metadata)
+
+
+def clean_header_for_semantic_repair(header: str) -> str:
+    text = re.sub(r"^\s*context\s*:\s*", "", header or "", flags=re.IGNORECASE).strip()
+    text = re.sub(r"\[([^\[\]]+)\]", r"\1", text)
+    text = text.replace("[", "").replace("]", "")
+    text = re.sub(r"\s*-\s*", " - ", text)
+    return clean_text(text).strip(" -")
+
+
+def split_header_theme(header: str) -> tuple[str, str]:
+    if " - " in header:
+        left, right = header.split(" - ", 1)
+        return left.strip(), right.strip()
+    return header.strip(), ""
+
+
+def compact_header_theme(theme: str) -> str:
+    theme = clean_text(theme or "").strip(" -")
+    if theme.lower() in GENERIC_LOCAL_THEMES:
+        return ""
+    return theme
+
+
+def context_header_with_topic(prefix: str, topic: str) -> str:
+    topic = compact_header_theme(topic)
+    if topic and topic.lower() != prefix.lower():
+        return f"{prefix} - {topic}"
+    return prefix
+
+
+def header_contains_docente_profile(header: str) -> bool:
+    lowered = clean_header_for_semantic_repair(header).lower()
+    return (
+        "docente/personale" in lowered
+        or "profilo docente" in lowered
+        or lowered.startswith("docente -")
+        or lowered == "docente"
+        or "curriculum docente" in lowered
+        or "elenco docenti" in lowered
+    )
+
+
+def header_contains_scheda_insegnamento(header: str) -> bool:
+    return "scheda insegnamento" in clean_header_for_semantic_repair(header).lower()
+
+
+def header_contains_scheda_sua(header: str) -> bool:
+    return "scheda sua" in clean_header_for_semantic_repair(header).lower()
+
+
+def regolamento_header_topic(cleaned_header: str) -> str:
+    lowered = cleaned_header.lower()
+    left, right = split_header_theme(cleaned_header)
+    if "scheda insegnamento" in lowered:
+        right = compact_header_theme(right)
+        if right and right.lower() != "scheda insegnamento":
+            return f"insegnamento {right}"
+        return "insegnamenti"
+    if "scheda sua" in lowered:
+        right = compact_header_theme(right)
+        left = compact_header_theme(left)
+        if right and "scheda" not in right.lower() and "corso di studio" not in right.lower():
+            return right
+        if left and "scheda" not in left.lower() and "corso di studio" not in left.lower():
+            return left
+        return "didattica"
+    if "docente" in lowered:
+        return "docenti e insegnamenti"
+    return compact_header_theme(right)
+
+
+def almalaurea_header_topic(cleaned_header: str) -> str:
+    lowered = cleaned_header.lower()
+    if "docent" in lowered:
+        return "opinioni sui docenti"
+    if "soddisfazione" in lowered:
+        return "soddisfazione per il corso di studio"
+    if "occup" in lowered:
+        return "occupazione laureati"
+    if "valutazione" in lowered or "opinioni" in lowered:
+        return "opinioni laureati"
+    if "laureat" in lowered or "statistic" in lowered:
+        return "statistiche laureati"
+    return ""
+
+
+def repair_context_header_semantics(header: str, url: str) -> tuple[str, str] | None:
+    """
+    Correct only high-confidence document-type conflicts observed in the audit.
+    Formatting-only cleanup stays outside this semantic repair step.
+    """
+    cleaned = clean_header_for_semantic_repair(header)
+    source = (url or "").lower()
+
+    if "__schede-sua" in source and header_contains_docente_profile(header):
+        return "Scheda SUA corso di studio - docenti di riferimento", "schede_sua:docente_profile"
+
+    if "__regolamenti-cds" in source:
+        if header_contains_scheda_insegnamento(header):
+            topic = regolamento_header_topic(cleaned)
+            return (
+                context_header_with_topic("Regolamento corso di studio", topic),
+                "regolamenti_cds:scheda_insegnamento",
+            )
+        if header_contains_scheda_sua(header):
+            topic = regolamento_header_topic(cleaned)
+            return (
+                context_header_with_topic("Regolamento corso di studio", topic),
+                "regolamenti_cds:scheda_sua",
+            )
+
+    if "__almalaurea" in source and (
+        header_contains_docente_profile(header) or header_contains_scheda_sua(header)
+    ):
+        topic = almalaurea_header_topic(cleaned)
+        return (
+            context_header_with_topic("Dati AlmaLaurea corso di studio", topic),
+            "almalaurea:wrong_document_type",
+        )
+
+    return None
 
 
 def is_meaningful_line(line: str) -> bool:
@@ -302,6 +443,15 @@ def normalize_context_header(header: str, text: str, url: str, metadata: dict | 
         header = " ".join(words[:HEADER_MAX_WORDS]).rstrip(".,;:")
 
     header = header.rstrip(".,;:")
+
+    semantic_repair = repair_context_header_semantics(header, url)
+    if semantic_repair:
+        repaired_header, rule = semantic_repair
+        logger.debug(
+            "Context header semantic repair applied: "
+            f"rule={rule}; source={url}; before={header}; after={repaired_header}"
+        )
+        header = repaired_header
 
     return header
 
