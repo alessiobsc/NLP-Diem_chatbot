@@ -68,10 +68,12 @@ def _route_scope(state: DiemState) -> str:
 
 
 def _route_agent(state: DiemState) -> str:
-    """After agent: tools if tool_calls present, else output_guard."""
+    """After agent: tools, force_answer (cap hit), or output_guard."""
     last = state["messages"][-1]
-    if getattr(last, "tool_calls", None) and state["tool_call_count"] < MAX_TOOL_CALLS:
-        return "tools"
+    if getattr(last, "tool_calls", None):
+        if state["tool_call_count"] < MAX_TOOL_CALLS:
+            return "tools"
+        return "force_answer"
     return "output_guard"
 
 
@@ -167,6 +169,7 @@ class DiemBrain:
         g.add_node("reset_state", self._node_reset_state)
         g.add_node("agent", self._node_agent)
         g.add_node("tools", self._make_tools_node(tools))
+        g.add_node("force_answer", self._node_force_answer)
         g.add_node("output_guard", self._node_output_guard)
 
         g.set_entry_point("input_guard")
@@ -175,6 +178,7 @@ class DiemBrain:
         g.add_edge("reset_state", "agent")
         g.add_conditional_edges("agent", _route_agent)
         g.add_edge("tools", "agent")
+        g.add_edge("force_answer", "output_guard")
         g.add_edge("output_guard", END)
 
         compile_kwargs: dict = {"name": "diem_rag_graph"}
@@ -240,7 +244,41 @@ class DiemBrain:
             )
         system = SystemMessage(content=system_content)
         response = self._agent_model_with_tools.invoke([system] + list(state["messages"]))
+        tool_calls = getattr(response, "tool_calls", None)
+        if tool_calls:
+            names = [tc["name"] for tc in tool_calls]
+            logger.info(f"agent | tool_call_count={state['tool_call_count']} | calling tools={names}")
+        else:
+            logger.info(f"agent | tool_call_count={state['tool_call_count']} | generating final answer")
         return {"messages": [response]}
+
+    def _node_force_answer(self, state: DiemState) -> dict:
+        """Cap hit with pending tool_calls: stub unresolved calls, then force final answer.
+
+        Called when _route_agent finds tool_calls in last AIMessage but tool_call_count
+        has reached MAX_TOOL_CALLS. Synthetic ToolMessages resolve the dangling tool_calls
+        so the message history stays valid for the model API, then the agent model
+        (without tools bound) generates a final answer from whatever context exists.
+        """
+        messages = list(state["messages"])
+        last_ai = messages[-1]
+        extra: List[ToolMessage] = []
+        for tc in getattr(last_ai, "tool_calls", []):
+            extra.append(ToolMessage(
+                content="[Tool call limit reached — result unavailable]",
+                tool_call_id=tc["id"],
+                name=tc["name"],
+            ))
+        logger.warning(
+            f"force_answer | MAX_TOOL_CALLS reached | stubbed {len(extra)} pending tool_call(s)"
+        )
+        system = SystemMessage(content=AGENT_SYSTEM_PROMPT + (
+            "\n\nIMPORTANT: You have reached the maximum number of tool calls. "
+            "Generate a final answer NOW based on the context already retrieved. "
+            "Do NOT call any more tools."
+        ))
+        response = self._agent_model.invoke([system] + messages + extra)
+        return {"messages": extra + [response]}
 
     def _node_output_guard(self, state: DiemState) -> dict:
         """Offensive content check + PII redaction on the final AIMessage.
