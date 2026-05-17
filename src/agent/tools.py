@@ -35,7 +35,14 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
           specify an academic year → the rewrite appends 'anno accademico 2025/2026'
         Returns the rewritten query as a string. Pass this EXACT string to retrieve() — do not modify it."""
         from src.agent.brain import extract_text
-        from src.prompts import REWRITE_PROMPT
+        from src.prompts import REWRITE_PROMPT, REJECTION_TAGS
+        from src.middleware import _SCOPE_REJECTION, _OFFENSIVE_FALLBACK
+
+        _GUARDRAIL_PREFIXES = (
+            _SCOPE_REJECTION[:40],
+            _OFFENSIVE_FALLBACK[:40],
+            "Mi dispiace, non sono riuscito",
+        ) + tuple(t[:10] for t in REJECTION_TAGS)
 
         messages = state.get("messages", [])
         history_lines = []
@@ -44,7 +51,10 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
                 history_lines.append(f"User: {extract_text(msg.content)}")
             elif isinstance(msg, AIMessage) and not getattr(msg, "tool_calls", None):
                 text = extract_text(msg.content)
-                if text:
+                # Skip guardrail-injected messages — they are not real answers and
+                # cause the rewrite model to treat the next question as a follow-up
+                # to a failed/rejected turn.
+                if text and not any(text.startswith(p) for p in _GUARDRAIL_PREFIXES):
                     history_lines.append(f"AI: {text}")
         history_str = "\n".join(history_lines[-6:])
 

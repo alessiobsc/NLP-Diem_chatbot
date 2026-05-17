@@ -234,6 +234,11 @@ class DiemBrain:
         Zeros tool_call_count, retrieved_context, and last_docs so each turn
         starts fresh. The agent will call retrieve() as its first action to get context.
         """
+        question = next(
+            (extract_text(m.content) for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
+            "",
+        )
+        logger.info(f"new_turn | user_question='{question[:120]}'")
         return {"tool_call_count": 0, "retrieved_context": "", "last_docs": []}
 
     def _node_agent(self, state: DiemState) -> dict:
