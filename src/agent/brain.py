@@ -253,7 +253,17 @@ class DiemBrain:
                 "and MUST NOT be used to skip retrieve() for the current question."
             )
         system = SystemMessage(content=system_content)
-        response = self._agent_model_with_tools.invoke([system] + list(state["messages"]))
+        # Strip AIMessages with empty content and no tool_calls — they indicate a failed
+        # prior turn and would contaminate the model's understanding of the conversation.
+        clean_messages = [
+            m for m in state["messages"]
+            if not (
+                isinstance(m, AIMessage)
+                and not getattr(m, "tool_calls", None)
+                and not (m.content if isinstance(m.content, str) else "").strip()
+            )
+        ]
+        response = self._agent_model_with_tools.invoke([system] + clean_messages)
         tool_calls = getattr(response, "tool_calls", None)
         if tool_calls:
             names = [tc["name"] for tc in tool_calls]
@@ -307,6 +317,14 @@ class DiemBrain:
             return {}
 
         content = last_ai.content if isinstance(last_ai.content, str) else str(last_ai.content)
+
+        # Empty answer: replace with fallback so history never contains a blank AIMessage.
+        if not content.strip():
+            logger.warning("output_guard: empty answer from agent, replacing with fallback")
+            return {"messages": [AIMessage(
+                id=last_ai.id,
+                content="Mi dispiace, non sono riuscito a trovare informazioni sufficienti per rispondere a questa domanda.",
+            )]}
 
         blocked = self._block_if_offensive(content, msg_id=last_ai.id)
         if blocked:
