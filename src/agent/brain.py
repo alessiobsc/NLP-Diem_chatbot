@@ -26,10 +26,10 @@ from config import (
     RETRIEVER_SCORE_THRESHOLD,
     DEFAULT_SESSION_ID, MAX_TOOL_CALLS
 )
-from src.embeddings.reranker import rerank
 from src.agent.utils import extract_text, format_context, rewrite_query
 from src.agent.init_models import build_agent_model, build_lightweight_model
 from src.agent.tools import build_tools
+from src.encoders.reranker import rerank
 from src.middleware import (
     ScopeGuardrail, OffensiveContentGuardrail, redact_pii, _SCOPE_REJECTION,
 )

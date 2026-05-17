@@ -6,7 +6,7 @@ from langchain_chroma import Chroma
 import gradio as gr
 
 from src.agent.brain import DiemBrain
-from src.embeddings.embedding_init import build_embedding_model
+from src.encoders.embedding_init import build_embedding_model
 from src.utils.logger import get_logger
 
 load_dotenv()

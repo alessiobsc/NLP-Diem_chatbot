@@ -110,7 +110,7 @@ CHILD_CHUNK_SIZE: int = 400
 CHILD_CHUNK_OVERLAP: int = 50
 
 # Ingestion Batching
-MAX_CHILD_CHUNKS_PER_BATCH: int = 4000
+MAX_CHILD_CHUNKS_PER_BATCH: int = 100
 
 
 # =============================================================================
