@@ -4,6 +4,7 @@ Core AI Brain module for the DIEM Chatbot.
 Module-level symbols (embedding_model, reranker, rerank, _format_context) are kept
 so ingestion scripts and tester.py continue to import without modification.
 """
+import uuid
 from typing import Any, Annotated, Dict, List, TypedDict
 from langchain_chroma import Chroma
 from langchain_classic.retrievers import ParentDocumentRetriever
@@ -68,10 +69,14 @@ def _route_scope(state: DiemState) -> str:
 
 
 def _route_agent(state: DiemState) -> str:
-    """After agent: tools, force_answer (retrieve cap hit), or output_guard."""
+    """After agent: tools, force_answer (retrieve cap), forced_retrieve, or output_guard."""
     last = state["messages"][-1]
     tool_calls = getattr(last, "tool_calls", None)
     if not tool_calls:
+        content = (last.content if isinstance(last.content, str) else "").strip()
+        # Agent produced nothing without ever calling retrieve → force a retrieve
+        if not content and state["tool_call_count"] == 0 and not state["retrieved_context"]:
+            return "forced_retrieve"
         return "output_guard"
     # Cap only applies when agent wants to call retrieve again
     wants_retrieve = any(tc["name"] == "retrieve" for tc in tool_calls)
@@ -177,6 +182,7 @@ class DiemBrain:
         g.add_node("reset_state", self._node_reset_state)
         g.add_node("agent", self._node_agent)
         g.add_node("tools", self._make_tools_node(tools))
+        g.add_node("forced_retrieve", self._node_forced_retrieve)
         g.add_node("force_answer", self._node_force_answer)
         g.add_node("output_guard", self._node_output_guard)
 
@@ -186,6 +192,7 @@ class DiemBrain:
         g.add_edge("reset_state", "agent")
         g.add_conditional_edges("agent", _route_agent)
         g.add_edge("tools", "agent")
+        g.add_edge("forced_retrieve", "agent")
         g.add_edge("force_answer", "output_guard")
         g.add_edge("output_guard", END)
 
@@ -262,20 +269,20 @@ class DiemBrain:
                 "- Always call retrieve() for each new question, even after calling rewrite()."
             )
         system = SystemMessage(content=system_content)
-        # Strip guardrail-injected AIMessages before passing history to the model.
-        # These are NOT real agent responses and cause the model to pattern-match
-        # similar questions as "rejected" or "unanswerable" on subsequent turns:
-        # - Empty messages: failed turns (no content, no tool_calls)
-        # - Scope/offensive rejections: injected by input_guard or scope_guard nodes
-        # - Fallback messages: injected by output_guard when agent produced empty content
+        # Replace guardrail-injected AIMessages with a neutral placeholder before
+        # passing history to the model. Removing them entirely leaves orphaned
+        # HumanMessages with no response, causing the model to try answering all
+        # previous questions at once. The placeholder preserves Q&A pair structure
+        # without exposing rejection/fallback text that causes pattern-matching.
         _GUARDRAIL_PREFIXES = (
             _SCOPE_REJECTION[:40],
             _OFFENSIVE_FALLBACK[:40],
             "Mi dispiace, non sono riuscito",
         ) + tuple(t[:10] for t in REJECTION_TAGS)
-        clean_messages = [
-            m for m in state["messages"]
-            if not (
+        _PLACEHOLDER = "[Risposta non disponibile per questo turno.]"
+        clean_messages = []
+        for m in state["messages"]:
+            if (
                 isinstance(m, AIMessage)
                 and not getattr(m, "tool_calls", None)
                 and (
@@ -285,8 +292,10 @@ class DiemBrain:
                         for p in _GUARDRAIL_PREFIXES
                     )
                 )
-            )
-        ]
+            ):
+                clean_messages.append(AIMessage(id=m.id, content=_PLACEHOLDER))
+            else:
+                clean_messages.append(m)
         response = self._agent_model_with_tools.invoke([system] + clean_messages)
         tool_calls = getattr(response, "tool_calls", None)
         if tool_calls:
@@ -298,6 +307,37 @@ class DiemBrain:
                 f"| answer_len={len(response.content) if isinstance(response.content, str) else 0}"
             )
         return {"messages": [response]}
+
+    def _node_forced_retrieve(self, state: DiemState) -> dict:
+        """Agent generated empty content without calling retrieve — force a retrieve.
+
+        Extracts the current user question, calls the retriever directly, and injects
+        a synthetic AIMessage+ToolMessage pair so the subsequent agent invocation
+        receives valid context. Only triggered when tool_call_count==0 and
+        retrieved_context=="" (i.e. agent skipped all tools on the very first call).
+        """
+        question = next(
+            (extract_text(m.content) for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
+            "",
+        )
+        logger.warning(f"forced_retrieve | agent skipped tools, forcing retrieve | query='{question[:80]}'")
+        docs = self._retriever.invoke(question)
+        reranked = rerank(question, docs, top_n=3) if docs else []
+        self._last_docs = reranked
+        context = format_context({"docs": reranked, "question": question, "history": []})["context"]
+        logger.info(f"forced_retrieve | reranked={len(reranked)} | context_len={len(context)}")
+        tc_id = str(uuid.uuid4())
+        ai_msg = AIMessage(
+            content="",
+            tool_calls=[{"name": "retrieve", "args": {"query": question}, "id": tc_id, "type": "tool_call"}],
+        )
+        tool_msg = ToolMessage(content=context, tool_call_id=tc_id, name="retrieve")
+        return {
+            "messages": [ai_msg, tool_msg],
+            "tool_call_count": 1,
+            "retrieved_context": context,
+            "last_docs": reranked,
+        }
 
     def _node_force_answer(self, state: DiemState) -> dict:
         """Cap hit with pending tool_calls: stub unresolved calls, then force final answer.
