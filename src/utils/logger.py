@@ -3,6 +3,10 @@ import sys
 from logging.handlers import RotatingFileHandler
 from config import LOG_LEVEL, LOG_DIR, LOG_FILE, MAX_LOG_SIZE_MB, LOG_BACKUP_COUNT
 
+# Cache the handlers globally to prevent multiple instances from opening the same file
+_console_handler = None
+_file_handler = None
+
 def get_logger(name: str) -> logging.Logger:
     """
     This function returns a logger instance configured to log to the console
@@ -16,8 +20,10 @@ def get_logger(name: str) -> logging.Logger:
     Returns:
         A configured logger instance.
     """
-    # TODO (Code Refactorer): Cache loggers based on their name to avoid adding multiple handlers to the same logger if get_logger is called multiple times.
+    global _console_handler, _file_handler
+
     logger = logging.getLogger(name)
+    
     if not logger.handlers:
         # Use LOG_LEVEL from config, which already handles the .env and default
         log_level_str = LOG_LEVEL.upper()
@@ -33,24 +39,26 @@ def get_logger(name: str) -> logging.Logger:
         )
 
         # 1. Console Handler
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setFormatter(formatter)
-        logger.addHandler(console_handler)
+        if _console_handler is None:
+            _console_handler = logging.StreamHandler(sys.stdout)
+            _console_handler.setFormatter(formatter)
+        logger.addHandler(_console_handler)
 
         # 2. File Handler with Rotation (to prevent memory/disk overflow)
-        # Create log directory if it doesn't exist
-        LOG_DIR.mkdir(parents=True, exist_ok=True)
-        
-        # Max size in bytes (MB * 1024 * 1024)
-        max_bytes = MAX_LOG_SIZE_MB * 1024 * 1024
-        
-        file_handler = RotatingFileHandler(
-            filename=LOG_FILE,
-            maxBytes=max_bytes,
-            backupCount=LOG_BACKUP_COUNT,
-            encoding='utf-8'
-        )
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
+        if _file_handler is None:
+            # Create log directory if it doesn't exist
+            LOG_DIR.mkdir(parents=True, exist_ok=True)
+            
+            # Max size in bytes (MB * 1024 * 1024)
+            max_bytes = MAX_LOG_SIZE_MB * 1024 * 1024
+            
+            _file_handler = RotatingFileHandler(
+                filename=LOG_FILE,
+                maxBytes=max_bytes,
+                backupCount=LOG_BACKUP_COUNT,
+                encoding='utf-8'
+            )
+            _file_handler.setFormatter(formatter)
+        logger.addHandler(_file_handler)
 
     return logger
