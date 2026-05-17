@@ -30,7 +30,7 @@ from src.agent.init_models import build_agent_model, build_lightweight_model
 from src.agent.tools import build_tools
 from src.encoders.reranker import rerank
 from src.middleware import (
-    ScopeGuardrail, OffensiveContentGuardrail, redact_pii, _SCOPE_REJECTION,
+    ScopeGuardrail, OffensiveContentGuardrail, redact_pii, _SCOPE_REJECTION, _OFFENSIVE_FALLBACK,
 )
 from src.prompts import AGENT_SYSTEM_PROMPT, REJECTION_TAGS
 from src.utils.logger import get_logger
@@ -256,14 +256,29 @@ class DiemBrain:
                 "- Always run the full tool flow (retrieve at minimum) for each new question."
             )
         system = SystemMessage(content=system_content)
-        # Strip AIMessages with empty content and no tool_calls — they indicate a failed
-        # prior turn and would contaminate the model's understanding of the conversation.
+        # Strip guardrail-injected AIMessages before passing history to the model.
+        # These are NOT real agent responses and cause the model to pattern-match
+        # similar questions as "rejected" or "unanswerable" on subsequent turns:
+        # - Empty messages: failed turns (no content, no tool_calls)
+        # - Scope/offensive rejections: injected by input_guard or scope_guard nodes
+        # - Fallback messages: injected by output_guard when agent produced empty content
+        _GUARDRAIL_PREFIXES = (
+            _SCOPE_REJECTION[:40],
+            _OFFENSIVE_FALLBACK[:40],
+            "Mi dispiace, non sono riuscito",
+        ) + tuple(t[:10] for t in REJECTION_TAGS)
         clean_messages = [
             m for m in state["messages"]
             if not (
                 isinstance(m, AIMessage)
                 and not getattr(m, "tool_calls", None)
-                and not (m.content if isinstance(m.content, str) else "").strip()
+                and (
+                    not (m.content if isinstance(m.content, str) else "").strip()
+                    or any(
+                        (m.content if isinstance(m.content, str) else "").startswith(p)
+                        for p in _GUARDRAIL_PREFIXES
+                    )
+                )
             )
         ]
         response = self._agent_model_with_tools.invoke([system] + clean_messages)
