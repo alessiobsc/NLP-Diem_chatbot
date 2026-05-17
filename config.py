@@ -123,8 +123,9 @@ MAX_CHILD_CHUNKS_PER_BATCH: int = 100
 USE_LLM_CONTEXT_HEADERS = strtobool(os.getenv("USE_LLM_CONTEXT_HEADERS", "True"))
 
 # Agentic RAG Settings
-# Max tool calls the 32b agent can make per turn before generate is forced
-MAX_TOOL_CALLS: int = int(os.getenv("MAX_TOOL_CALLS", "6"))
+# Max retrieve() calls the agent can make per turn before generate is forced.
+# Rewrite/summarize/calculate are uncapped. Set via MAX_RETRIEVE_CALLS env var.
+MAX_RETRIEVE_CALLS: int = int(os.getenv("MAX_RETRIEVE_CALLS", "3"))
 
 # OpenRouter Enrichment Settings
 OPENROUTER_ENDPOINT: str = os.getenv("OPENROUTER_ENDPOINT", "https://openrouter.ai/api/v1/chat/completions")

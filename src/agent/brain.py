@@ -23,7 +23,7 @@ from config import (
     CHILD_CHUNK_OVERLAP,
     BI_ENCODER_K,
     RETRIEVER_SCORE_THRESHOLD,
-    DEFAULT_SESSION_ID, MAX_TOOL_CALLS
+    DEFAULT_SESSION_ID, MAX_RETRIEVE_CALLS
 )
 from src.agent.utils import extract_text, format_context, rewrite_query
 from src.agent.init_models import build_agent_model, build_lightweight_model
@@ -44,7 +44,7 @@ logger = get_logger(__name__)
 
 class DiemState(TypedDict):
     messages: Annotated[List[BaseMessage], add_messages]
-    tool_call_count: int      # increments each time the tools node fires
+    tool_call_count: int      # increments each time retrieve() fires; cap = MAX_RETRIEVE_CALLS
     retrieved_context: str    # latest retrieve output, passed to generate node
     last_docs: List[Document] # latest retrieved docs, used for source URL formatting
 
@@ -68,13 +68,16 @@ def _route_scope(state: DiemState) -> str:
 
 
 def _route_agent(state: DiemState) -> str:
-    """After agent: tools, force_answer (cap hit), or output_guard."""
+    """After agent: tools, force_answer (retrieve cap hit), or output_guard."""
     last = state["messages"][-1]
-    if getattr(last, "tool_calls", None):
-        if state["tool_call_count"] < MAX_TOOL_CALLS:
-            return "tools"
+    tool_calls = getattr(last, "tool_calls", None)
+    if not tool_calls:
+        return "output_guard"
+    # Cap only applies when agent wants to call retrieve again
+    wants_retrieve = any(tc["name"] == "retrieve" for tc in tool_calls)
+    if wants_retrieve and state["tool_call_count"] >= MAX_RETRIEVE_CALLS:
         return "force_answer"
-    return "output_guard"
+    return "tools"
 
 
 # ── DiemBrain ─────────────────────────────────────────────────────────────────
@@ -130,14 +133,15 @@ class DiemBrain:
         def tools_node(state: DiemState) -> dict:
             result = tool_node.invoke(state)
 
-            updates = {"tool_call_count": state["tool_call_count"] + 1}
-
-            # Check whether retrieve was called in the last AIMessage's tool_calls
+            # Only retrieve calls count toward the cap; rewrite/summarize/calculate are free
             last_ai = state["messages"][-1]
             tool_calls = getattr(last_ai, "tool_calls", [])
             retrieve_call = next(
                 (tc for tc in tool_calls if tc["name"] == "retrieve"), None
             )
+            updates = {
+                "tool_call_count": state["tool_call_count"] + (1 if retrieve_call else 0)
+            }
 
             if retrieve_call:
                 # Match ToolMessage by tool_call_id (handles batch tool calls correctly)
@@ -239,8 +243,10 @@ class DiemBrain:
         system_content = AGENT_SYSTEM_PROMPT
         if state["tool_call_count"] == 0 and not state["retrieved_context"]:
             system_content += (
-                "\n\nIMPORTANT: No retrieve has been called yet this turn. "
-                "You MUST call retrieve() before generating any answer."
+                "\n\nIMPORTANT: This is a new user question — no retrieve has been called yet this turn. "
+                "You MUST call rewrite() or retrieve() before generating any answer. "
+                "Tool results visible in the conversation history belong to PREVIOUS questions "
+                "and MUST NOT be used to skip retrieve() for the current question."
             )
         system = SystemMessage(content=system_content)
         response = self._agent_model_with_tools.invoke([system] + list(state["messages"]))
@@ -270,7 +276,7 @@ class DiemBrain:
                 name=tc["name"],
             ))
         logger.warning(
-            f"force_answer | MAX_TOOL_CALLS reached | stubbed {len(extra)} pending tool_call(s)"
+            f"force_answer | MAX_RETRIEVE_CALLS reached | stubbed {len(extra)} pending tool_call(s)"
         )
         system = SystemMessage(content=AGENT_SYSTEM_PROMPT + (
             "\n\nIMPORTANT: You have reached the maximum number of tool calls. "

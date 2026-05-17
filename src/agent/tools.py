@@ -26,9 +26,14 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
 
     @tool
     def rewrite(query: str, state: Annotated[dict, InjectedState]) -> str:
-        """Rewrite an ambiguous query into a standalone question using conversation history.
-        Call this when the query contains pronouns (lui, lei, suoi, questo) or refers to
-        something mentioned earlier. Returns the rewritten query — then call retrieve() with it."""
+        """Rewrite the user's latest message into a self-contained, standalone search query.
+        Call BEFORE retrieve() when the message:
+        - contains pronouns or implicit references (lui, lei, suoi, questo, quale, quel, loro, ne)
+        - is a follow-up that omits the subject (e.g. 'e i suoi orari?', 'cosa insegna?', 'quali corsi?')
+        - is incomplete or poorly phrased
+        - concerns academic content (courses, regulations, exams, degree programs) AND does not
+          specify an academic year → the rewrite appends 'anno accademico 2025/2026'
+        Returns the rewritten query as a string. Pass this EXACT string to retrieve() — do not modify it."""
         from src.agent.brain import extract_text
         from src.prompts import REWRITE_PROMPT
 
@@ -54,8 +59,12 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
 
     @tool
     def retrieve(query: str) -> str:
-        """Search the DIEM knowledge base for documents relevant to the query.
-        Call this again if current context is insufficient for a multi-part question."""
+        """Search the DIEM knowledge base and return relevant document excerpts.
+        ALWAYS call this before generating any answer — context is mandatory.
+        If rewrite() was called, pass its output EXACTLY as the query.
+        If the returned context is empty or off-topic, retry with a rephrased or broader query
+        (never retry with the identical query string).
+        Returns formatted document excerpts as a string."""
         from src.agent.brain import rerank, format_context
 
         docs = retriever.invoke(query)
@@ -67,9 +76,11 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
 
     @tool
     def summarize(text: str, query: str = "") -> str:
-        """Summarize retrieved context into concise key points.
-        Pass query to get a focused summary relevant to the user's question — preferred after multiple retrieve calls.
-        If query is empty, produces a generic summary."""
+        """Condense a long retrieved context into focused key points in Italian.
+        Call when: (1) retrieved context exceeds ~6000 characters, OR
+        (2) after multiple retrieve() calls, to merge and focus results.
+        Always pass the user's original question as query to get a focused summary.
+        Returns a concise Italian summary."""
         if query:
             prompt = (
                 f"Extract and summarize in Italian only the information relevant to answer this question:\n"
@@ -81,9 +92,11 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
 
     @tool
     def calculate(context: str, operation: str, values: dict) -> str:
-        """Apply an academic calculation using a formula already retrieved from the knowledge base.
-        Call retrieve() first to fetch the official DIEM formula, then pass its output as context.
-        Use for: graduation grade from average, weighted average, TOLC score thresholds."""
+        """Apply an academic calculation using the official DIEM formula from retrieved context.
+        Always call retrieve() FIRST to fetch the formula, then pass its output as context.
+        Use for ANY numeric academic calculation: graduation grade, weighted average, TOLC thresholds.
+        Never compute inline — always delegate to this tool.
+        Parameters: context (retrieved formula text), operation (what to compute), values (input dict)."""
         prompt = (
             f"Using only the official formula found in the following context, "
             f"compute the result for: operation='{operation}', values={values}.\n\n"
