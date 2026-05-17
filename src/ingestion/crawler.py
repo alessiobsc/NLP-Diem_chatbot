@@ -1,6 +1,7 @@
 import json
 import re
-import ssl
+import time
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Iterable, Dict, Set, Tuple, List, Optional
 from urllib.parse import urldefrag, urljoin, urlparse
@@ -13,6 +14,7 @@ from requests import Session
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from src.ingestion.crawl_state import CrawlStateManager
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -48,44 +50,64 @@ DIEM_PERSONALE_URL = "https://www.diem.unisa.it/dipartimento/personale"
 REQUEST_TIMEOUT = 15
 CONCURRENT_MAX_WORKERS = 10
 
+# Politeness / Rate Limiting
+REQUESTS_PER_SECOND_LIMIT = 5
+
 # ==============================================================================
-# MONKEY PATCHING & GLOBALS CONFIGURATION
+# HTTP SESSION FACTORY & RATE LIMITING
 # ==============================================================================
 
-def _configure_global_session() -> None:
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
+class RateLimiter:
+    """A thread-safe rate limiter implementing a basic token bucket / delay mechanism."""
+    def __init__(self, calls_per_second: float):
+        self.delay = 1.0 / calls_per_second
+        self.last_call = 0.0
+        self.lock = threading.Lock()
+
+    def wait(self):
+        with self.lock:
+            now = time.time()
+            elapsed = now - self.last_call
+            if elapsed < self.delay:
+                time.sleep(self.delay - elapsed)
+            self.last_call = time.time()
+
+
+# Global rate limiter instance
+_global_rate_limiter = RateLimiter(REQUESTS_PER_SECOND_LIMIT)
+
+
+class RateLimitedSession(Session):
+    """A requests.Session subclass that respects a rate limit before each request."""
+    def __init__(self, rate_limiter: RateLimiter):
+        super().__init__()
+        self.rate_limiter = rate_limiter
+
+    def request(self, method, url, *args, **kwargs):
+        self.rate_limiter.wait()
+        return super().request(method, url, *args, **kwargs)
+
+
+def create_resilient_session() -> Session:
     """
-    Configures the global behavior for 'requests' and 'urllib3'.
-    - Disables insecure request warnings.
-    - Sets a global default to avoid SSL verification (due to missing UNISA certs on Windows).
-    - Adds a robust retry strategy for all requests using the requests.Session.
+    Creates a RateLimitedSession with a retry strategy and SSL verification disabled.
+    This session is designed for interacting with UNISA's infrastructure politely.
     """
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    ssl._create_default_https_context = ssl._create_unverified_context
+    session = RateLimitedSession(_global_rate_limiter)
+    retry_strategy = Retry(
+        total=3,
+        status_forcelist=[429, 500, 502, 503, 504],
+        backoff_factor=1,
+    )
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    session.verify = False  # Disable SSL verification for this session
+    return session
 
-    _orig_session_init = Session.__init__
-
-    def _custom_session_init(self: Session) -> None:
-        _orig_session_init(self)
-        retry_strategy = Retry(
-            total=3,
-            status_forcelist=[429, 500, 502, 503, 504],
-            backoff_factor=1,
-        )
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-        self.mount("http://", adapter)
-        self.mount("https://", adapter)
-
-    Session.__init__ = _custom_session_init
-
-    _orig_request = Session.request
-
-    def _no_ssl_verify(self: Session, method: str, url: str, **kwargs) -> requests.Response:
-        kwargs.setdefault("verify", False)
-        return _orig_request(self, method, url, **kwargs)
-
-    Session.request = _no_ssl_verify
-
-_configure_global_session()
 
 # ==============================================================================
 # UTILITY FUNCTIONS
@@ -116,19 +138,64 @@ def build_html_sitemap_url(base_url: str) -> str:
     """Construct the standard sitemap URL from a given base URL."""
     return f"{base_url.rstrip('/')}/{SITEMAP_QUERY}"
 
+
 # ==============================================================================
 # CRAWLING & EXTRACTION
 # ==============================================================================
 
-def crawl(start_url: str, base_url: str, max_depth: int = 2) -> Iterable:
+class CustomRecursiveUrlLoader(RecursiveUrlLoader):
+    """
+    A custom RecursiveUrlLoader that uses a resilient, pre-configured session
+    and a state manager for incremental crawling.
+    """
+
+    def __init__(self, *args, session: Optional[Session] = None, state_manager: Optional[CrawlStateManager] = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.session = session or requests.Session()
+        self.state_manager = state_manager
+
+    def _get_html(self, url: str) -> Optional[str]:
+        if self.state_manager is None:
+            # Fallback to stateless behavior
+            return super()._get_html(url)
+
+        try:
+            # Get conditional headers from the state manager
+            db_info = self.state_manager.get_url_info(url)
+            headers = {}
+            if db_info:
+                if db_info["etag"]: headers["If-None-Match"] = db_info["etag"]
+                if db_info["last_modified"]: headers["If-Modified-Since"] = db_info["last_modified"]
+
+            req_kwargs = getattr(self, "requests_kwargs", {})
+            response = self.session.get(
+                url, timeout=self.timeout, headers={**self.headers, **headers}, **req_kwargs
+            )
+
+            if response.status_code == 304:  # Not Modified
+                logger.debug(f"Skipping unmodified content: {url}")
+                return None  # Prevent loader from creating a Document
+
+            response.raise_for_status()
+
+            # If content was modified (200 OK), update state and return content
+            self.state_manager.update_url_state(url, response)
+            return response.text
+
+        except Exception as e:
+            logger.warning(f"Unable to load from {url}: {e}")
+            return None
+
+
+def crawl(start_url: str, base_url: str, max_depth: int = 2, session: Optional[Session] = None, state_manager: Optional[CrawlStateManager] = None) -> Iterable:
     """
     Crawl a target URL recursively up to a given depth.
     Yields documents lazily to preserve memory.
     """
     logger.debug(f"Crawling {start_url} with max depth {max_depth}")
     try:
-        loader = RecursiveUrlLoader(
-            start_url,
+        loader = CustomRecursiveUrlLoader(
+            url=start_url,
             base_url=base_url,
             max_depth=max_depth,
             prevent_outside=True,
@@ -136,18 +203,20 @@ def crawl(start_url: str, base_url: str, max_depth: int = 2) -> Iterable:
             check_response_status=True,
             exclude_dirs=EXCLUDE_DIRS,
             link_regex=HTML_LINK_REGEX,
+            session=session,
+            state_manager=state_manager
         )
-        return loader.lazy_load()
+        yield from loader.lazy_load()
     except Exception as e:
         logger.warning(f"  FAILED {start_url}: {e}")
-        return iter([])
+        yield from iter([])
 
 
-def extract_html_sitemap_urls(sitemap_url: str, base_url: str) -> List[str]:
+def extract_html_sitemap_urls(sitemap_url: str, base_url: str, session: Session) -> List[str]:
     """Extract deterministic section URLs from UNISA HTML sitemap pages."""
     logger.info(f"Fetching HTML sitemap: {sitemap_url}")
     try:
-        response = requests.get(sitemap_url, timeout=REQUEST_TIMEOUT, verify=False)
+        response = session.get(sitemap_url, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
     except Exception as e:
         logger.warning(f"  WARNING: could not fetch HTML sitemap {sitemap_url}: {e}")
@@ -158,16 +227,16 @@ def extract_html_sitemap_urls(sitemap_url: str, base_url: str) -> List[str]:
     valid_urls: Set[str] = set()
 
     for anchor in soup.find_all("a", href=True):
-        href = anchor["href"].strip()
-        
+        href = anchor.get("href", "").strip()
+
         if not href or href.startswith(("javascript:", "mailto:", "tel:")):
             continue
 
         absolute_url, _ = urldefrag(urljoin(sitemap_url, href))
-        
+
         if not _is_valid_sitemap_url(absolute_url, base_netloc):
             continue
-            
+
         valid_urls.add(absolute_url)
 
     seeds = sorted(valid_urls)
@@ -190,48 +259,50 @@ def _is_valid_sitemap_url(url: str, expected_netloc: str) -> bool:
 
 
 def crawl_html_sitemap(
-    base_url: str,
-    max_depth: int = 1,
-    crawl_base_url: Optional[str] = None,
-    fallback_depth: Optional[int] = None,
+        base_url: str,
+        max_depth: int = 1,
+        crawl_base_url: Optional[str] = None,
+        fallback_depth: Optional[int] = None,
 ) -> Iterable:
     """Crawl section seeds from a UNISA HTML sitemap using shallow recursion."""
     crawl_base_url = crawl_base_url or base_url
     fallback_depth = fallback_depth if fallback_depth is not None else max_depth
     sitemap_url = build_html_sitemap_url(base_url)
-    
-    seeds = extract_html_sitemap_urls(sitemap_url, base_url)
-    
-    if not seeds:
-        logger.warning(f"  WARNING: no sitemap seeds found for {base_url}; falling back to direct crawl")
-        yield from crawl(base_url, base_url=crawl_base_url, max_depth=fallback_depth)
-        return
 
-    for i, seed in enumerate(seeds, 1):
-        seed_docs = crawl(seed, base_url=crawl_base_url, max_depth=max_depth)
-        count = 0
-        for doc in seed_docs:
-            count += 1
-            yield doc
-        logger.debug(f"    [{i:02d}/{len(seeds)}] {seed} ({count} pages)")
+    with CrawlStateManager() as state_manager:
+        with create_resilient_session() as session:
+            seeds = extract_html_sitemap_urls(sitemap_url, base_url, session)
+
+            if not seeds:
+                logger.warning(f"  WARNING: no sitemap seeds found for {base_url}; falling back to direct crawl")
+                yield from crawl(base_url, base_url=crawl_base_url, max_depth=fallback_depth, session=session, state_manager=state_manager)
+                return
+
+            for i, seed in enumerate(seeds, 1):
+                seed_docs = crawl(seed, base_url=crawl_base_url, max_depth=max_depth, session=session, state_manager=state_manager)
+                count = 0
+                for doc in seed_docs:
+                    count += 1
+                    yield doc
+                logger.debug(f"    [{i:02d}/{len(seeds)}] {seed} ({count} pages)")
 
 
 def extract_corsi_urls(raw_docs: Iterable) -> List[str]:
     """Parse documents related to educational offerings and extract course URLs."""
     course_urls: Set[str] = set()
-    
+
     # Filter documents relevant to course offerings
     source_docs = (
         doc for doc in raw_docs
         if OFFERTA_FORMATIVA_PATH in doc.metadata.get("source", "")
-        and "?anno=" not in doc.metadata.get("source", "")
+           and "?anno=" not in doc.metadata.get("source", "")
     )
 
     for doc in source_docs:
         try:
             soup = BeautifulSoup(doc.page_content, "lxml")
             for anchor in soup.find_all("a", href=True):
-                href = anchor["href"].strip()
+                href = anchor.get("href", "").strip()
                 if href.startswith("http") and "corsi.unisa.it" in href:
                     parsed = urlparse(href)
                     first_segment = next(iter(parsed.path.strip("/").split("/")), None)
@@ -244,10 +315,10 @@ def extract_corsi_urls(raw_docs: Iterable) -> List[str]:
     return sorted(course_urls)
 
 
-def _fetch_personale_page(url: str) -> str:
+def _fetch_personale_page(url: str, session: Session) -> str:
     """Fetch the main DIEM 'personale' HTML page."""
     logger.info(f"Fetching faculty list from {url}")
-    response = requests.get(url, timeout=REQUEST_TIMEOUT, verify=False)
+    response = session.get(url, timeout=REQUEST_TIMEOUT)
     response.raise_for_status()
     return response.text
 
@@ -272,23 +343,38 @@ def _parse_rubrica_links(html: str) -> Dict[str, str]:
     return rubrica_links
 
 
-def _fetch_and_validate_faculty_profile(matricola: str, url: str) -> Tuple[str, bool, Exception | str]:
-    """Helper for concurrently validating a faculty profile page."""
+def _fetch_and_validate_faculty_profile(matricola: str, url: str, session: Session, state_manager: CrawlStateManager) -> Tuple[
+    str, bool, Exception | str]:
+    """Helper for concurrently validating a faculty profile page, using caching."""
     try:
-        response = requests.get(url, timeout=REQUEST_TIMEOUT, verify=False)
+        db_info = state_manager.get_url_info(url)
+        headers = {}
+        if db_info:
+            if db_info["etag"]: headers["If-None-Match"] = db_info["etag"]
+            if db_info["last_modified"]: headers["If-Modified-Since"] = db_info["last_modified"]
+
+        response = session.get(url, timeout=REQUEST_TIMEOUT, headers=headers)
+
+        if response.status_code == 304:
+            logger.debug(f"Skipping unmodified faculty profile: {url}")
+            metadata = json.loads(db_info["metadata_json"]) if db_info and db_info["metadata_json"] else {}
+            has_profile = metadata.get("has_profile", False)
+            return matricola, has_profile, "OK (Not Modified)"
+
         response.raise_for_status()
-        
+
         soup = BeautifulSoup(response.text, "lxml")
         has_profile = any(
             "docenti.unisa.it" in (anchor.get("href") or "")
             for anchor in soup.find_all("a", href=True)
         )
+        state_manager.update_url_state(url, response, metadata={"has_profile": has_profile})
         return matricola, has_profile, "OK"
     except Exception as exc:
         return matricola, False, exc
 
 
-def _validate_faculty_urls_concurrently(rubrica_links: Dict[str, str]) -> List[str]:
+def _validate_faculty_urls_concurrently(rubrica_links: Dict[str, str], session: Session, state_manager: CrawlStateManager) -> List[str]:
     """
     Given a dict of matricola -> rubrica_url, uses a thread pool to validate
     which ones actually have a docenti.unisa.it profile.
@@ -301,27 +387,27 @@ def _validate_faculty_urls_concurrently(rubrica_links: Dict[str, str]) -> List[s
 
     with ThreadPoolExecutor(max_workers=CONCURRENT_MAX_WORKERS) as executor:
         future_to_matricola = {
-            executor.submit(_fetch_and_validate_faculty_profile, mid, rubrica_links[mid]): mid
+            executor.submit(_fetch_and_validate_faculty_profile, mid, rubrica_links[mid], session, state_manager): mid
             for mid in matricole
         }
 
         count = 0
         total_matricole = len(matricole)
-        
+
         for future in as_completed(future_to_matricola):
             count += 1
             matricola = future_to_matricola[future]
-            
+
             try:
                 res_mid, has_profile, status = future.result()
-                
+
                 if isinstance(status, Exception):
                     logger.warning(f"    [{count:02d}/{total_matricole}] {res_mid}: ERROR {status} — skipping")
                     continue
-                    
+
                 log_status = "OK" if has_profile else "SKIP (no profile)"
                 logger.debug(f"    [{count:02d}/{total_matricole}] {res_mid}: {log_status}")
-                
+
                 if has_profile:
                     validated_urls.append(f"https://docenti.unisa.it/{res_mid}/home")
             except Exception as e:
@@ -337,9 +423,11 @@ def extract_diem_faculty_urls() -> List[str]:
     Uses concurrency to speed up the validation process.
     """
     try:
-        html = _fetch_personale_page(DIEM_PERSONALE_URL)
-        rubrica_links = _parse_rubrica_links(html)
-        return _validate_faculty_urls_concurrently(rubrica_links)
+        with CrawlStateManager() as state_manager:
+            with create_resilient_session() as session:
+                html = _fetch_personale_page(DIEM_PERSONALE_URL, session)
+                rubrica_links = _parse_rubrica_links(html)
+                return _validate_faculty_urls_concurrently(rubrica_links, session, state_manager)
     except Exception as e:
         logger.error(f"  WARNING: could not fetch or process faculty list from personale page: {e}")
         return []
@@ -354,15 +442,15 @@ def filter_docs(docs: Iterable) -> Iterable:
     dropped_count = 0
     for doc in docs:
         source_url = doc.metadata.get("source", "")
-        
+
         contains_skip_substring = any(sub in source_url for sub in SKIP_DOCUMENT_SUBSTRINGS)
         is_too_old = is_pre_2020_url(source_url)
-        
+
         if not contains_skip_substring and not is_too_old:
             yield doc
         else:
             dropped_count += 1
-            
+
     logger.debug(f"Filtered {dropped_count} documents")
 
 
@@ -370,24 +458,26 @@ def save_crawled_pdfs_to_json(pdf_docs: Iterable, filename: str) -> None:
     """Group PDF pages by source URL and save the summary to a JSON file."""
     pdfs_summary: Dict[str, Dict] = {}
     total_pages_count = 0
-    
+
     for doc in pdf_docs:
         total_pages_count += 1
         source_url = doc.metadata.get("source", "")
-        
+        # Used a fallback variable since 'url' is not defined in this scope
+        url_fallback = source_url
+
         if source_url not in pdfs_summary:
             pdfs_summary[source_url] = {
-                "url": source_url,
+                "url": url_fallback,
                 "source_page": doc.metadata.get("source_page", ""),
                 "pages": 0,
             }
         pdfs_summary[source_url]["pages"] += 1
 
     entries = sorted(pdfs_summary.values(), key=lambda x: x["url"])
-    
+
     with open(filename, "w", encoding="utf-8") as f:
         json.dump(entries, f, ensure_ascii=False, indent=2)
-        
+
     logger.info(f"  -> Saved {len(entries)} PDF sources ({total_pages_count} pages total) to {filename}")
 
 
@@ -400,7 +490,7 @@ def save_crawled_urls_to_json(docs: Iterable, filename: str) -> None:
     for doc in docs:
         url = doc.metadata.get("source", "")
         title = doc.metadata.get("title", "")
-        
+
         if not title:
             try:
                 soup = BeautifulSoup(doc.page_content, "lxml")
@@ -409,7 +499,7 @@ def save_crawled_urls_to_json(docs: Iterable, filename: str) -> None:
                     title = title_tag.get_text(strip=True)
             except Exception:
                 pass
-                
+
         entries.append({"url": url, "title": title})
 
     with open(filename, "w", encoding="utf-8") as f:
