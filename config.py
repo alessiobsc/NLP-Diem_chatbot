@@ -10,7 +10,8 @@ across the entire application.
 import os
 from pathlib import Path
 from dotenv import load_dotenv
-from distutils.util import strtobool
+
+from src.utils.strtobool import strtobool
 
 os.environ.setdefault("PYTHONUNBUFFERED", "1")
 
