@@ -247,10 +247,13 @@ class DiemBrain:
         system_content = AGENT_SYSTEM_PROMPT
         if state["tool_call_count"] == 0 and not state["retrieved_context"]:
             system_content += (
-                "\n\nIMPORTANT: This is a new user question — no retrieve has been called yet this turn. "
+                "\n\nIMPORTANT: This is a new user question — process it completely independently. "
                 "You MUST call rewrite() or retrieve() before generating any answer. "
-                "Tool results visible in the conversation history belong to PREVIOUS questions "
-                "and MUST NOT be used to skip retrieve() for the current question."
+                "Rules for handling history:\n"
+                "- Tool results from PREVIOUS questions must NOT be used as context for the current question.\n"
+                "- If a previous question was rejected, unanswered, or handled poorly, ignore it — "
+                "it has NO bearing on whether or how you should answer the current question.\n"
+                "- Always run the full tool flow (retrieve at minimum) for each new question."
             )
         system = SystemMessage(content=system_content)
         # Strip AIMessages with empty content and no tool_calls — they indicate a failed

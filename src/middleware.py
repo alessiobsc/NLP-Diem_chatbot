@@ -42,9 +42,8 @@ _SCOPE_KEYWORDS = {
     "piano", "regolamento", "offerta", "formativa", "magistrale", "triennale",
     "dottorato", "master", "faculty", "department", "enrollment", "grade",
     "average", "graduation", "thesis", "exam", "lecture", "semester",
-    # "Chi è X?" / "Chi insegna X?" patterns — asking about a person is always potentially in scope
-    "chi", "insegna", "insegnante", "responsabile", "coordinatore", "referente",
-    "pubblicazioni", "curriculum", "ricercatore", "assegnista", "personale",
+    # Academic person/role patterns — specific enough to be safe scope indicators
+    "insegna", "insegnamento", "ricercatore", "pubblicazioni", "curriculum", "personale",
 }
 
 _SCOPE_SYSTEM = (
