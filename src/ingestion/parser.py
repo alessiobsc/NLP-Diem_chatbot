@@ -237,6 +237,23 @@ def filter_low_quality_documents(docs: list) -> list:
     return kept
 
 
+def looks_like_pdf_url(href: str) -> bool:
+    """Return whether an href points to a PDF by inspecting its URL path."""
+    clean_href = href.split("#")[0]
+    return urlparse(clean_href).path.lower().endswith(".pdf")
+
+
+def resolve_pdf_url(page_url: str, href: str) -> str:
+    """Resolve PDF hrefs, handling UNISA root-relative upload paths."""
+    href = href.strip()
+    parsed_page = urlparse(page_url)
+
+    if href.startswith("uploads/"):
+        return f"{parsed_page.scheme}://{parsed_page.netloc}/{href}"
+
+    return urljoin(page_url, href)
+
+
 def load_pdfs_from_links(raw_docs: list, seen_urls: set | None = None) -> list:
     """Load PDF documents linked from already-crawled HTML pages.
 
@@ -253,12 +270,14 @@ def load_pdfs_from_links(raw_docs: list, seen_urls: set | None = None) -> list:
             soup = BeautifulSoup(doc.page_content, "lxml")
             for a in soup.find_all("a", href=True):
                 href = a["href"].strip()
-                clean_href = href.split("?")[0].split("#")[0]
-                if not clean_href.lower().endswith(".pdf"):
+                if not looks_like_pdf_url(href):
                     continue
 
-                pdf_url, _ = urldefrag(urljoin(page_url, href))
+                pdf_url, _ = urldefrag(resolve_pdf_url(page_url, href))
+                logger.debug(f"  PDF candidate: page={page_url} href={href} resolved={pdf_url}")
+
                 if pdf_url in seen_urls:
+                    logger.debug(f"  SKIP duplicate PDF: {pdf_url}")
                     continue
                 seen_urls.add(pdf_url)
 
