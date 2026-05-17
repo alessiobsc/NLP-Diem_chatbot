@@ -86,8 +86,13 @@ _OFFENSIVE_FALLBACK = (
 # ── PII patterns ───────────────────────────────────────────────────────────────
 
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
-# Matches 13-16 digit sequences with optional spaces/dashes (credit card pattern)
-_CARD_RE = re.compile(r"\b(?:\d[ -]?){13,16}\b")
+# Matches credit card numbers in formatted groups (separator required between groups).
+# Bare 16-digit document IDs/codes are NOT matched — they have no group separators.
+_CARD_RE = re.compile(
+    r"\b\d{4}[ -]\d{4}[ -]\d{4}[ -]\d{4}\b"   # Visa/MC: XXXX XXXX XXXX XXXX
+    r"|\b\d{4}[ -]\d{6}[ -]\d{5}\b"             # Amex: XXXX XXXXXX XXXXX
+    r"|\b\d{4}[ -]\d{4}[ -]\d{4}[ -]\d{3}\b"   # 15-digit: XXXX XXXX XXXX XXX
+)
 _PII_BLOCK_MSG = "Non posso fornire questa risposta per motivi di privacy."
 
 
@@ -144,8 +149,10 @@ class OffensiveContentGuardrail:
 
 def redact_pii(text: str) -> str:
     """Redact email addresses; block entire response if credit card number detected."""
-    # Credit card: block entirely rather than redact (card numbers in any form are sensitive)
     if _CARD_RE.search(text):
+        logger.warning("redact_pii: credit card pattern detected, blocking response")
         return _PII_BLOCK_MSG
-    # Email: replace with placeholder, preserve rest of text
-    return _EMAIL_RE.sub("[EMAIL REDACTED]", text)
+    redacted = _EMAIL_RE.sub("[EMAIL REDACTED]", text)
+    if redacted != text:
+        logger.info("redact_pii: email address redacted")
+    return redacted
