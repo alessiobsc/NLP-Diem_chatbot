@@ -71,8 +71,12 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
         reranked = rerank(query, docs, top_n=CROSS_ENCODER_K) if docs else []
         # brain_ref._last_docs lets DiemBrain access the latest docs after graph completes
         brain_ref._last_docs = reranked
-        logger.info(f"retrieve: {len(reranked)} docs after rerank")
-        return format_context({"docs": reranked, "question": query, "history": []})["context"]
+        context = format_context({"docs": reranked, "question": query, "history": []})["context"]
+        logger.info(
+            f"retrieve | query='{query[:80]}' | bi-encoder={len(docs)} | reranked={len(reranked)} "
+            f"| context_len={len(context)}"
+        )
+        return context
 
     @tool
     def summarize(text: str, query: str = "") -> str:
@@ -81,6 +85,7 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
         (2) after multiple retrieve() calls, to merge and focus results.
         Always pass the user's original question as query to get a focused summary.
         Returns a concise Italian summary."""
+        logger.info(f"summarize | context_len={len(text)} | query='{query[:60]}'")
         if query:
             prompt = (
                 f"Extract and summarize in Italian only the information relevant to answer this question:\n"
@@ -97,6 +102,7 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
         Use for ANY numeric academic calculation: graduation grade, weighted average, TOLC thresholds.
         Never compute inline — always delegate to this tool.
         Parameters: context (retrieved formula text), operation (what to compute), values (input dict)."""
+        logger.info(f"calculate | operation='{operation}' | values={values}")
         prompt = (
             f"Using only the official formula found in the following context, "
             f"compute the result for: operation='{operation}', values={values}.\n\n"

@@ -139,9 +139,13 @@ class DiemBrain:
             retrieve_call = next(
                 (tc for tc in tool_calls if tc["name"] == "retrieve"), None
             )
-            updates = {
-                "tool_call_count": state["tool_call_count"] + (1 if retrieve_call else 0)
-            }
+            new_retrieve_count = state["tool_call_count"] + (1 if retrieve_call else 0)
+            updates = {"tool_call_count": new_retrieve_count}
+
+            called_names = [tc["name"] for tc in tool_calls]
+            logger.info(
+                f"tools_node | called={called_names} | retrieve_count={new_retrieve_count}"
+            )
 
             if retrieve_call:
                 # Match ToolMessage by tool_call_id (handles batch tool calls correctly)
@@ -253,9 +257,12 @@ class DiemBrain:
         tool_calls = getattr(response, "tool_calls", None)
         if tool_calls:
             names = [tc["name"] for tc in tool_calls]
-            logger.info(f"agent | tool_call_count={state['tool_call_count']} | calling tools={names}")
+            logger.info(f"agent | retrieve_count={state['tool_call_count']} | calling tools={names}")
         else:
-            logger.info(f"agent | tool_call_count={state['tool_call_count']} | generating final answer")
+            logger.info(
+                f"agent | retrieve_count={state['tool_call_count']} | generating final answer "
+                f"| answer_len={len(response.content) if isinstance(response.content, str) else 0}"
+            )
         return {"messages": [response]}
 
     def _node_force_answer(self, state: DiemState) -> dict:
