@@ -1,6 +1,6 @@
 from langchain_huggingface import HuggingFaceEmbeddings
 from config import EMBEDDING_PROVIDER, OPENROUTER_EMBEDDING_MODEL, LOCAL_EMBEDDING_MODEL, OPENROUTER_API_KEY
-from src.embeddings.embedding_models import OpenRouterEmbeddings, E5HuggingFaceEmbeddings
+from src.encoders.embedding_models import OpenRouterEmbeddings, E5HuggingFaceEmbeddings
 from src.utils.logger import get_logger
 
 

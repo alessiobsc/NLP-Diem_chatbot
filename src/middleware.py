@@ -2,6 +2,8 @@ import base64
 import os
 import re
 
+from langchain_core.messages import HumanMessage, SystemMessage
+
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -36,23 +38,39 @@ _SCOPE_KEYWORDS = {
     "esame", "esami", "laurea", "professore", "prof", "docente", "ricerca",
     "dipartimento", "informatica", "ingegneria", "matematica", "voto", "voti",
     "media", "cfu", "crediti", "tirocinio", "tesi", "iscrizione", "ammissione",
-    "orario", "aula", "laboratorio", "erasmus", "borsa", "studente", "studenti",
+    "orario", "ricevimento", "riceve", "aula", "laboratorio", "erasmus", "borsa", "studente", "studenti",
     "piano", "regolamento", "offerta", "formativa", "magistrale", "triennale",
     "dottorato", "master", "faculty", "department", "enrollment", "grade",
     "average", "graduation", "thesis", "exam", "lecture", "semester",
 }
 
+_SCOPE_SYSTEM = (
+    "You are a binary classifier for the DIEM chatbot — the virtual assistant of the "
+    "Department of Information and Electrical Engineering and Applied Mathematics (DIEM) "
+    "at the University of Salerno, Italy. "
+    "DIEM covers topics such as: courses and degrees (computer science, electrical engineering, mathematics), "
+    "professors and researchers, exams, academic regulations, labs, research projects, "
+    "department services, Erasmus programs, and university life at UniSa. "
+    "Respond with exactly one word: yes or no. No explanations, no punctuation."
+)
 _SCOPE_PROMPT = (
-    "Is this question about a university, academic department, courses, exams, professors, "
-    "research, enrollment, grades, or student life? "
-    "Answer 'no' ONLY if clearly unrelated (cooking, sports, politics, entertainment). "
-    "When in doubt answer 'yes'. Answer only 'yes' or 'no'."
+    "Is this question in scope for a university department assistant?\n\n"
+    "Answer 'no' ONLY if the question is clearly about one of these off-topic categories:\n"
+    "- Food, recipes, cooking\n"
+    "- Sports, games, entertainment, music, movies\n"
+    "- Politics or news unrelated to the university\n"
+    "- Shopping, products, prices\n"
+    "- Personal advice, relationships, health\n"
+    "- General trivia or knowledge with no academic context\n"
+    "- Questions about historical figures or celebrities with no university connection\n\n"
+    "Answer 'yes' if the question:\n"
+    "- Mentions any academic topic, course, exam, department, or university service\n"
+    "- Asks about any person (could be a professor, researcher, or staff member)\n"
+    "- Contains mainly pronouns or implicit references with no clearly off-topic content (likely a follow-up question)\n"
+    "- Is ambiguous or could have any academic interpretation\n\n"
+    "When in doubt, answer 'yes'."
 )
 
-_OFFENSIVE_PROMPT = (
-    "Does this text contain offensive, harmful, or inappropriate content? "
-    "Answer only 'yes' or 'no'."
-)
 
 _SCOPE_REJECTION = (
     "This question is outside my scope. "
@@ -61,8 +79,7 @@ _SCOPE_REJECTION = (
 )
 
 _OFFENSIVE_FALLBACK = (
-    "Non posso fornire questa risposta. "
-    "Per assistenza contatta la segreteria DIEM."
+    "Non posso elaborare questa richiesta poiché contiene contenuto inappropriato."
 )
 
 
@@ -84,31 +101,33 @@ class ScopeGuardrail:
 
     def check(self, question: str) -> bool:
         """Returns True if in scope, False if out of scope."""
-        # Fast path: any academic keyword → in scope, no LLM call needed
         tokens = set(question.lower().split())
+        # Fast path: academic keyword match → in scope
         if tokens & _SCOPE_KEYWORDS:
             logger.debug("ScopeGuardrail: keyword match, in scope")
             return True
 
         # Slow path: ambiguous query → short yes/no LLM check
-        prompt = f"{_SCOPE_PROMPT}\n\nQuestion: {question}"
         try:
-            response = self._model.invoke(prompt, max_tokens=5).content.strip().lower()
+            response = self._model.invoke(
+                [
+                    SystemMessage(content=_SCOPE_SYSTEM),
+                    HumanMessage(content=f"{_SCOPE_PROMPT}\n\nQuestion: {question}"),
+                ],
+                max_tokens=5,
+            ).content.strip().lower()
         except Exception as e:
             logger.warning(f"ScopeGuardrail LLM call failed ({e}), defaulting to in-scope")
             return True  # fail open: prefer false negatives over false positives
 
-        in_scope = not response.startswith("no")
+        in_scope = "no" not in response
         if not in_scope:
             logger.info(f"ScopeGuardrail rejected: '{question[:60]}'")
         return in_scope
 
 
 class OffensiveContentGuardrail:
-    """Checks whether text contains offensive content."""
-
-    def __init__(self, generation_model):
-        self._model = generation_model
+    """Checks whether text contains offensive content via regex badword list."""
 
     def check(self, content: str) -> str | None:
         """Returns None if content is clean, or replacement string if offensive."""
@@ -117,18 +136,8 @@ class OffensiveContentGuardrail:
             logger.debug("OffensiveContentGuardrail: no match, clean")
             return None
 
-        # Slow path: keyword hit → LLM confirms whether truly offensive
-        prompt = f"{_OFFENSIVE_PROMPT}\n\nText: {content[:500]}"
-        try:
-            response = self._model.invoke(prompt).content.strip().lower()
-        except Exception as e:
-            logger.warning(f"OffensiveContentGuardrail LLM call failed ({e}), passing through")
-            return None
-
-        if response.startswith("yes"):
-            logger.warning("OffensiveContentGuardrail: offensive content detected, replacing")
-            return _OFFENSIVE_FALLBACK
-        return None
+        logger.warning("OffensiveContentGuardrail: badword match, replacing output")
+        return _OFFENSIVE_FALLBACK
 
 
 # ── PII redaction ──────────────────────────────────────────────────────────────

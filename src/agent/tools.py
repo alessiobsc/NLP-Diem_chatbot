@@ -66,9 +66,18 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
         return format_context({"docs": reranked, "question": query, "history": []})["context"]
 
     @tool
-    def summarize(text: str) -> str:
-        """Summarize long text into concise key points. Use when retrieved context is very long."""
-        return generation_model.invoke(f"Summarize concisely in Italian:\n{text}").content
+    def summarize(text: str, query: str = "") -> str:
+        """Summarize retrieved context into concise key points.
+        Pass query to get a focused summary relevant to the user's question — preferred after multiple retrieve calls.
+        If query is empty, produces a generic summary."""
+        if query:
+            prompt = (
+                f"Extract and summarize in Italian only the information relevant to answer this question:\n"
+                f"Question: {query}\n\nContext:\n{text}"
+            )
+        else:
+            prompt = f"Summarize concisely in Italian:\n{text}"
+        return generation_model.invoke(prompt).content
 
     @tool
     def calculate(context: str, operation: str, values: dict) -> str:
@@ -79,7 +88,11 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
             f"Using only the official formula found in the following context, "
             f"compute the result for: operation='{operation}', values={values}.\n\n"
             f"Context:\n{context}\n\n"
-            f"Show the calculation steps and the final result. "
+            f"IMPORTANT: In Italian graduation grade formulas (voto di laurea), if the formula ends with '/ 110' "
+            f"it means the result is expressed on a scale of 110 — omit that division from your calculation. "
+            f"Example: (4.1 × 27 - 7.8) / 110 → compute only (4.1 × 27 - 7.8) = 102.9 ≈ 103.\n\n"
+            f"Show the calculation steps, the final numeric result, and a brief label explaining what the result represents "
+            f"(e.g. its unit, scale, or meaning) so the result can be interpreted without re-reading the formula. "
             f"If the formula is not found in the context, say so explicitly."
         )
         return generation_model.invoke(prompt).content

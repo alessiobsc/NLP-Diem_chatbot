@@ -83,7 +83,7 @@ Costanti principali:
   DEFAULT_SESSION_ID.
 - BI_ENCODER_K=20, CROSS_ENCODER_K=3, RETRIEVER_SCORE_THRESHOLD=0.7.
 - PARENT_CHUNK_SIZE=2000/200, CHILD_CHUNK_SIZE=400/50 (overlap).
-- MAX_CHILD_CHUNKS_PER_BATCH=4000 (limite batch in indicizzazione).
+- MAX_CHILD_CHUNKS_PER_BATCH=100 (limite batch in indicizzazione).
 
 Tutti i moduli accedono a questi parametri via `from config import ...`.
 
@@ -313,7 +313,7 @@ Cosa fa: Parent-Child Retriever indexing.
       - Split parent (PARENT_CHUNK_SIZE/OVERLAP).
       - Prepend header a ogni parent (per coerenza con i child).
       - Batch dei parent in base alla stima dei child generati
-        (MAX_CHILD_CHUNKS_PER_BATCH=4000) e invoca
+        (MAX_CHILD_CHUNKS_PER_BATCH=100) e invoca
         `ParentDocumentRetriever.add_documents` per ciascun batch.
   - `index_documents(docs, embedding_model)`: entry point funzionale.
 

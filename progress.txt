@@ -174,6 +174,103 @@ CRONOLOGIA AGGIORNAMENTI
   - Identificato debito tecnico in enrichment.py (ramo morto post-Ollama
     disable) e disallineamento descrittivo in requirements.txt.
 
+2026-05-16 - Agentic RAG: da chain lineare a StateGraph esplicito
+
+  PUNTO DI PARTENZA — RAG Chain lineare (branch main, commit 8c62bf1)
+  ------------------------------------------------------------------
+  Architettura originale: LangChain LCEL chain lineare in src/brain.py.
+  Flusso fisso: rewrite query (condizionale) → retrieve → rerank → format
+  context → LLM generation. History con RunnableWithMessageHistory +
+  InMemoryChatMessageHistory. Scope check e offensive check integrati
+  nel SYSTEM_PROMPT (nessun nodo separato). Un solo modello LLM
+  (qwen2.5:7b Ollama, o OpenRouter).
+
+  Limiti della chain:
+  - Nessun tool calling: rewrite e calcoli erano inline nel prompt
+  - Nessuna visibilità su LangSmith per i singoli step
+  - Scope check affidato al modello di generazione (troppo tardi)
+  - Nessuna gestione offensive content su input utente
+  - Retrieval sempre fisso, nessuna possibilità di re-retrieve
+
+  FASE 1 — create_agent con MemorySaver (commit 31e90dd)
+  -------------------------------------------------------
+  Prima implementazione agentica: `create_agent` LangGraph con
+  MemorySaver per la history. Agente con tool `retrieve`, `summarize`,
+  `answer`. L'agente decideva autonomamente quando chiamare retrieve.
+  Problema: agente non sempre chiamava retrieve → rischio allucinazione.
+  Fix temporaneo: SYSTEM_PROMPT con obbligo di chiamare retrieve().
+  Limite: answer tool generava risposta ma il formato output era
+  inconsistente.
+
+  FASE 2 — Explicit StateGraph con nodo generate separato (commit b1b117d)
+  -------------------------------------------------------------------------
+  Refactoring completo in StateGraph esplicito named `diem_rag_graph`.
+  Nodi: scope_guard → retrieve_node → agent → [tools] → generate → output_guard.
+  `retrieve_node` obbligatorio prima dell'agent: ParentDocumentRetriever
+  + cross-encoder rerank, inietta fake AIMessage+ToolMessage per
+  compatibilità con OpenAI message schema.
+  `generate` node separato (modello 9b): risposta finale da
+  retrieved_context + SYSTEM_PROMPT dedicato.
+  Architettura a due modelli: 32b (agent routing) + 9b (generate/tools).
+  Middleware refactoring: ScopeGuardrail, OffensiveContentGuardrail,
+  redact_pii come callable standalone (rimosso AgentMiddleware).
+  OffensiveContentGuardrail: keyword fast path, LLM solo su hit.
+
+  FASE 3 — Consolidamento e bug fix (commit a47227a, b36ab4c)
+  ------------------------------------------------------------
+  - Fix double response bug in chat_stream: LangGraph stream_mode="messages"
+    emette sia AIMessageChunk (streaming) che AIMessage finale (state write).
+    Fix: isinstance(chunk, AIMessageChunk) — yield solo chunk parziali,
+    o messaggio completo se nessun chunk parziale visto.
+  - Aggiunto tool `rewrite` per l'agent su query successive con pronomi.
+  - Fix 20s bottleneck reranker: CrossEncoder caricato ad ogni chiamata.
+    Fix: singleton module-level in src/embeddings/reranker.py.
+  - ScopeGuardrail troppo severo ("chi è [professore]" bloccato):
+    prompt riformulato fail-open, parsing `"no" not in response`.
+  - OffensiveContentGuardrail: rimosso LLM, puro regex su badwords.b64.
+
+  FASE 4 — Architettura un solo modello + query rewrite automatico
+  ----------------------------------------------------------------
+  Rimosso nodo `generate` separato: il modello agent 120b
+  (openai/gpt-oss-120b) gestisce routing + tool selection + generazione
+  risposta finale in un unico nodo. AGENT_SYSTEM_PROMPT unifica le
+  istruzioni Step 1 (tool use) e Step 2 (generate answer).
+  Modello lightweight (meta-llama/llama-3.1-8b-instruct) usato per:
+  rewrite query pre-retrieve, summarize, calculate, scope guard LLM fallback.
+  Query rewrite automatico in retrieve_node: se c'è history, lightweight
+  riscrive la query prima del retrieval (risolve pronomi, contestualizza).
+  Aggiunto nodo `input_guard` come entry point del grafo: controlla
+  offensive content sull'input utente prima di scope_guard.
+  Helper `_block_if_offensive` condiviso tra input_guard e output_guard.
+
+  MIGLIORAMENTI PROMPT (sessione 2026-05-16)
+  ------------------------------------------
+  REWRITE_PROMPT:
+  - Regola 3: "PRESERVE original question structure" — no parafrasi
+  - Regola 4: USE HISTORY ONLY FOR FOLLOW-UPS — ignorare history su
+    query indipendenti; distingue follow-up incompleti da nuove domande
+  - Regola 5: "PRESERVE USER'S TERMS" — mai sostituire entità utente
+    con entità dalla history (es. "laboratorio di robotica" ≠ lab diverso)
+  - Esempio TOLC: follow-up multi-dato che combina info da history + nuova query
+  AGENT_SYSTEM_PROMPT:
+  - Regola 1: "Be concise, no preamble or filler"
+  - Regola 5: non inferire/associare entità non esplicitamente nominate
+  - calculate: "ALWAYS call calculate(), never compute inline"
+  SCOPE_SYSTEM/PROMPT:
+  - Aggiunto contesto DIEM (dipartimento, corsi, argomenti) nel system
+  - Categorie esplicite da bloccare (cibo, sport, celebrità storiche...)
+  - Categorie da lasciar passare (persone, topic accademici, ambigui)
+  calculate tool:
+  - Dominio knowledge su /110 in formule voto di laurea
+  - Output con label esplicita su unità/scala del risultato
+
+  STATO ATTUALE GRAFO
+  -------------------
+  input_guard → scope_guard → retrieve_node → agent → [tools] → output_guard → END
+  Modelli: agent=gpt-oss-120b, lightweight=llama-3.1-8b-instruct
+  Tools disponibili: rewrite, retrieve, summarize, calculate
+  MAX_TOOL_CALLS = 6
+
 # Template per aggiornamenti futuri:
 # YYYY-MM-DD - <titolo breve>
 #   - cosa e' cambiato (file/modulo)
