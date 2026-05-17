@@ -65,7 +65,7 @@ def _route_scope(state: DiemState) -> str:
     last = state["messages"][-1]
     if isinstance(last, AIMessage):
         return "__end__"
-    return "retrieve_node"
+    return "reset_state"
 
 
 def _route_agent(state: DiemState) -> str:
@@ -165,7 +165,7 @@ class DiemBrain:
 
         g.add_node("input_guard", self._node_input_guard)
         g.add_node("scope_guard", self._node_scope_guard)
-        g.add_node("retrieve_node", self._node_retrieve)
+        g.add_node("reset_state", self._node_reset_state)
         g.add_node("agent", self._node_agent)
         g.add_node("tools", self._make_tools_node(tools))
         g.add_node("output_guard", self._node_output_guard)
@@ -173,7 +173,7 @@ class DiemBrain:
         g.set_entry_point("input_guard")
         g.add_conditional_edges("input_guard", _route_input)
         g.add_conditional_edges("scope_guard", _route_scope)
-        g.add_edge("retrieve_node", "agent")
+        g.add_edge("reset_state", "agent")
         g.add_conditional_edges("agent", _route_agent)
         g.add_edge("tools", "agent")
         g.add_edge("output_guard", END)
@@ -206,7 +206,7 @@ class DiemBrain:
     def _node_scope_guard(self, state: DiemState) -> dict:
         """Reject out-of-scope queries before retrieval.
 
-        Returns {} (no state change) if in scope → _route_scope sends to retrieve_node.
+        Returns {} (no state change) if in scope → _route_scope sends to reset_state.
         Returns {messages: [AIMessage(rejection)]} if OOT → _route_scope sends to END.
         """
         question = next(
@@ -216,6 +216,14 @@ class DiemBrain:
         if not self._scope_guardrail.check(question):
             return {"messages": [AIMessage(content=_SCOPE_REJECTION)]}
         return {}
+
+    def _node_reset_state(self, state: DiemState) -> dict:
+        """Reset turn state before entering the agent loop.
+
+        Zeros tool_call_count, retrieved_context, and last_docs so each turn
+        starts fresh. The agent will call retrieve() as its first action to get context.
+        """
+        return {"tool_call_count": 0, "retrieved_context": "", "last_docs": []}
 
     def _node_retrieve(self, state: DiemState) -> dict:
         """Mandatory retrieval step — always runs before the agent loop.
