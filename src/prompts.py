@@ -157,9 +157,9 @@ OUTPUT:
 One Italian label, maximum 12 words.
 
 FORMAT:
-[tipo documento]
+tipo documento
 or
-[tipo documento] - [argomento esplicito]
+tipo documento - argomento esplicito
 
 Use the second part only if the specific topic is clearly visible in the local parent chunk text.
 
@@ -192,7 +192,8 @@ RULES:
 - Avoid verbs such as gestisce, fornisce, prepara, consente, permette, contiene.
 - Avoid vague labels like "pagina generale", "servizio", or "informazioni" when URL, metadata, or TEXT shows a clearer type.
 - Do not call text "progetto di ricerca" unless URL, metadata, or TEXT explicitly says research project, funded project, or project funding.
-- Return only the label. No explanations, bullets, quotes, markdown, or "Context:" prefix.
+- Return only one short header in the form: document/source type - local topic.
+- Do not use square brackets, placeholders, markdown, explanations, or "Context:" prefix.
 
 TEXT:
 {text}
