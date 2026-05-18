@@ -181,10 +181,14 @@ class DiemBrain(DiemNodes):
         g.add_node("output_guard", self._node_output_guard)
 
         g.set_entry_point("input_guard")
-        g.add_conditional_edges("input_guard", _route_input)
-        g.add_conditional_edges("scope_guard", _route_scope)
+        g.add_conditional_edges("input_guard", _route_input,
+                                {"scope_guard": "scope_guard", "__end__": END})
+        g.add_conditional_edges("scope_guard", _route_scope,
+                                {"reset_state": "reset_state", "__end__": END})
         g.add_edge("reset_state", "agent")
-        g.add_conditional_edges("agent", _route_agent)
+        g.add_conditional_edges("agent", _route_agent,
+                                {"tools": "tools", "forced_retrieve": "forced_retrieve",
+                                 "force_answer": "force_answer", "output_guard": "output_guard"})
         g.add_edge("tools", "agent")
         g.add_edge("forced_retrieve", "agent")
         g.add_edge("force_answer", "output_guard")
