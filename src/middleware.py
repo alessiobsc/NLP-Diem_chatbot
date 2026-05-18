@@ -88,6 +88,8 @@ _OFFENSIVE_FALLBACK = (
 # ── PII patterns ───────────────────────────────────────────────────────────────
 
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+# Institutional domains (unisa.it and subdomains) — not redacted
+_INSTITUTIONAL_EMAIL_RE = re.compile(r"@(?:[A-Za-z0-9-]+\.)*unisa\.it$", re.IGNORECASE)
 # Matches credit card numbers in formatted groups (separator required between groups).
 # Bare 16-digit document IDs/codes are NOT matched — they have no group separators.
 _CARD_RE = re.compile(
@@ -154,7 +156,13 @@ def redact_pii(text: str) -> str:
     if _CARD_RE.search(text):
         logger.warning("redact_pii: credit card pattern detected, blocking response")
         return _PII_BLOCK_MSG
-    redacted = _EMAIL_RE.sub("[EMAIL REDACTED]", text)
+    def _maybe_redact(m: re.Match) -> str:
+        email = m.group(0)
+        if _INSTITUTIONAL_EMAIL_RE.search(email):
+            return email
+        return "[EMAIL REDACTED]"
+
+    redacted = _EMAIL_RE.sub(_maybe_redact, text)
     if redacted != text:
         logger.info("redact_pii: email address redacted")
     return redacted

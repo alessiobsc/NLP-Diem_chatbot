@@ -117,39 +117,24 @@ class DiemNodes:
         )
 
         clean_messages = []
-        for i, m in enumerate(state["messages"]):
-            if i < last_human_idx:
-                # Old turns: drop ToolMessages and AIMessages-with-tool_calls — they bloat
-                # the context window with retrieved docs the model no longer needs.
-                # Keep only final AIMessages (conversational context for follow-ups).
-                if isinstance(m, ToolMessage):
-                    continue
-                if isinstance(m, AIMessage) and getattr(m, "tool_calls", None):
-                    continue
-                if isinstance(m, AIMessage):
-                    content = m.content if isinstance(m.content, str) else ""
-                    if not content.strip() or any(content.startswith(p) for p in _GUARDRAIL_PREFIXES):
-                        clean_messages.append(AIMessage(id=m.id, content=_PLACEHOLDER))
-                    else:
-                        clean_messages.append(m)
-                else:
-                    clean_messages.append(m)
-            else:
-                # Current turn: keep everything, but replace guardrail AIMessages with placeholder
-                if (
-                    isinstance(m, AIMessage)
-                    and not getattr(m, "tool_calls", None)
-                    and (
-                        not (m.content if isinstance(m.content, str) else "").strip()
-                        or any(
-                            (m.content if isinstance(m.content, str) else "").startswith(p)
-                            for p in _GUARDRAIL_PREFIXES
-                        )
+        for m in state["messages"]:
+            # Replace guardrail-injected AIMessages with placeholder across all turns.
+            # ToolMessages and tool-call AIMessages are kept so the agent can reuse
+            # previously retrieved context when answering follow-up questions.
+            if (
+                isinstance(m, AIMessage)
+                and not getattr(m, "tool_calls", None)
+                and (
+                    not (m.content if isinstance(m.content, str) else "").strip()
+                    or any(
+                        (m.content if isinstance(m.content, str) else "").startswith(p)
+                        for p in _GUARDRAIL_PREFIXES
                     )
-                ):
-                    clean_messages.append(AIMessage(id=m.id, content=_PLACEHOLDER))
-                else:
-                    clean_messages.append(m)
+                )
+            ):
+                clean_messages.append(AIMessage(id=m.id, content=_PLACEHOLDER))
+            else:
+                clean_messages.append(m)
         response = self._agent_model_with_tools.invoke([system] + clean_messages)
         tool_calls = getattr(response, "tool_calls", None)
         if tool_calls:
