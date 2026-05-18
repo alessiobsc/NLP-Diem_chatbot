@@ -271,6 +271,20 @@ CRONOLOGIA AGGIORNAMENTI
   Tools disponibili: rewrite, retrieve, summarize, calculate
   MAX_TOOL_CALLS = 6
 
+2026-05-18 - Ottimizzazione e Refactoring Ingestion Pipeline
+  - Riorganizzato architetturalmente `src/ingestion/crawler.py` (SRP, costanti
+    tipizzate, modularità, leggibilità "clean code").
+  - Rimozione del Global Monkey Patching della libreria `requests`. Sostituito con
+    Dependency Injection tramite la factory `create_resilient_session()` ed
+    estendendo LangChain con `CustomRecursiveUrlLoader`.
+  - Implementato Rate Limiting (Politeness): limitato a 5 richieste/secondo con
+    strategia Token Bucket su classe proxy `RateLimitedSession`.
+  - Architettura di State Management: introdotto `src/ingestion/crawl_state.py` per
+    caching incrementale via database locale `db/crawl_state.db`. Verifica HTTP 304
+    Not Modified tramite check in SQLite di `ETag` e `Last-Modified`.
+    Incrementate enormemente performance re-ingestion, salvando traffico di rete.
+
+
 # Template per aggiornamenti futuri:
 # YYYY-MM-DD - <titolo breve>
 #   - cosa e' cambiato (file/modulo)
