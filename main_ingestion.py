@@ -64,9 +64,9 @@ def crawl_phase() -> tuple[list, list]:
     # 1a. Crawl diem.unisa.it from deterministic HTML sitemap section seeds.
     # Keep raw HTML to extract external links and PDFs.
     logger.info("[1/3] Crawling www.diem.unisa.it from HTML sitemap ...")
-    raw_diem = filter_docs(dedupe_docs_by_source(
-        crawl_html_sitemap("https://www.diem.unisa.it/", max_depth=2, fallback_depth=4)
-    ))
+    raw_diem = list(filter_docs(dedupe_docs_by_source(
+        list(crawl_html_sitemap("https://www.diem.unisa.it/", max_depth=2, fallback_depth=4))
+    )))
     logger.info(f"  -> {len(raw_diem)} pages found")
 
     corsi_urls = extract_corsi_urls(raw_diem)
@@ -90,12 +90,12 @@ def crawl_phase() -> tuple[list, list]:
     logger.info(f"[2/3] Crawling docenti.unisa.it ({total_docenti} faculty pages) ...")
     for i, url in enumerate(docenti_urls, 1):
         base = get_section_base(url)
-        docs = filter_docs(crawl(url, base_url=base, max_depth=3))
+        docs = list(filter_docs(crawl(url, base_url=base, max_depth=3)))
 
         matricola = url.rstrip("/").split("/")[-2]
         for anno in range(2020, current_year + 1):
             pub_url = f"https://docenti.unisa.it/{matricola}/ricerca/pubblicazioni?anno={anno}"
-            docs.extend(filter_docs(crawl(pub_url, base_url=base, max_depth=1)))
+            docs.extend(list(filter_docs(crawl(pub_url, base_url=base, max_depth=1))))
 
         non_pub = [d for d in docs if "/pubblicazioni" not in d.metadata.get("source", "")]
         batch_pdfs = load_pdfs_from_links(non_pub, seen_pdf_urls)
@@ -110,14 +110,14 @@ def crawl_phase() -> tuple[list, list]:
         # Use corsi.unisa.it domain as base (not course-specific path) so the crawler
         # can follow internal numeric-ID URLs (e.g. /0650107303300001/...) that some
         # course sites use instead of the slug-based path.
-        docs = filter_docs(dedupe_docs_by_source(
-            crawl_html_sitemap(
+        docs = list(filter_docs(dedupe_docs_by_source(
+            list(crawl_html_sitemap(
                 url,
                 max_depth=1,
                 crawl_base_url="https://corsi.unisa.it/",
                 fallback_depth=3,
-            )
-        ))
+            ))
+        )))
         batch_pdfs = load_pdfs_from_links(docs, seen_pdf_urls)
         raw_html_docs.extend(docs)
         pdf_docs.extend(batch_pdfs)

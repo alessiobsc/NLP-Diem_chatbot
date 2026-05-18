@@ -54,7 +54,7 @@ def extract_html_metadata(html: str) -> dict:
     meta: dict = {}
     try:
         # TODO (Bug Hunter): Consider using a more robust parser like lxml for BeautifulSoup to handle heavily malformed HTML better.
-        soup = BeautifulSoup(html, "html.parser")
+        soup = BeautifulSoup(html, "lxml")
 
         title_tag = soup.find("title")
         if title_tag:
@@ -93,7 +93,7 @@ def clean_text(text: str) -> str:
 
 def _bs4_extractor(html: str) -> str:
     # TODO (Code Refactorer): Repeated parsing with BeautifulSoup. If possible, parse once and pass the tree around.
-    soup = BeautifulSoup(html, "html.parser")
+    soup = BeautifulSoup(html, "lxml")
     for tag in soup(["script", "style", "nav", "footer", "header",
                      "noscript", "aside", "iframe"]):
         tag.decompose()
@@ -267,7 +267,7 @@ def load_pdfs_from_links(raw_docs: list, seen_urls: set | None = None) -> list:
         page_url = doc.metadata.get("source", "")
         try:
             # TODO (Bug Hunter): Consider using `lxml` here as well for better performance and error handling.
-            soup = BeautifulSoup(doc.page_content, "html.parser")
+            soup = BeautifulSoup(doc.page_content, "lxml")
             for a in soup.find_all("a", href=True):
                 href = a["href"].strip()
                 if not looks_like_pdf_url(href):
