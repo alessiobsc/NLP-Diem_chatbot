@@ -218,7 +218,7 @@ def extract_diem_faculty_urls() -> list[str]:
 
 
 def filter_docs(docs: list) -> list:
-    """Drop docs whose source URL contains substrings we want to skip."""
+    """Drop docs whose source URL contains substrings we want to skip, then dedup by URL."""
     SKIP_SUBSTRINGS = (
         "?sitemap",
         # unisa-rescue-page treats JS relative hrefs (print(), history.go(-1)) as
@@ -226,6 +226,9 @@ def filter_docs(docs: list) -> list:
         # /row/print() is a server fallback for invalid IDs.
         "/print()",
         "/history.go(",
+        # CMS fallback page returned when a module/row no longer exists.
+        # Contains only site navbar and footer — zero real content.
+        "unisa-rescue-page",
         # PDFs are handled by load_pdfs_from_links via PyPDFLoader.
         # RecursiveUrlLoader reads them as binary → garbage in page_content.
         ".pdf",
@@ -238,8 +241,19 @@ def filter_docs(docs: list) -> list:
         if not any(p in d.metadata.get("source", "") for p in SKIP_SUBSTRINGS)
         and not is_pre_2020_url(d.metadata.get("source", ""))
     ]
-    logger.debug(f"Filtered {len(docs) - len(filtered)} documents")
-    return filtered
+
+    # Dedup by source URL — same URL crawled from multiple entry points yields identical content
+    seen: set = set()
+    deduped = []
+    for d in filtered:
+        url = d.metadata.get("source", "")
+        if url not in seen:
+            seen.add(url)
+            deduped.append(d)
+
+    logger.debug(f"Filtered {len(docs) - len(filtered)} documents by URL pattern/date, "
+                 f"deduped {len(filtered) - len(deduped)} duplicate URLs")
+    return deduped
 
 
 def save_crawled_pdfs_to_json(pdf_docs: list, filename: str) -> None:
