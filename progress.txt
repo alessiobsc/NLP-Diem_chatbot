@@ -319,6 +319,66 @@ CRONOLOGIA AGGIORNAMENTI
   84cb20d feat: update prompts for fully agentic RAG with year injection
   cf4303d feat: remove retrieve_node — fully agentic RAG complete
 
+2026-05-18 - Fix history pruning + tuning hint dinamico + middleware PII
+
+  PROBLEMA IDENTIFICATO
+  ---------------------
+  Commit ee2036c (refactor brain→nodes+state) aveva introdotto un pruning
+  aggressivo in _node_agent: ToolMessages e AIMessages-con-tool_calls dei
+  turni precedenti venivano droppati prima di inviare i messaggi al modello.
+  Conseguenza: l'agent non vedeva il contesto già recuperato → faceva
+  retrieve inutile su ogni follow-up, anche quando la risposta era già
+  disponibile in history.
+  Commit eliminati con reset: 39a408b, ee2036c, c0bd0d1.
+  Risettato a e7d4923, poi ripristinato il refactor (ee2036c) e applicato fix.
+
+  FIX: RIMOZIONE HISTORY PRUNING (src/agent/nodes.py)
+  ----------------------------------------------------
+  Il loop clean_messages in _node_agent ora mantiene ToolMessages e
+  AIMessages-con-tool_calls da tutti i turni. Solo le AIMessage iniettate
+  dai guardrail vengono sostituite con _PLACEHOLDER. L'agent può ora
+  decidere autonomamente di non fare retrieve su follow-up quando il
+  contesto è già presente in history.
+
+  FIX: HINT DINAMICO AGGIORNATO (src/agent/nodes.py)
+  ---------------------------------------------------
+  Hint da "retrieve is always mandatory" a:
+  "Call retrieve() UNLESS tool results already in this conversation contain
+  the specific, complete answer to this exact question. When in doubt, retrieve."
+  Bilancia efficienza (skip retrieve su follow-up ovvi) e accuratezza
+  (retrieve su domande nuove o più specifiche).
+
+  NUOVA REGOLA AGENT: USER DISSATISFIED (src/prompts.py)
+  -------------------------------------------------------
+  Aggiunta regola 7 in STEP 2: se l'utente segnala risposta incompleta o
+  errata, l'agent chiama retrieve() con query riformulata anche se ha
+  già contesto. Renumerato AMBIGUITY a regola 9.
+
+  FIX MIDDLEWARE PII (src/middleware.py)
+  --------------------------------------
+  Email con dominio @unisa.it (e sottodomini) non vengono più redactate.
+  Solo email non-istituzionali → "[EMAIL REDACTED]".
+
+  VERIFICA SU LOG
+  ---------------
+  Analisi log 2026-05-18 conferma:
+  - Follow-up immediato stesso topic: nessun retrieve (contesto riusato) ✓
+  - Query nuova: retrieve mirato ✓
+  - Ambiguità: chiarimento → retrieve ✓
+  - Insoddisfazione utente ("Ma tu prima mi avevi detto..."): re-retrieve ✓
+  - Scope out: guardrail blocca ✓
+
+  STATO GRAFO INVARIATO
+  ---------------------
+  input_guard → scope_guard → reset_state → agent ↔ tools →
+  [forced_retrieve] → output_guard → END
+  MAX_RETRIEVE_CALLS=3, recursion_limit=35
+
+  COMMIT
+  ------
+  c194377 fix: remove history pruning from _node_agent; preserve institutional emails
+  (+ modifiche uncommitted a nodes.py prompt hint e prompts.py regola 7)
+
 # Template per aggiornamenti futuri:
 # YYYY-MM-DD - <titolo breve>
 #   - cosa e' cambiato (file/modulo)
