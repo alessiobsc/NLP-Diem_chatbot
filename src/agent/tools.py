@@ -65,7 +65,7 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
             HumanMessage(content=prompt),
         ])
         rewritten = result.content.strip()
-        logger.info(f"rewrite: '{query}' → '{rewritten}'")
+        logger.info(f"rewrite: '{query}' -> '{rewritten}'")
         return rewritten
 
     @tool

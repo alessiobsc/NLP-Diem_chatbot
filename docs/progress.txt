@@ -568,3 +568,74 @@ CRONOLOGIA AGGIORNAMENTI
   retrieval pipeline, KB stats, tech stack, setup, .env vars, usage
   commands, struttura file, criteri valutazione (70%/30%), guardrails.
   Nomi docenti rimossi. Allineato all'architettura corrente.
+
+2026-05-19 - Miglioramento qualità context headers: routing ibrido + fix prompt
+
+  PROBLEMA
+  --------
+  I context headers generati da corsi.unisa.it erano tutti LLM-generati con bassa
+  qualità: categorie generiche ("didattica - regolamento corso di studio"), entità
+  mancanti, slug numerici o filename nel subtopic (es. "Pagina corso di studio - 499",
+  "Regolamento corso di studio - Scheda IE232").
+  Ulteriori difetti nei docs LLM: verbali classificati come "bando/avviso DIEM",
+  categorie abbreviate ("corso di studio" invece di "regolamento corso di studio").
+
+  ROUTING IBRIDO (src/ingestion/enrichment.py)
+  --------------------------------------------
+  Precedente: corsi.unisa.it in _HEURISTIC_ONLY_DOMAINS (euristico per tutto).
+  Problema: i PDF di corsi.unisa.it (/uploads/) non hanno nome corso nell'URL →
+  l'euristico produceva slug numerici o filename.
+  Soluzione: routing per-URL dentro _use_heuristic_for_url():
+    - corsi.unisa.it HTML (path senza /uploads/): euristico (metadata title affidabile)
+    - corsi.unisa.it PDF (/uploads/): LLM (solo il modello può leggere il testo)
+
+  FILTRI SLUG (src/ingestion/enrichment.py)
+  ------------------------------------------
+  Aggiunto _NON_COURSE_SEGS: blacklist path segment generici ("uploads", "rescue",
+  "public", "assets", ecc.) per evitare che appaiano come nomi corso.
+  Filtri in _course_slug_from_path: segmento numerico iniziale, estensione file,
+  segmenti che iniziano con "__" (internal route markers).
+
+  FIX EURISTICO CORSI.UNISA.IT (src/ingestion/enrichment.py)
+  -----------------------------------------------------------
+  classify_context_header aggiornato per il blocco corsi.unisa.it:
+  - Filtro _GENERIC_LABELS: titoli di pagina generici ("regolamento", "piano degli
+    studi") non vengono usati come subtopic del corso.
+  - Fallback URL path: se title è assente/generico, primo segmento path non-numerico
+    e non in blacklist (con snake_case→Title Case).
+  - Base label: "Regolamento corso di studio" se "regolamento" in path,
+    "Pagina corso di studio" altrimenti.
+
+  FIX ALMALAUREA REPAIR RULE (src/ingestion/enrichment.py)
+  ---------------------------------------------------------
+  Estesa repair_context_header_semantics per __almalaurea URLs: oltre a
+  docente-profile e scheda SUA, ora intercetta anche "bando", "avviso", "progett",
+  "ricerca" come classificazioni errate → forza "Dati AlmaLaurea corso di studio".
+
+  FIX PROMPT (src/prompts.py)
+  ---------------------------
+  CONTEXT_HEADER_PROMPT — due aggiunte:
+  1. Regola #4 UPLOADED DOCUMENTS: aggiunto tipo "verbale DIEM" per verbali,
+     delibere, verbali di riunione/consultazione (erano classificati come "bando/avviso").
+  2. GENERAL RULES: "Use EXACT category names from the label families above —
+     never abbreviate (e.g. write 'regolamento corso di studio', NOT 'corso di studio')".
+
+  NUOVO SCRIPT: scripts/simulate_enrichment.py
+  --------------------------------------------
+  Script di validazione stratificata dei context headers (senza re-index).
+  Modalità --stratified: campiona N doc per bucket URL-pattern (10 bucket),
+  confronta header corrente nel DB vs header rigenerato con logica attuale.
+  Opzioni: --seed, --limit, --per-class, --exclude-domains, --show-unchanged.
+  Usato per validare i fix su seed=42, 123, 7 (150 doc stratificati).
+
+  RISULTATI VALIDAZIONE (seed=7, limit=80, escluso docenti.unisa.it)
+  ------------------------------------------------------------------
+  [063] "didattica - regolamento corso di studio"
+        → "regolamento corso di studio - Ingegneria Informatica Magistrale [AY 2024/2025]" ✓
+  [068] "verbale consultazione - didattica DIEM"
+        → "verbale DIEM - consultazione parti interessate" ✓
+  [075] "verbale riunione - proposta corso di studio"
+        → "verbale DIEM - consultazione parti interessate [2021]" ✓
+  Miglioramento complessivo: ~93-95% dei doc su tutti e 3 i seed.
+  Errori residui: ~3-5% (stochastic LLM su PDF con contenuto misto, irreducibili
+  al livello del modello 8b senza aumentare la qualità del modello).

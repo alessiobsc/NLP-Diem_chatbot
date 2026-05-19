@@ -57,7 +57,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.ingestion.enrichment import HEADER_KEYWORDS, is_meaningful_line
+from src.ingestion.header_heuristic import HEADER_KEYWORDS, is_meaningful_line
 from src.ingestion.parser import extract_html_metadata, html_extractor
 
 # ---------------------------------------------------------------------------

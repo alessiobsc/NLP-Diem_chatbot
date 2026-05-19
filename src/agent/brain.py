@@ -44,6 +44,10 @@ _TAG_FALLBACKS = {
     "[FUORI_SCOPE]": "Mi dispiace, posso rispondere solo a domande riguardanti il DIEM e l'Università di Salerno.",
 }
 
+# Sentinel yielded by chat_stream when the answer is degenerate (<30 chars).
+# chat_fn detects this and replaces the full Gradio display with a fallback message.
+STREAM_DEGENERATE_SIGNAL = "\x00DEGENERATE\x00"
+
 
 # ── Routing functions (module-level so tests can import them directly) ────────
 
@@ -246,15 +250,27 @@ class DiemBrain(DiemNodes):
             return "Mi dispiace, si è verificato un errore."
 
     def chat_stream(self, message: str, session_id: str = DEFAULT_SESSION_ID):
-        """Streaming generator. Yields tokens from the agent node only.
+        """Streaming generator. Yields status lines, answer tokens, then sources.
 
-        Tokens from guard/reset/tools nodes are discarded — only the final answer
-        reaches the user. Source URLs yielded as final chunk.
-        For scope rejections the rejection text is yielded at end.
+        - Tool calls → emit a status line (e.g. "🔍 *Recupero...*") once per tool.
+        - agent / force_answer nodes → stream answer tokens.
+        - guard nodes → capture rejection text, yield at end if no answer.
+        - Initial chars buffered so rejection tags split across tokens are stripped reliably.
+        - Yields STREAM_DEGENERATE_SIGNAL if answer < 30 chars; caller must handle display.
+        - Source URLs appended as final chunk.
         """
+        # Buffer initial chars before yielding. Must be >= degenerate threshold (30)
+        # so no degenerate answer is ever shown to the user before the signal fires.
+        # Also covers rejection tags split across tokens (longest tag = 15 chars).
+        _INITIAL_BUF = 30
+
         logger.info(f"chat_stream | session={session_id}")
         answer = ""
         rejection = ""
+        tool_calls_seen: set[str] = set()
+        tag_buffer = ""    # holds first _INITIAL_BUF chars; flushed once threshold hit
+        answer_started = False  # True after first content chunk; blocks final-msg duplication
+        _ANSWER_NODES = {"agent", "force_answer"}
         try:
             for chunk, metadata in self._graph.stream(
                 {"messages": [HumanMessage(message)]},
@@ -262,29 +278,78 @@ class DiemBrain(DiemNodes):
                 stream_mode="messages",
             ):
                 node = metadata.get("langgraph_node", "")
+
+                # Guard rejections
                 if node in ("input_guard", "scope_guard") and isinstance(chunk, AIMessage) and chunk.content:
                     rejection = chunk.content
-                if node == "agent" and hasattr(chunk, "content") and chunk.content:
+
+                # Track tool calls (no status emitted — kept for future use)
+                if node == "agent" and getattr(chunk, "tool_call_chunks", None):
+                    for tc in chunk.tool_call_chunks:
+                        name = tc.get("name") or ""
+                        if name:
+                            tool_calls_seen.add(name)
+
+                # Answer tokens from agent or force_answer
+                if node in _ANSWER_NODES and hasattr(chunk, "content") and chunk.content:
                     if not getattr(chunk, "tool_call_chunks", None):
                         is_partial = isinstance(chunk, AIMessageChunk)
-                        # stream_mode="messages" emits both per-token AIMessageChunks and the
-                        # final complete AIMessage written to state — skip the latter to avoid duplication.
-                        if is_partial or not answer:
-                            content = chunk.content
-                            for tag in REJECTION_TAGS:
-                                content = content.replace(tag, "")
+                        # stream_mode="messages" emits per-token AIMessageChunks AND the final
+                        # complete AIMessage. Skip the final complete message once tokens have
+                        # already been received (answer_started=True prevents duplication).
+                        # force_answer uses invoke() so it only emits the final message (not
+                        # partial) — answer_started=False at that point → correctly included.
+                        if not is_partial and answer_started:
+                            continue
+                        content = chunk.content
+                        answer_started = True
+                        if not answer:
+                            # Buffer initial chars to reliably strip tags split across tokens
+                            tag_buffer += content
+                            if len(tag_buffer) >= _INITIAL_BUF:
+                                for tag in REJECTION_TAGS:
+                                    if tag_buffer.startswith(tag):
+                                        tag_buffer = tag_buffer[len(tag):].lstrip()
+                                        break
+                                answer = tag_buffer
+                                tag_buffer = ""
+                                if answer:
+                                    yield answer
+                        else:
                             answer += content
-                            if content:
-                                yield content
+                            yield content
+
         except Exception as e:
             logger.error(f"chat_stream error: {e}")
             yield "Mi dispiace, si è verificato un errore."
             return
 
+        # Flush short answer that never filled the buffer (< _INITIAL_BUF chars total).
+        # Do NOT yield here — degenerate check below decides whether to show or signal.
+        flush_unyielded = False
+        if tag_buffer:
+            for tag in REJECTION_TAGS:
+                if tag_buffer.startswith(tag):
+                    tag_buffer = tag_buffer[len(tag):].lstrip()
+                    break
+            answer = tag_buffer
+            flush_unyielded = bool(answer)
+
         if not answer:
             if rejection:
                 yield self._strip_rejection_tags(rejection)
             return
+
+        # Degenerate answer: signal caller to replace the full display.
+        # Nothing was yielded for flush_unyielded answers, so Gradio never saw "yes".
+        if len(answer.strip()) < 30:
+            logger.warning(f"chat_stream: degenerate answer {answer.strip()!r} — signaling replacement")
+            yield STREAM_DEGENERATE_SIGNAL
+            return
+
+        # Valid answer from flush buffer (short but not degenerate) — yield now.
+        if flush_unyielded:
+            yield answer
 
         sources_md = self._format_sources(self._last_docs)
         if sources_md:
