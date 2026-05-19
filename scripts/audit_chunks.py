@@ -8,12 +8,17 @@ Checks per chunk:
   - Minimum content length
 
 Usage:
-    venv/Scripts/python scripts/audit_chunks.py
-    venv/Scripts/python scripts/audit_chunks.py --min-chars 50 --max-symbol-ratio 0.4
-    venv/Scripts/python scripts/audit_chunks.py --show-bad-only
+    # Audit completo: esporta tutti i chunk problematici (con testo intero) in JSON
+    venv/Scripts/python scripts/audit_chunks.py --export bad_chunks.json
+
+    # Varianti
+    venv/Scripts/python scripts/audit_chunks.py --min-chars 50 --max-symbol-ratio 0.4 --export bad_chunks.json
+    venv/Scripts/python scripts/audit_chunks.py --max-bad 0          # mostra tutti a console senza export
+    venv/Scripts/python scripts/audit_chunks.py --limit 500          # audit solo primi 500 chunk (test rapido)
 """
 
 import argparse
+import json
 import os
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -56,6 +61,8 @@ def main():
     parser.add_argument("--max-symbol-ratio", type=float, default=DEFAULT_MAX_SYMBOL_RATIO)
     parser.add_argument("--show-bad-only", action="store_true", help="Print only problematic chunks")
     parser.add_argument("--limit", type=int, default=0, help="Audit only first N chunks (0=all)")
+    parser.add_argument("--max-bad", type=int, default=30, help="Max bad chunks printed to console (0=all)")
+    parser.add_argument("--export", type=str, default="", metavar="FILE", help="Export all bad chunks to JSON file")
     args = parser.parse_args()
 
     print(f"Loading Chroma collection '{COLLECTION_NAME}' from {CHROMA_DIR_NAME}/...")
@@ -92,8 +99,8 @@ def main():
                 "id": doc_id,
                 "source": meta.get("source", "unknown"),
                 "issues": issues,
-                "preview": text[:120].replace("\n", " "),
                 "length": len(text),
+                "text": text,
             })
 
     n_bad = len(bad_chunks)
@@ -111,15 +118,24 @@ def main():
         for issue, count in sorted(issue_counts.items(), key=lambda x: -x[1]):
             print(f"  {issue:<30} {count}")
 
+    if args.export and bad_chunks:
+        with open(args.export, "w", encoding="utf-8") as f:
+            json.dump(bad_chunks, f, ensure_ascii=False, indent=2)
+        print(f"Exported {len(bad_chunks)} bad chunks to {args.export}")
+
     if bad_chunks:
+        cap = len(bad_chunks) if args.max_bad == 0 else args.max_bad
+        label = "ALL" if args.max_bad == 0 else f"first {cap}"
         print()
-        print(f"=== PROBLEMATIC CHUNKS (first 30) ===")
-        for chunk in bad_chunks[:30]:
+        print(f"=== PROBLEMATIC CHUNKS ({label}) ===")
+        for chunk in bad_chunks[:cap]:
             print(f"  [{', '.join(chunk['issues'])}]")
             print(f"  source  : {chunk['source']}")
             print(f"  length  : {chunk['length']} chars")
-            print(f"  preview : {chunk['preview']}")
+            print(f"  preview : {chunk['text'][:120].replace(chr(10), ' ')}")
             print()
+        if cap < len(bad_chunks):
+            print(f"  ... {len(bad_chunks) - cap} more (use --max-bad 0 or --export FILE to see all)")
     elif not args.show_bad_only:
         print()
         print("No problematic chunks found.")
