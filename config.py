@@ -74,7 +74,7 @@ LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.1"))
 
 # Local Embedding & Reranking Settings (used when EMBEDDING_PROVIDER=local)
 LOCAL_EMBEDDING_MODEL: str = os.getenv("LOCAL_EMBEDDING_MODEL", "intfloat/multilingual-e5-base")
-LOCAL_RERANKER_MODEL: str = os.getenv("LOCAL_RERANKER_MODEL", "Qwen/Qwen3-Reranker-0.6B")
+LOCAL_RERANKER_MODEL: str = os.getenv("LOCAL_RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
 
 
 # =============================================================================
@@ -105,7 +105,7 @@ BI_ENCODER_K: int = int(os.getenv("BI_ENCODER_K", "20"))
 # CROSS_ENCODER_K: number of documents kept after reranking in the second stage (precision reranking)
 CROSS_ENCODER_K: int = int(os.getenv("CROSS_ENCODER_K", "3"))
 
-RETRIEVER_SCORE_THRESHOLD: float = float(os.getenv("RETRIEVER_SCORE_THRESHOLD", "0.7"))
+RETRIEVER_SCORE_THRESHOLD: float = float(os.getenv("RETRIEVER_SCORE_THRESHOLD", "0.5"))
 
 # Document Splitting Settings (Parent-Child Strategy)
 # Parent Document Settings (Broad context)
