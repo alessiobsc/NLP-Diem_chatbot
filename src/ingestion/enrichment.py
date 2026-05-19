@@ -1,6 +1,6 @@
 import re
 import time
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, urlparse, parse_qs
 
 import requests
 from dotenv import load_dotenv
@@ -19,6 +19,112 @@ logger = get_logger(__name__)
 # TODO (Software Architect): Refactor global state variables (`_HEADER_CACHE`, `_OLLAMA_DISABLED`) into a dedicated class for better state management.
 _HEADER_CACHE: dict = {}
 _OPENROUTER_DISABLED = False
+
+# Domains where the heuristic always produces optimal headers (e.g. professor name from title)
+_HEURISTIC_ONLY_DOMAINS = frozenset({
+    "docenti.unisa.it",
+})
+
+_MIN_YEAR = 2020
+_MAX_YEAR = 2035
+
+
+def _use_heuristic_for_url(url: str) -> bool:
+    parsed = urlparse(url)
+    netloc = parsed.netloc.lower()
+    path = parsed.path.lower()
+
+    if netloc in _HEURISTIC_ONLY_DOMAINS:
+        return True
+
+    # corsi.unisa.it HTML pages: metadata title reliably contains course name → heuristic.
+    # PDFs stored under /uploads/ have no course name in URL or title → LLM.
+    if netloc == "corsi.unisa.it":
+        return "/uploads/" not in path
+
+    qs = parse_qs(parsed.query)
+    # Listing pages (?stato= or ?tip=) contain many projects — LLM picks one at random
+    if "stato" in qs or "tip" in qs:
+        return True
+    # progetti-finanziati without ?progetto= → listing page; with ?progetto= → single project (→ LLM)
+    if "progetti-finanziati" in path and "progetto" not in qs:
+        return True
+    return False
+
+
+def _is_academic_year_context(parsed) -> bool:
+    path = parsed.path.lower()
+    return (
+        "__regolamenti-cds" in path
+        or "__schede-sua" in path
+        or "/didattica" in path
+        or "/insegnament" in path
+    )
+
+
+def _is_publication_context(parsed) -> bool:
+    path = parsed.path.lower()
+    return "pubblicazioni" in path or "iris" in path
+
+
+def extract_year_tag(url: str, metadata: dict | None, text: str | None = None) -> str:
+    """Return [YYYY] or [AY YYYY/YYYY+1] tag if a valid year >= 2020 is found, else ''."""
+    parsed = urlparse(url)
+    qs = parse_qs(parsed.query)
+    year: int | None = None
+
+    # 1. Query param ?anno=YYYY — skip 0 (means "all years")
+    if "anno" in qs:
+        val = qs["anno"][0]
+        if re.match(r"^\d{4}$", val):
+            candidate = int(val)
+            if _MIN_YEAR <= candidate <= _MAX_YEAR:
+                year = candidate
+
+    # 2. Path segment /YYYY/ (e.g. PDF files)
+    if year is None:
+        for py in reversed(re.findall(r"/(\d{4})/", parsed.path)):
+            candidate = int(py)
+            if _MIN_YEAR <= candidate <= _MAX_YEAR:
+                year = candidate
+                break
+
+    # 3. Metadata date field
+    if year is None and metadata:
+        for key in ("date", "created", "modified", "publication_date"):
+            val = str(metadata.get(key) or "")
+            m = re.search(r"\b(20\d{2})\b", val)
+            if m:
+                candidate = int(m.group(1))
+                if _MIN_YEAR <= candidate <= _MAX_YEAR:
+                    year = candidate
+                    break
+
+    # 4. Year in URL filename (e.g. decreto-28.10.2025-bando.pdf)
+    if year is None:
+        filename = parsed.path.rstrip("/").split("/")[-1]
+        m = re.search(r"\b(20\d{2})\b", filename)
+        if m:
+            candidate = int(m.group(1))
+            if _MIN_YEAR <= candidate <= _MAX_YEAR:
+                year = candidate
+
+    # 5. Academic year pattern YYYY/YYYY+1 in text (reliable, specific)
+    if year is None and text:
+        for m in re.finditer(r"\b(20\d{2})/(20\d{2})\b", text):
+            y1, y2 = int(m.group(1)), int(m.group(2))
+            if y2 == y1 + 1 and _MIN_YEAR <= y1 <= _MAX_YEAR:
+                year = y1
+                break
+
+    if year is None:
+        return ""
+
+    if _is_academic_year_context(parsed):
+        return f"[AY {year}/{year + 1}]"
+    if _is_publication_context(parsed):
+        return f"[{year}]"
+    return f"[{year}]"
 _OPENROUTER_FAILURES = 0
 _OLLAMA_DISABLED = False
 _OLLAMA_FAILURES = 0
@@ -134,6 +240,21 @@ def metadata_text(metadata: dict | None) -> str:
     return "\n".join(lines)
 
 
+_NON_COURSE_SEGS = frozenset({"uploads", "rescue", "public", "assets", "static", "home", "index", "pdf"})
+
+
+def _course_slug_from_path(path: str, marker: str) -> str:
+    """Extract course slug from corsi.unisa.it path before the given URL marker."""
+    if marker not in path:
+        return ""
+    before = path.split(marker)[0].strip("/")
+    slug = before.rsplit("/", 1)[-1] if "/" in before else before
+    if (not slug or slug.startswith("__") or slug in _NON_COURSE_SEGS
+            or re.match(r"^\d", slug) or re.search(r"\.\w{2,4}$", slug)):
+        return ""
+    return re.sub(r"[_-]+", " ", slug).strip().title()
+
+
 def classify_context_header(text: str, url: str, metadata: dict | None = None) -> str:
     parsed = urlparse(url)
     host = parsed.netloc.lower()
@@ -145,10 +266,18 @@ def classify_context_header(text: str, url: str, metadata: dict | None = None) -
 
     if "__schede-sua" in path:
         base = "Scheda SUA corso di studio"
+        # On corsi.unisa.it the path encodes the course slug before the marker
+        course_name = _course_slug_from_path(path, "__schede-sua") if "corsi.unisa.it" in host else ""
+        if course_name:
+            return f"{base} - {course_name}"
         return f"{base} - {detail}" if detail else base
 
-    if "__regolamenti-cds" in path or "regolamento" in combined:
+    # URL-only — "regolamento in combined" too broad (bandi cite regolamento in body text)
+    if "__regolamenti-cds" in path:
         base = "Regolamento corso di studio"
+        course_name = _course_slug_from_path(path, "__regolamenti-cds") if "corsi.unisa.it" in host else ""
+        if course_name:
+            return f"{base} - {course_name}"
         return f"{base} - {detail}" if detail else base
 
     if "docenti.unisa.it" in host:
@@ -166,15 +295,39 @@ def classify_context_header(text: str, url: str, metadata: dict | None = None) -
     if "corsi.unisa.it" in host:
         if "insegnament" in combined or re.search(r"/\d{10,}/", path):
             return "Scheda insegnamento"
-        base = "Pagina corso di studio"
+        # Prefer metadata title; discard if it's a generic doc-type label
+        course_name = title.split("|", 1)[0].strip() if title else ""
+        _GENERIC_LABELS = {"regolamento", "regolamento corso di studio", "offerta formativa",
+                           "piano degli studi", "scheda sua", "consultazione parti interessate"}
+        if course_name.lower() in _GENERIC_LABELS:
+            course_name = ""
+        # Fallback: first meaningful path segment is the course slug on corsi.unisa.it
+        if not course_name:
+            segs = [s for s in path.strip("/").split("/")
+                    if s and not s.startswith("__") and s not in _NON_COURSE_SEGS
+                    and not re.match(r"^\d", s) and not re.search(r"\.\w{2,4}$", s)]
+            if segs:
+                course_name = re.sub(r"[_-]+", " ", segs[0]).strip().title()
+        base = "Regolamento corso di studio" if "regolamento" in path else "Pagina corso di studio"
+        if course_name:
+            return f"{base} - {course_name}"
         return f"{base} - {detail}" if detail else base
 
-    if "progetti-finanziati" in path or "progetti finanziati" in combined:
+    # URL path checks before broad text checks — prevents "laborator in text" false positives
+    if "/international/" in path or "/erasmus" in path:
+        return "Accordi internazionali DIEM"
+    if "/aree-di-ricerca" in path:
+        return "Aree di ricerca DIEM"
+    if "/ricerca/laboratori" in path or "/laboratori/" in path:
+        return "Laboratorio DIEM"
+    if "/premi-ricerca" in path:
+        return "Premi ricerca DIEM"
+    if "/terza-missione" in path:
+        return "Terza missione DIEM"
+    if "progetti-finanziati" in path:
         return "Progetti finanziati DIEM"
     if any(term in combined for term in ("avviso", "avvisi", "news", "bando", "seminario", "evento")):
         return "Avviso DIEM"
-    if "laborator" in combined:
-        return "Laboratorio DIEM"
     if any(term in combined for term in ("segreteria", "ufficio", "contatti")):
         return "Servizi e contatti DIEM"
     if "didattica" in combined:
@@ -298,14 +451,22 @@ def repair_context_header_semantics(header: str, url: str) -> tuple[str, str] | 
                 "regolamenti_cds:scheda_sua",
             )
 
-    if "__almalaurea" in source and (
-        header_contains_docente_profile(header) or header_contains_scheda_sua(header)
-    ):
-        topic = almalaurea_header_topic(cleaned)
-        return (
-            context_header_with_topic("Dati AlmaLaurea corso di studio", topic),
-            "almalaurea:wrong_document_type",
+    if "__almalaurea" in source:
+        lowered_cleaned = cleaned.lower()
+        is_wrong_type = (
+            header_contains_docente_profile(header)
+            or header_contains_scheda_sua(header)
+            or "bando" in lowered_cleaned
+            or "avviso" in lowered_cleaned
+            or "progett" in lowered_cleaned
+            or "ricerca" in lowered_cleaned
         )
+        if is_wrong_type:
+            topic = almalaurea_header_topic(cleaned)
+            return (
+                context_header_with_topic("Dati AlmaLaurea corso di studio", topic),
+                "almalaurea:wrong_document_type",
+            )
 
     return None
 
@@ -474,6 +635,16 @@ def generate_context_header(text: str, url: str, metadata: dict | None = None) -
     prompt = CONTEXT_HEADER_PROMPT.format(text=header_context, url=url)
     header = ""
 
+    # Hybrid: docenti and corsi always use heuristic (includes professor name, URL-accurate)
+    if _use_heuristic_for_url(url):
+        header = normalize_context_header(fallback_context_header(text, url, metadata), text, url, metadata)
+        year_tag = extract_year_tag(url, metadata, text)
+        if year_tag:
+            header = f"{header} {year_tag}"
+        header = ensure_context_prefix(header)
+        _HEADER_CACHE[cache_key] = header
+        return header
+
     if USE_LLM_CONTEXT_HEADERS:
         if OPENROUTER_API_KEY and not _OPENROUTER_DISABLED:
             try:
@@ -591,6 +762,10 @@ def generate_context_header(text: str, url: str, metadata: dict | None = None) -
     else:
         logger.debug(f"LLM context headers skipped: USE_LLM_CONTEXT_HEADERS is False; source={url}; title={title[:120]}")
         header = normalize_context_header(fallback_context_header(text, url, metadata), text, url, metadata)
+
+    year_tag = extract_year_tag(url, metadata, text)
+    if year_tag:
+        header = f"{header} {year_tag}"
 
     header = ensure_context_prefix(header)
 
