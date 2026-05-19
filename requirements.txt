@@ -17,6 +17,7 @@ langgraph-cli[inmem]
 # --- Document Processing ---
 pdfplumber==0.11.9
 beautifulsoup4==4.14.3
+lxml==6.1.0
 trafilatura==2.0.0
 requests==2.32.5
 pip-system-certs==5.3  # Windows: use OS cert store instead of certifi bundle
