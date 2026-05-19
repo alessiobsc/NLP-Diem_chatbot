@@ -52,12 +52,18 @@ LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "local")
 if LLM_PROVIDER not in ["local", "openrouter"]:
     raise NotImplementedError(f"LLM_PROVIDER '{LLM_PROVIDER}' is not supported. Use 'local' or 'openrouter'.")
 
-# Embedding/Reranking provider: "local" (default, huggingface) or "openrouter"
+# Embedding provider: "local" (default, huggingface) or "openrouter"
 EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "local")
 
 if EMBEDDING_PROVIDER not in ["local", "openrouter"]:
     raise NotImplementedError(f"EMBEDDING_PROVIDER '{EMBEDDING_PROVIDER}' is not supported. Use 'local' or 'openrouter'.")
 
+
+# Reranking provider: "local" (default, huggingface) or "openrouter"
+RERANKER_PROVIDER: str = os.getenv("RERANKER_PROVIDER", "local")
+
+if RERANKER_PROVIDER not in ["local", "openrouter"]:
+    raise NotImplementedError(f"RERANKER_PROVIDER '{RERANKER_PROVIDER}' is not supported. Use 'local' or 'openrouter'.")
 
 # =============================================================================
 # MODEL CONFIGURATION - LOCAL
@@ -68,7 +74,7 @@ LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.1"))
 
 # Local Embedding & Reranking Settings (used when EMBEDDING_PROVIDER=local)
 LOCAL_EMBEDDING_MODEL: str = os.getenv("LOCAL_EMBEDDING_MODEL", "intfloat/multilingual-e5-base")
-LOCAL_RERANKER_MODEL: str = os.getenv("LOCAL_RERANKER_MODEL", "BAAI/bge-reranker-base")
+LOCAL_RERANKER_MODEL: str = os.getenv("LOCAL_RERANKER_MODEL", "Qwen/Qwen3-Reranker-0.6B")
 
 
 # =============================================================================
