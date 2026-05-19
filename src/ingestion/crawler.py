@@ -42,6 +42,7 @@ SKIP_DOCUMENT_SUBSTRINGS: Tuple[str, ...] = (
     ".pdf",
     "/en/",
     "/zh/",
+    "/valutazione-della-didattica",
 )
 
 OFFERTA_FORMATIVA_PATH = "/didattica/offerta-formativa"

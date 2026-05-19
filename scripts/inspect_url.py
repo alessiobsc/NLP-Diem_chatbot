@@ -38,18 +38,18 @@ def main():
 
     if args.meta:
         meta = {**doc.metadata, **extract_html_metadata(raw_html)}
-        print("\n─── METADATA ───")
+        print("\n--- METADATA ---")
         for k, v in meta.items():
             print(f"  {k}: {v}")
 
     if args.raw:
-        print("\n─── RAW HTML ───")
+        print("\n--- RAW HTML ---")
         print(raw_html)
     else:
         text = html_extractor(raw_html)
         char_count = len(text) if text else 0
-        print(f"\n─── EXTRACTED TEXT ({char_count} chars) ───")
-        print(text if text else "[empty — html_extractor returned nothing]")
+        print(f"\n--- EXTRACTED TEXT ({char_count} chars) ---")
+        print(text if text else "[empty -- html_extractor returned nothing]")
 
 
 if __name__ == "__main__":
