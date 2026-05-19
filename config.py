@@ -26,7 +26,7 @@ load_dotenv()
 PROJECT_ROOT: Path = Path(__file__).resolve().parent
 
 # ChromaDB Storage paths
-CHROMA_DIR_NAME: str = "chroma_diem"
+CHROMA_DIR_NAME: str = os.getenv("CHROMA_DIR_NAME", "chroma_diem")
 CHROMA_DIR: Path = PROJECT_ROOT / CHROMA_DIR_NAME
 PARENT_STORE_DIR: Path = CHROMA_DIR / "parent_store"
 
@@ -95,11 +95,11 @@ DEFAULT_SESSION_ID: str = "diem-session"
 
 # Retrieval Settings
 # BI_ENCODER_K: number of documents retrieved in the first stage (fast retrieval)
-BI_ENCODER_K: int = int(os.getenv("BI_ENCODER_K", "20"))
+BI_ENCODER_K: int = int(os.getenv("BI_ENCODER_K", "15"))
 # CROSS_ENCODER_K: number of documents kept after reranking in the second stage (precision reranking)
 CROSS_ENCODER_K: int = int(os.getenv("CROSS_ENCODER_K", "3"))
 
-RETRIEVER_SCORE_THRESHOLD: float = float(os.getenv("RETRIEVER_SCORE_THRESHOLD", "0.7"))
+RETRIEVER_SCORE_THRESHOLD: float = float(os.getenv("RETRIEVER_SCORE_THRESHOLD", "0.5"))
 
 # Document Splitting Settings (Parent-Child Strategy)
 # Parent Document Settings (Broad context)

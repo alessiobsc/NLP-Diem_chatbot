@@ -2,7 +2,7 @@
 .venv/
 venv/
 __pycache__/
-chroma_diem/
+chroma_diem*/
 *.pyc
 crawled_urls.json
 crawled_pdfs.json

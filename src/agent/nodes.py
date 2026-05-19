@@ -183,6 +183,11 @@ class DiemNodes:
         Synthetic ToolMessages resolve dangling tool_calls so the message history
         stays valid for the model API, then the agent model (without tools bound)
         generates a final answer from whatever context was already retrieved.
+
+        Uses a minimal system prompt (not the full agent prompt) to avoid confusing
+        the model with tool instructions when it cannot call any tools. Injects
+        retrieved_context explicitly so the model does not have to reconstruct it
+        from a pruned/placeholder-filled history.
         """
         messages = list(state["messages"])
         last_ai = messages[-1]
@@ -196,12 +201,31 @@ class DiemNodes:
         logger.warning(
             f"force_answer | MAX_RETRIEVE_CALLS reached | stubbed {len(extra)} pending tool_call(s)"
         )
-        system = SystemMessage(content=AGENT_SYSTEM_PROMPT + (
-            "\n\nIMPORTANT: You have reached the maximum number of tool calls. "
-            "Generate a final answer NOW based on the context already retrieved. "
-            "Do NOT call any more tools."
+
+        context = state.get("retrieved_context", "")
+        context_block = f"\n\n<document>\n{context}\n</document>" if context else ""
+
+        system = SystemMessage(content=(
+            "Sei un assistente virtuale del DIEM (Dipartimento di Ingegneria dell'Informazione ed Elettrica "
+            "e Matematica Applicata) dell'Università di Salerno. "
+            "Hai raggiunto il limite massimo di chiamate agli strumenti. "
+            "Genera ORA una risposta completa e diretta alla domanda dell'utente "
+            "usando ESCLUSIVAMENTE il contesto recuperato qui sotto. "
+            "Non chiamare strumenti. Non rispondere con una sola parola."
+            + context_block
         ))
+
         response = self._agent_model.invoke([system] + messages + extra)
+
+        # Guard against degenerate single-word outputs (e.g. "yes", "sì", "ok")
+        content = (response.content if isinstance(response.content, str) else "").strip()
+        if len(content) < 30:
+            logger.warning(f"force_answer | degenerate output ({len(content)} chars): {content!r} — using fallback")
+            response = AIMessage(content=(
+                "Mi dispiace, non sono riuscito a trovare informazioni sufficienti per rispondere. "
+                "Prova a riformulare la domanda o a essere più specifico."
+            ))
+
         return {"messages": extra + [response]}
 
     def _node_output_guard(self, state: DiemState) -> dict:
@@ -219,9 +243,9 @@ class DiemNodes:
 
         content = last_ai.content if isinstance(last_ai.content, str) else str(last_ai.content)
 
-        # Empty answer: replace with fallback so history never contains a blank AIMessage.
-        if not content.strip():
-            logger.warning("output_guard: empty answer from agent, replacing with fallback")
+        # Empty or degenerate answer (e.g. "yes", "sì", "ok"): replace with fallback.
+        if len(content.strip()) < 30:
+            logger.warning(f"output_guard: degenerate answer ({len(content.strip())} chars): {content.strip()!r} — replacing with fallback")
             return {"messages": [AIMessage(
                 id=last_ai.id,
                 content="Mi dispiace, non sono riuscito a trovare informazioni sufficienti per rispondere a questa domanda.",
