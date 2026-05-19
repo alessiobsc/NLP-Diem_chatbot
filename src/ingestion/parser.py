@@ -1,5 +1,5 @@
 import re
-from urllib.parse import urlparse, urldefrag, urljoin
+from urllib.parse import parse_qs, urlparse, urldefrag, urljoin
 
 import trafilatura
 from bs4 import BeautifulSoup
@@ -38,6 +38,56 @@ RAW_PDF_MARKERS = (
     "/resources",
     " endobj",
     " startxref",
+)
+
+STRUCTURED_UTILITY_SECTION_TITLES = {
+    "contatti",
+    "area utente (esse3)",
+    "disabilità e dsa",
+    "disabilita e dsa",
+}
+
+COMMISSIONI_DETAIL_NOISE_LINES = {
+    "",
+    "-",
+    "condividi",
+    "dipartimento",
+    "commissioni e delegati",
+    "presentazione",
+    "organi collegiali",
+    "commissione paritetica docenti-studenti",
+    "docenti e personale",
+    "strutture",
+    "dipartimento di eccellenza",
+    "didattica",
+    "ricerca",
+    "precedente",
+    "successiva",
+    "‹",
+    "›",
+    "×",
+}
+
+STRUCTURED_PANEL_SELECTORS = (
+    ".panel.panel-primary",
+    ".panel",
+    ".accordion-item",
+    ".card",
+)
+
+STRUCTURED_PANEL_TITLE_SELECTORS = (
+    ".panel-heading .panel-title",
+    ".panel-heading",
+    ".accordion-header",
+    ".card-header",
+)
+
+STRUCTURED_PANEL_BODY_SELECTORS = (
+    ".panel-body",
+    ".accordion-body",
+    ".card-body",
+    ".panel-collapse",
+    ".collapse",
 )
 
 
@@ -91,6 +141,244 @@ def clean_text(text: str) -> str:
     return text.strip()
 
 
+def _normalized_line(text: str) -> str:
+    return re.sub(r"\s+", " ", text or "").strip().lower()
+
+
+def _is_structured_utility_title(title: str) -> bool:
+    return _normalized_line(title) in STRUCTURED_UTILITY_SECTION_TITLES
+
+
+def _visible_text(tag) -> str:
+    return clean_text(tag.get_text(" ", strip=True))
+
+
+def _main_html_root(soup: BeautifulSoup):
+    for selector in ("main", "article", "#unisa-content", "#content", ".content",
+                     "#main", ".main-content", ".entry-content", "body"):
+        root = soup.select_one(selector)
+        if root:
+            return root
+    return soup
+
+
+def _page_title_from_soup(soup: BeautifulSoup) -> str:
+    title = soup.find("h1")
+    if title:
+        return _visible_text(title)
+    title = soup.find("title")
+    if title:
+        return _visible_text(title)
+    return ""
+
+
+def _extract_table_rows(table) -> list[str]:
+    rows: list[str] = []
+    for tr in table.find_all("tr"):
+        cells = [
+            clean_text(cell.get_text(" ", strip=True))
+            for cell in tr.find_all(["th", "td"])
+        ]
+        cells = [cell for cell in cells if cell and cell not in {"-", "×"}]
+        if not cells:
+            continue
+
+        if len(cells) == 2:
+            rows.append(f"{cells[0]}: {cells[1]}")
+        else:
+            rows.append(" | ".join(cells))
+
+    return rows
+
+
+def _extract_panel_title(panel) -> str:
+    for selector in STRUCTURED_PANEL_TITLE_SELECTORS:
+        title_tag = panel.select_one(selector)
+        if title_tag:
+            title = _visible_text(title_tag)
+            if title:
+                return title
+
+    for heading in panel.find_all(["h2", "h3", "h4", "h5", "h6"], recursive=True):
+        title = _visible_text(heading)
+        if title:
+            return title
+
+    return ""
+
+
+def _panel_body(panel):
+    for selector in STRUCTURED_PANEL_BODY_SELECTORS:
+        body = panel.select_one(selector)
+        if body:
+            return body
+    return panel
+
+
+def _extract_non_table_lines(container) -> list[str]:
+    body_without_tables = BeautifulSoup(str(container), "html.parser")
+    for tag in body_without_tables(["script", "style", "table", "button"]):
+        tag.decompose()
+
+    block_lines: list[str] = []
+    for tag in body_without_tables.find_all(["h2", "h3", "h4", "h5", "h6", "p", "li"], recursive=True):
+        line = clean_text(tag.get_text(" ", strip=True))
+        if line:
+            block_lines.append(line)
+
+    if block_lines:
+        return block_lines
+
+    text = clean_text(body_without_tables.get_text(" ", strip=True))
+    return [text] if text else []
+
+
+def _extract_panel_body_lines(container) -> list[str]:
+    lines = _extract_non_table_lines(container)
+    for table in container.find_all("table"):
+        lines.extend(_extract_table_rows(table))
+    return lines
+
+
+def _extract_structured_panel_sections(html: str) -> tuple[str, list[dict]]:
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style", "nav", "footer", "header", "noscript", "iframe"]):
+        tag.decompose()
+
+    root = _main_html_root(soup)
+    panel_selector = ", ".join(STRUCTURED_PANEL_SELECTORS)
+    sections: list[dict] = []
+    seen_titles: set[str] = set()
+
+    for panel in root.select(panel_selector):
+        title = _extract_panel_title(panel)
+        normalized_title = _normalized_line(title)
+        if not title or not normalized_title or normalized_title in seen_titles:
+            continue
+        if _is_structured_utility_title(title):
+            continue
+
+        body = _panel_body(panel)
+        rows = _extract_panel_body_lines(body)
+        rows = [row for row in rows if row and _normalized_line(row) != normalized_title]
+        if not rows:
+            continue
+
+        seen_titles.add(normalized_title)
+        sections.append({"title": title, "rows": rows})
+
+    if not sections:
+        return "", []
+
+    lines: list[str] = []
+    title = _page_title_from_soup(soup)
+    if title:
+        lines.append(title)
+
+    for section in sections:
+        lines.append("")
+        lines.append(section["title"])
+        lines.extend(section["rows"])
+
+    return clean_text("\n".join(lines)), sections
+
+
+def _extract_structured_table_sections(html: str) -> tuple[str, list[dict]]:
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style", "nav", "footer", "header", "noscript", "iframe"]):
+        tag.decompose()
+
+    root = _main_html_root(soup)
+    rows: list[str] = []
+    for table in root.find_all("table"):
+        rows.extend(_extract_table_rows(table))
+
+    rows = [row for row in rows if row]
+    if not rows:
+        return "", []
+
+    section = {"title": "Tabella", "rows": rows}
+    lines: list[str] = []
+    title = _page_title_from_soup(soup)
+    if title:
+        lines.append(title)
+        lines.append("")
+    lines.append(section["title"])
+    lines.extend(rows)
+
+    return clean_text("\n".join(lines)), [section]
+
+
+def _is_targeted_structured_source(source: str) -> bool:
+    parsed = urlparse(source or "")
+    path = parsed.path.rstrip("/")
+    query = parse_qs(parsed.query)
+
+    if path.endswith("/strutture-didattiche"):
+        return True
+    if path == "/dipartimento/personale":
+        return True
+    if path == "/dipartimento/organi-collegiali":
+        return True
+    if path == "/dipartimento/commissione-paritetica":
+        return True
+    if path == "/dipartimento/commissioni" and "dettaglio" in query:
+        return True
+    return False
+
+
+def _is_commissioni_detail_source(source: str) -> bool:
+    parsed = urlparse(source or "")
+    return parsed.path.rstrip("/") == "/dipartimento/commissioni" and "dettaglio" in parse_qs(parsed.query)
+
+
+def _is_commissioni_noise_line(line: str) -> bool:
+    normalized = _normalized_line(line)
+    if normalized in COMMISSIONI_DETAIL_NOISE_LINES:
+        return True
+    if normalized.startswith("università degli studi di salerno"):
+        return True
+    if normalized.startswith("via giovanni paolo ii"):
+        return True
+    if "p.iva" in normalized or "c.f." in normalized:
+        return True
+    return False
+
+
+def _clean_commissioni_detail_current_text(text: str) -> str:
+    lines = [
+        line.strip()
+        for line in (text or "").splitlines()
+        if line.strip() and not _is_commissioni_noise_line(line)
+    ]
+    return clean_text("\n".join(lines))
+
+
+def _has_useful_commissioni_description(text: str) -> bool:
+    lowered = (text or "").lower()
+    if "compiti" in lowered or "ha compiti" in lowered:
+        return True
+    if "commissione" in lowered and len(text) >= 250:
+        return True
+    return False
+
+
+def _merge_current_and_structured(current_text: str, structured_text: str) -> str:
+    current_lines = {_normalized_line(line) for line in current_text.splitlines() if _normalized_line(line)}
+    additions = [
+        line.strip()
+        for line in structured_text.splitlines()
+        if line.strip() and _normalized_line(line) not in current_lines
+    ]
+
+    if not additions:
+        return current_text
+
+    return clean_text(
+        f"{current_text.rstrip()}\n\nSezioni strutturate estratte:\n" + "\n".join(additions)
+    )
+
+
 def _bs4_extractor(html: str) -> str:
     # TODO (Code Refactorer): Repeated parsing with BeautifulSoup. If possible, parse once and pass the tree around.
     soup = BeautifulSoup(html, "lxml")
@@ -121,6 +409,56 @@ def html_extractor(html: str) -> str:
         return clean_text(result)
     # Fallback to BeautifulSoup-based extractor if trafilatura fails (e.g. due to malformed HTML).
     return _bs4_extractor(html)
+
+
+def html_extractor_for_source(html: str, source: str = "") -> str:
+    """
+    Extract HTML text and selectively add structured accordion/table content.
+
+    The structured extraction is intentionally enabled only for known DIEM/UNISA
+    page shapes where trafilatura tends to lose the relation between a blue
+    accordion title and its table rows (classrooms, staff lists, committees).
+    """
+    current_text = html_extractor(html)
+    if not _is_targeted_structured_source(source):
+        return current_text
+
+    structured_text, sections = _extract_structured_panel_sections(html)
+    if not structured_text or not sections:
+        structured_text, sections = _extract_structured_table_sections(html)
+
+    if not structured_text or not sections:
+        logger.debug(f"Structured HTML extraction skipped (no sections): {source}")
+        return current_text
+
+    structured_rows = sum(len(section.get("rows", [])) for section in sections)
+    if structured_rows < 1:
+        logger.debug(f"Structured HTML extraction skipped (no rows): {source}")
+        return current_text
+
+    merge_base = current_text
+    mode = "merge"
+    if _is_commissioni_detail_source(source):
+        cleaned_current = _clean_commissioni_detail_current_text(current_text)
+        if _has_useful_commissioni_description(cleaned_current):
+            merge_base = cleaned_current
+            mode = "merge_clean_current"
+        else:
+            logger.debug(
+                "Structured HTML extraction replaced noisy commissioni detail page: "
+                f"source={source}; current_chars={len(current_text)}; "
+                f"cleaned_current_chars={len(cleaned_current)}; structured_chars={len(structured_text)}"
+            )
+            return structured_text
+
+    merged_text = _merge_current_and_structured(merge_base, structured_text)
+    logger.debug(
+        "Structured HTML extraction applied: "
+        f"source={source}; sections={len(sections)}; rows={structured_rows}; "
+        f"current_chars={len(current_text)}; structured_chars={len(structured_text)}; "
+        f"merged_chars={len(merged_text)}; mode={mode}"
+    )
+    return merged_text
 
 
 def extract_years_from_text(text: str) -> list[int]:
