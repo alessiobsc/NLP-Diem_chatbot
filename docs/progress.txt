@@ -488,3 +488,83 @@ CRONOLOGIA AGGIORNAMENTI
     caching incrementale via database locale `db/crawl_state.db`. Verifica HTTP 304
     Not Modified tramite check in SQLite di `ETag` e `Last-Modified`.
     Incrementate enormemente performance re-ingestion, salvando traffico di rete.
+
+2026-05-19 - Qualità contenuto KB: analisi, filtri, script di ispezione e audit
+
+  MERGE CONFLICT RISOLTO (src/ingestion/crawler.py)
+  --------------------------------------------------
+  Risolto merge conflict nella funzione `filter_docs` tra branch devAlessio
+  (logica dedup URL) e incoming (sezione header, SKIP_DOCUMENT_SUBSTRINGS,
+  tipo Iterable). Risultato finale:
+  - Input type: `Iterable` (gestisce sia list che generator — i caller in
+    main_ingestion.py passano generator); materializzato internamente con
+    `docs = list(docs)` all'inizio della funzione.
+  - SKIP_DOCUMENT_SUBSTRINGS: costante Tuple[str,...] module-level con
+    pattern URL da saltare ("?sitemap", "/print()", "unisa-rescue-page",
+    ".pdf", "/en/", "/zh/").
+  - Logica dedup per URL: set `seen` per eliminare documenti con stesso
+    source URL (stesso URL raggiunto da più entry point).
+  - Log debug: numero di documenti filtrati per pattern/data + dedup count.
+
+  SKIP_DOCUMENT_SUBSTRINGS: aggiunto "/valutazione-della-didattica"
+  -----------------------------------------------------------------
+  Analisi con inspect_url su campione di URL crawlati ha identificato
+  le pagine `/valutazione-della-didattica` come nav-only (1261 chars
+  di sole etichette di navigazione, nessun contenuto informativo).
+  Aggiunti alla costante per drop automatico durante il crawl.
+  Verificata presenza di 7 URL matching nel crawled_urls.json corrente.
+
+  NUOVO SCRIPT: scripts/inspect_url.py
+  -------------------------------------
+  Script per ispezionare il testo estratto da un singolo URL usando la
+  pipeline di parsing del progetto (crawler + html_extractor).
+  Utile per validare manualmente la qualità dell'estrazione prima del
+  re-index.
+  Opzioni: --raw (HTML grezzo), --meta (metadata estratti).
+  Utilizzo: venv/Scripts/python scripts/inspect_url.py <url>
+
+  ANALISI QUALITA' PDF (109 sorgenti in crawled_pdfs.json)
+  ---------------------------------------------------------
+  Eseguita analisi completa su tutti i 109 PDF tramite inspect_url.
+  Risultato: 108/109 hanno URL con pattern "/uploads/rescue/" che è il
+  percorso legittimo del CMS UNISA per i PDF (non garbage).
+  URL garbage identificato: /unisa-rescue-page/pdf/... (pattern diverso,
+  produce tabelle di simboli binari) — già coperto dal filtro
+  "unisa-rescue-page" in SKIP_DOCUMENT_SUBSTRINGS.
+  Testo estratto dai PDF legittimi: qualità buona, nessun caso di
+  is_raw_pdf_artifact o densità simboli anomala rilevata.
+
+  STRATEGIA EMBEDDING/RERANKER: BGE-M3 + Cohere Rerank 4 Pro
+  -----------------------------------------------------------
+  Decisione architetturale: upgrade da multilingual-e5-base (locale, 384
+  dim) a BGE-M3 (OpenRouter, baai/bge-m3, 1024 dim, 8K context window,
+  $0.01/1M tokens) per migliorare qualità retrieval multilingue IT/EN.
+  Reranker: Cohere Rerank 4 Pro (cohere/rerank-v3.5 su OpenRouter,
+  32K context, $0.0025/search) — SOTA multilingual, supera il cross-encoder
+  locale mMiniLMv2 su benchmark multilingue.
+  Config: EMBEDDING_PROVIDER=openrouter nel .env abilita entrambi i modelli.
+  OPENROUTER_EMBEDDING_MODEL=baai/bge-m3
+  OPENROUTER_RERANKER_MODEL=cohere/rerank-v3.5
+  Richiede re-index completo (EMBEDDING_DIMENSION passa da 384 a 1024).
+
+  NUOVO SCRIPT: scripts/audit_chunks.py
+  --------------------------------------
+  Script per auditare TUTTI i child chunks del Chroma vector store dopo
+  un re-index, verificando la qualità del testo indicizzato.
+  Controlli per chunk:
+    - Caratteri U+FFFD (replacement char da corruzioni encoding)
+    - Raw PDF artifact (stream binario PDF trapelato nel testo)
+    - Symbol density: ratio non-alfanumerici > 0.45 (default)
+    - Lunghezza minima: < 50 chars (default)
+  Output: sommario aggregato (totale / OK / problematici) + breakdown per
+  tipo di issue + lista dei chunk problematici con source URL e preview.
+  Opzioni: --min-chars N, --max-symbol-ratio F, --show-bad-only, --limit N
+  Utilizzo: venv/Scripts/python scripts/audit_chunks.py
+
+  README.md CREATO
+  ----------------
+  Creato README.md completo (GitHub-ready, sostituisce readme.txt) con:
+  architettura agentic RAG (grafo ASCII + tabella nodi), agent tools,
+  retrieval pipeline, KB stats, tech stack, setup, .env vars, usage
+  commands, struttura file, criteri valutazione (70%/30%), guardrails.
+  Nomi docenti rimossi. Allineato all'architettura corrente.

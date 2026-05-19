@@ -76,7 +76,7 @@ LOCAL_RERANKER_MODEL: str = os.getenv("LOCAL_RERANKER_MODEL", "BAAI/bge-reranker
 # =============================================================================
 # General Settings
 OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
-OPENROUTER_AGENT_MODEL: str = os.getenv("OPENROUTER_AGENT_MODEL", "qwen/qwen3-32b")
+OPENROUTER_AGENT_MODEL: str = os.getenv("OPENROUTER_AGENT_MODEL", "openai/gpt-oss-120b")
 OPENROUTER_LIGHTWEIGHT_MODEL: str = os.getenv("OPENROUTER_LIGHTWEIGHT_MODEL", "meta-llama/llama-3.1-8b-instruct")
 
 # Embedding Model Settings
