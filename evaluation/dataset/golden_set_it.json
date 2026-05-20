@@ -18,21 +18,21 @@
       "persona": "prospective_student",
       "tags": ["degree_programs", "general"],
       "question": "Quali corsi di laurea sono offerti dal DIEM?",
-      "reference": "Il DIEM offre corsi di laurea triennale in Ingegneria Informatica, Ingegneria Elettronica, oltre a vari corsi di laurea magistrale nelle stesse aree e in Information Engineering for Digital Medicine."
+      "reference": "Il DIEM offre due corsi di laurea triennale: Ingegneria Informatica e Ingegneria dell'Informazione per la Medicina Digitale (entrambi L-8, in lingua italiana). A livello magistrale: Ingegneria Informatica (LM-32, italiano/inglese), Information Engineering for Digital Medicine (LM-32, inglese) ed Electrical Engineering for Digital Energy (LM-28, inglese). Sono presenti anche dottorati di ricerca in Ingegneria dell'Informazione e Photovoltaics."
     },
     {
       "id": "is_prosp_002",
       "persona": "prospective_student",
       "tags": ["admission", "TOLC"],
       "question": "Ho preso 18 al TOLC. Posso iscrivermi?",
-      "reference": "L'ammissione ai corsi di laurea triennale di ingegneria a UNISA richiede il superamento del test TOLC-I. Un punteggio di 18 e tipicamente sopra la soglia minima per l'iscrizione diretta, ma chi non raggiunge la soglia OFA (Obblighi Formativi Aggiuntivi) deve assolvere obblighi formativi durante il primo anno. La soglia esatta va verificata nel bando di ammissione vigente."
+      "reference": "L'ammissione ai corsi di laurea triennale del DIEM richiede il TOLC-I. Con 18/50 ci si iscrive senza OFA solo se il punteggio di Matematica e almeno 8/10; altrimenti vengono attribuiti OFA. Per iscriversi senza OFA servono: punteggio assoluto >= 20/50 con Matematica >= 5, oppure punteggio assoluto >= 16/50 con Matematica >= 8. Con punteggio < 16/50 l'iscrizione e sconsigliata."
     },
     {
       "id": "is_prosp_003",
       "persona": "prospective_student",
       "tags": ["admission", "master", "digital_medicine"],
       "question": "Quali sono i requisiti di accesso alla Laurea Magistrale in Information Engineering for Digital Medicine?",
-      "reference": "L'accesso richiede una laurea triennale (o titolo equivalente) in un'area pertinente di ingegneria o di discipline scientifiche e una conoscenza della lingua inglese di livello B2. I requisiti esatti sono indicati nel regolamento del corso di studio."
+      "reference": "Per accedere alla LM in Information Engineering for Digital Medicine (LM-32) occorre soddisfare tre categorie di requisiti: curriculari (CFU in specifici settori disciplinari), di conoscenza della lingua inglese e di preparazione personale. Quest'ultima viene verificata tramite una prova di ammissione (sessioni annuali): punteggio minimo 60/100, di cui fino a 20 punti per la carriera pregressa e fino a 80 per una prova scritta di 5 esercizi su matematica, fisica e discipline ingegneristiche (automatica, circuiti, telecomunicazioni, programmazione, architetture/reti, basi di dati e sistemi operativi). In casi specifici e previsto l'esonero dalla prova."
     },
     {
       "id": "is_prosp_004",
@@ -54,21 +54,21 @@
       "persona": "current_student",
       "tags": ["faculty", "office_hours", "Capuano"],
       "question": "Quali sono gli orari di ricevimento del Professor Capuano?",
-      "reference": "Gli orari di ricevimento del Professor Nicola Capuano sono pubblicati sulla sua pagina docenti.unisa.it. Gli studenti dovrebbero consultare la pagina per gli orari aggiornati, dato che possono cambiare tra un semestre e l'altro."
+      "reference": "Gli orari di ricevimento del Professor Nicola Capuano sono pubblicati sulla sua pagina docenti.unisa.it (docenti.unisa.it/004322). Il ricevimento si tiene il mercoledi dalle 11:00 alle 13:00. Gli orari possono cambiare tra un semestre e l'altro: verificare sempre la pagina ufficiale."
     },
     {
       "id": "is_curr_003",
       "persona": "current_student",
       "tags": ["facility", "room"],
       "question": "Dove si trova l'aula 126?",
-      "reference": "L'aula 126 si trova in uno degli edifici del DIEM presso il campus di Fisciano dell'Universita di Salerno. Il numero indica piano e posizione; i dettagli specifici vanno verificati sulle mappe del campus disponibili sul sito DIEM."
+      "reference": "L'aula 126 si trova al primo piano dell'Edificio E del Campus di Fisciano (UNISA)."
     },
     {
       "id": "is_curr_004",
       "persona": "current_student",
       "tags": ["regulation", "graduation_grade"],
       "question": "La mia media e 28.8. Qual e il voto massimo di laurea che posso ottenere?",
-      "reference": "Il voto finale di laurea al DIEM si calcola convertendo la media ponderata degli esami in scala 110 e sommando punti bonus (per la valutazione della tesi, tirocini, mobilita internazionale, laurea entro la durata legale). Con una media di 28.8/30 il punteggio di base e circa 105.6/110; sommando il bonus tesi massimo e gli altri incrementi lo studente puo arrivare al massimo di 110/110 con eventuale lode, in base al regolamento vigente."
+      "reference": "Il voto di laurea si calcola come VMIN + min{PT+PCP, 6} + FCP, dove VMIN = (media * 110) / 30. Con media 28.8/30 il voto di partenza e 105.6/110. Il bonus massimo tra punteggio tesi (PT, 0-4) e punteggio carriera pesato (PCP) e limitato a 6 punti. Sommando il fattore correttivo FCP, lo studente puo raggiungere 110/110. La lode e attribuita con voto unanime se il punteggio calcolato e >= 112."
     },
     {
       "id": "is_curr_005",
@@ -82,7 +82,7 @@
       "persona": "current_student",
       "tags": ["regulation", "ECTS"],
       "question": "Quanti CFU vale la tesi di laurea magistrale al DIEM?",
-      "reference": "La tesi di laurea magistrale al DIEM vale tipicamente tra 15 e 21 CFU, in base allo specifico corso magistrale. Il numero esatto e indicato nel regolamento didattico di ciascun corso."
+      "reference": "La prova finale della laurea magistrale al DIEM vale 17 CFU. Lo studente e ammesso alla prova finale dopo aver superato tutte le verifiche di profitto e acquisito i relativi crediti del piano di studio."
     },
 
     {
@@ -90,21 +90,21 @@
       "persona": "international_student",
       "tags": ["internationalization", "responsibility"],
       "question": "Chi e il responsabile dell'internazionalizzazione del DIEM?",
-      "reference": "Il DIEM ha un docente delegato per l'internazionalizzazione, i cui contatti sono pubblicati sul sito del dipartimento nella sezione Dipartimento o International."
+      "reference": "Il DIEM ha un docente delegato per l'internazionalizzazione, il suo nome è Diego Gragnaniello."
     },
     {
       "id": "is_intl_002",
       "persona": "international_student",
       "tags": ["mobility", "erasmus"],
       "question": "Quali opportunita di mobilita internazionale sono disponibili?",
-      "reference": "Gli studenti del DIEM possono partecipare a programmi di scambio Erasmus+, accordi di doppio titolo con universita partner e altri programmi di mobilita internazionale. Le opportunita specifiche sono elencate nella sezione International del sito DIEM e nel bando Erasmus annuale."
+      "reference": "Gli studenti del DIEM possono partecipare a programmi e accordi internazionali come Erasmus Plus, cooperazione internazionale, doppio titolo, dottorati con tesi in co-tutela, International Credit Mobility e iniziative con Visiting Professors. Le opportunita specifiche sono elencate nella sezione International del sito DIEM e nel bando Erasmus annuale."
     },
     {
       "id": "is_intl_003",
       "persona": "international_student",
       "tags": ["english_taught"],
       "question": "Ci sono corsi del DIEM tenuti interamente in inglese?",
-      "reference": "Alcuni corsi di laurea magistrale del DIEM e singoli insegnamenti sono tenuti in inglese. L'elenco specifico, che include la magistrale in Information Engineering for Digital Medicine, e disponibile sulle pagine corsi.unisa.it di ciascun corso."
+      "reference": "I corsi di laurea tenuti interamente in inglese sono ELECTRICAL ENGINEERING FOR DIGITAL ENERGY, INFORMATION ENGINEERING FOR DIGITAL MEDICINE e il corso di laurea magistrale in INFORMATION ENGINEERING FOR DIGITAL MEDICINE."
     },
 
     {
@@ -119,50 +119,50 @@
       "persona": "external",
       "tags": ["research", "areas"],
       "question": "Quali sono le aree di ricerca attive al DIEM?",
-      "reference": "Le aree di ricerca del DIEM coprono informatica (intelligenza artificiale, ingegneria del software, computer vision, NLP), ingegneria elettrica ed elettronica (telecomunicazioni, elettronica, sistemi di potenza), ingegneria gestionale ed economica, matematica applicata e automatica/robotica. Dettagli su ciascuna linea di ricerca sono disponibili nella sezione Ricerca del sito DIEM."
+      "reference": "Le aree di ricerca attive nel DIEM sono: Automatica, Campi elettromagnetici, Elettrotecnica, Fisica, Informatica, Ingegneria Informatica, Matematica applicata, Organizzazione e Pianificazione del Territorio, Telecomunicazioni e Statistica.."
     },
     {
       "id": "is_other_003",
       "persona": "external",
       "tags": ["laboratories"],
       "question": "Quali laboratori sono disponibili al DIEM?",
-      "reference": "Il DIEM ospita molti laboratori che coprono le sue aree di ricerca, incluso laboratori di robotica, computer vision, networking, elettronica, telecomunicazioni e ingegneria del software. L'elenco completo con descrizioni e pubblicato nella sezione Ricerca / Laboratori del sito DIEM."
+      "reference": "I laboratori disponibili al DIEM sono: Caratterizzazione Elettromagnetica dei Materiali, Circuiti Elettronici di Potenza, Computazione Naturale, Computer Science Research Lab, Embedded Intelligent Systems, Energy Storage and Energy Sources, Geofisica e Analisi dei Segnali, Ingegneria dei Sistemi di Controllo, Intelligent Bioengineering Technologies, Knowledge Management and Information Systems, Macchine Intelligenti per il Riconoscimento di Video, Immagini e Audio, Robotica, Security, Semantics and Social Networks, Tecnologie Elettriche per la Digital Energy, Telecomunicazioni e Teoria dell’Informazione."
     },
     {
       "id": "is_other_004",
       "persona": "external",
       "tags": ["laboratories", "robotics", "equipment"],
       "question": "Quali strumenti sono disponibili nel Laboratorio di Robotica?",
-      "reference": "Il Laboratorio di Robotica del DIEM e attrezzato con robot industriali e collaborativi, piattaforme robotiche mobili, sensori, sistemi di visione e infrastruttura di calcolo per la ricerca e la didattica in robotica. La lista esatta degli strumenti e pubblicata sulla pagina del laboratorio."
+      "reference": "La strumentazione del laboratorio di robotica comprende: 2 robot antropomorfi Comau Smart-Six montati su slitta attuata, 1 robot UR10, 1 robot Franka Emika a 7 gradi, 1 robot Clearpath Husky customizzato a trazione differenziale, 3 stereo camere intelligenti Zed, 1 endoscopio, 1 unità di misurazioni inerziali, 1 laser scanner 2D, 4 sensori di forza/coppia, 3 gripper pneumatici a due e tre dita, 1 gripper elettrico a due dita, 1 end-effector per l’ablazione dentale, 1 stampante 3D e 9 postazioni PC con Matlab e ROS2."
     },
     {
       "id": "is_other_005",
       "persona": "external",
       "tags": ["governance", "commission"],
       "question": "Chi sono i membri della Commissione Paritetica Docenti-Studenti?",
-      "reference": "La Commissione Paritetica Docenti-Studenti (CPDS) del DIEM e composta da un numero pari di docenti e rappresentanti degli studenti, elencati per nome sulla pagina di governance del dipartimento."
+      "reference": " Vincenzo Auletta è Presidente, Emilia Del Pezzo è Vice-Presidente, Gabriele Di Lorenzo, Ettore Napoli e Alessia Terranova sono membri, mentre Giovanni Petrone è Segretario."
     },
     {
       "id": "is_other_006",
       "persona": "external",
       "tags": ["governance", "director"],
       "question": "Chi e il direttore del DIEM?",
-      "reference": "Il DIEM e diretto da un Direttore di Dipartimento eletto fra i professori ordinari. Nome e contatti del direttore in carica sono pubblicati sulla homepage del dipartimento."
+      "reference": "Il direttore del DIEM è Francesco Tortorella."
     },
     {
       "id": "is_other_007",
       "persona": "external",
       "tags": ["phd", "doctorate"],
       "question": "Il DIEM offre corsi di dottorato?",
-      "reference": "Si, il DIEM e coinvolto in corsi di dottorato, in particolare nel Dottorato in Ingegneria dell'Informazione e in altri corsi di dottorato correlati. Informazioni su ammissione, curricula e dottorandi attuali sono pubblicate nella sezione Ricerca / Dottorato del sito DIEM."
+      "reference": "Si, i dottorati di ricerca sono relativi all'Ingegneria dell’Informazione e al Photovoltaics"
     },
 
     {
       "id": "is_news_001",
       "persona": "current_student",
       "tags": ["homepage", "news", "lessons"],
-      "question": "Quali avvisi recenti sono pubblicati sulla homepage del DIEM riguardo modifiche di lezioni o cambi d'aula?",
-      "reference": "La homepage del DIEM pubblica nella sezione 'ultime news' avvisi su modifiche di lezioni, cambi d'aula e sospensioni didattiche, tra cui avvisi per il II anno di Ingegneria Informatica (canale A-H), per il I anno (canale I-Z), avvisi su modifiche di orari e aule e comunicazioni sull'avvio del tutorato didattico. I contenuti variano nel tempo."
+      "question": "Quale avvisi sono pubblicati sulla homepage del DIEM ?",
+      "reference": "La homepage del DIEM pubblica nella sezione 'ultime news' avvisi su modifiche di lezioni, su modifiche di orari e aule, comunicazioni sull'avvio del tutorato didattico e comunicazioni su eventi. I contenuti variano nel tempo."
     },
     {
       "id": "is_news_002",
@@ -176,14 +176,14 @@
       "persona": "prospective_student",
       "tags": ["offerta_formativa", "triennale", "degree_programs"],
       "question": "Quali corsi di laurea triennale sono elencati nella pagina dell'offerta formativa del DIEM?",
-      "reference": "La pagina dell'offerta formativa del DIEM elenca i corsi di laurea triennale in Ingegneria Informatica e Ingegneria Elettronica, con link alle rispettive pagine su corsi.unisa.it."
+      "reference": "La pagina dell'offerta formativa del DIEM elenca i corsi di laurea triennale in Ingegneria Informatica e Ingegneria dell'informazione per medicina digitale."
     },
     {
       "id": "is_offer_002",
       "persona": "prospective_student",
       "tags": ["offerta_formativa", "magistrale", "degree_programs"],
       "question": "Quali corsi di laurea magistrale del DIEM sono elencati nella pagina dell'offerta formativa?",
-      "reference": "La pagina dell'offerta formativa del DIEM elenca i corsi di laurea magistrale in Ingegneria Informatica, Ingegneria Elettronica e Information Engineering for Digital Medicine, con link alle rispettive pagine su corsi.unisa.it."
+      "reference": "La pagina dell'offerta formativa del DIEM elenca i corsi di laurea magistrale in Ingegneria Informatica, Eletrical Engineering for Digital Energy e Information Engineering for Digital Medicine."
     },
     {
       "id": "is_imm_001",
@@ -212,7 +212,7 @@
       "persona": "external",
       "tags": ["presentation", "mission", "multidisciplinary"],
       "question": "Cosa caratterizza la missione del DIEM secondo la pagina di presentazione del dipartimento?",
-      "reference": "Il DIEM si presenta come un dipartimento multidisciplinare che integra ricerca e didattica nelle aree dell'ingegneria dell'informazione, dell'ingegneria elettrica ed elettronica, dell'ingegneria gestionale ed economica e della matematica applicata, come descritto nella sezione 'Presentazione' del sito ufficiale."
+      "reference": "La missione del DIEM si fonda su tre pilastri: ricerca di eccellenza, didattica di qualita e trasferimento tecnologico. Il dipartimento riunisce docenti delle aree CUN 09 (Ingegneria Industriale e dell'Informazione) e 01 (Scienze Matematiche e Informatiche). Ha ottenuto punteggio massimo ANVUR (ISPD 100/100) per il quinquennio 2015-2019 ed e finanziato come Dipartimento di Eccellenza MUR 2023-2027 con il progetto IT4DiMe."
     },
     {
       "id": "is_res_001",

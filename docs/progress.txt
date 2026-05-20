@@ -393,7 +393,6 @@ CRONOLOGIA AGGIORNAMENTI
 
 ================================================================================
 
-
 2026-05-18 - Ottimizzazione e Refactoring Ingestion Pipeline
   - Riorganizzato architetturalmente `src/ingestion/crawler.py` (SRP, costanti
     tipizzate, modularità, leggibilità "clean code").
@@ -407,6 +406,147 @@ CRONOLOGIA AGGIORNAMENTI
     Not Modified tramite check in SQLite di `ETag` e `Last-Modified`.
     Incrementate enormemente performance re-ingestion, salvando traffico di rete.
 
+2026-05-18 - Aggiornamento contextual header e ingestion
+
+- Analizzato il problema degli header contestuali generici o semanticamente errati: il problema principale era che l’header veniva usato come aiuto al retrieval, ma poteva introdurre rumore se troppo generico o sbagliato.
+
+- Modificata la pipeline di indexing:
+  - il contextual header viene generato sui parent chunk, non più una sola volta a livello di documento intero;
+  - l’header viene salvato nei metadata del parent document;
+  - il page_content dei parent rimane pulito, senza “Context: ...”;
+  - l’header viene aggiunto solo ai child chunk indicizzati in Chroma;
+  - il contesto finale passato al modello viene ripulito dagli header artificiali.
+
+- Aggiunto filtro per contenuti PDF raw/non testuali:
+  - riconoscimento di stream PDF grezzi e contenuti corrotti;
+  - esclusione dei documenti low-quality prima dell’indicizzazione;
+  - migliorata la diagnostica sui documenti scartati.
+
+- Spostata la generazione degli header nella fase di indexing:
+  - split documenti originali in parent chunk;
+  - generazione header specifica per ciascun parent;
+  - child chunk arricchiti con header solo per retrieval;
+  - parent store mantenuto pulito.
+
+- Migliorata la resilienza del fallback Ollama/OpenRouter:
+  - OpenRouter Mistral-Nemo usato come modello primario per i contextual header;
+  - Ollama locale usato come fallback;
+  - fallback euristico usato come ultima risorsa;
+  - Ollama/OpenRouter non vengono più disabilitati in modo troppo aggressivo dopo un singolo errore.
+
+- Aggiornato il prompt per contextual header:
+  - rimosso il formato con parentesi quadre tipo “[tipo documento]”;
+  - aggiunta istruzione per evitare square brackets, placeholder, markdown, spiegazioni e prefisso “Context:”;
+  - mantenuto il formato breve “tipo documento - argomento locale”.
+
+- Aggiunto semantic repair deterministico in enrichment.py:
+  - correzione di header sbagliati quando l’URL indica chiaramente il tipo documento;
+  - esempi:
+    - `__schede-sua` + header docente -> `Scheda SUA corso di studio - docenti di riferimento`;
+    - `__regolamenti-cds` + scheda insegnamento -> `Regolamento corso di studio - insegnamenti`;
+    - `__regolamenti-cds` + scheda SUA -> `Regolamento corso di studio - ...`;
+    - `__almalaurea` + header docente/scheda SUA -> `Dati AlmaLaurea corso di studio - ...`.
+
+- Creato script di preview normalizzazione header:
+  - `scripts/preview_context_header_normalization.py`;
+  - valuta modifiche safe_format e semantic_repair senza toccare ingestion;
+  - genera preview JSON/Markdown in `evaluation/results/`;
+  - usato per validare che le correzioni semantiche fossero poche e ad alta confidenza.
+
+- Esteso audit contextual header:
+  - metriche su parent/child con header;
+  - controllo parent che contengono ancora `Context:`;
+  - controllo child con PDF raw;
+  - distribuzione header per dominio;
+  - top header sospetti.
+
+- Verificata nuova run di crawling:
+  - `URL totali: 2225`;
+  - `URL corsi.unisa.it: 191`;
+  - `URL offerta-formativa: 7`;
+  - `PDF sorgenti: 337`;
+  - `PDF pagine totali: 3434`;
+  - confermato che il crawling è tornato sano dopo installazione/correzione di pdfplumber.
+
+2026-05-18 - Estrazione strutturata mirata per pagine accordion/tabellari
+
+- Analizzato un problema di parsing HTML su pagine DIEM/corsi con accordion e tabelle:
+  il parser standard estraeva spesso valori tabellari ma perdeva il titolo della sezione,
+  causando chunk incompleti. Esempi osservati:
+  - pagine Strutture Didattiche: venivano prese ubicazione/capienza/attrezzature,
+    ma non sempre il nome aula e il codice aula;
+  - pagine Organi Collegiali/Commissioni: venivano presi testi descrittivi o tabelle,
+    ma non sempre il legame sezione -> componenti/ruoli;
+  - pagina Personale: il parser corrente produceva liste poco strutturate e perdeva
+    sezioni come Personale Tecnico-Amministrativo.
+
+- Creati script di preview/audit senza modificare ingestion:
+  - `scripts/preview_structured_page_extraction.py`
+    confronta `html_extractor` corrente con estrazione strutturata da accordion/panel,
+    mostra sezioni, testo grezzo prima dello split e chunk simulati;
+  - `scripts/audit_structured_extraction_crawl.py`
+    testa current/structured/proposed su URL mirati o su tutti gli URL crawlati,
+    con decisioni `ignore/merge/replace` e report JSON/Markdown.
+
+- Eseguito audit completo sui 2183 URL crawlati:
+  - 2183 URL analizzati;
+  - 0 errori;
+  - 776 `ignore`;
+  - 1390 `merge`;
+  - 17 `replace`.
+  Conclusione: la logica generale su tutti gli URL recupera informazioni utili,
+  ma aumenta troppo il testo indicizzato (+66.5%) e introduce duplicazioni su pagine
+  grandi come pubblicazioni/progetti. Decisione: non applicarla globalmente.
+
+- Scelta architetturale finale:
+  applicare l’estrazione strutturata solo a pattern mirati dove il bug è confermato:
+  - `/dipartimento/personale`;
+  - `/dipartimento/organi-collegiali`;
+  - `/dipartimento/commissione-paritetica`;
+  - `/dipartimento/commissioni?dettaglio=...`;
+  - pagine `/strutture-didattiche` dei corsi.
+
+- Modificato `src/ingestion/parser.py`:
+  - aggiunta `html_extractor_for_source(html, source)`;
+  - mantenuto `html_extractor(html)` invariato per compatibilità;
+  - aggiunta estrazione da accordion/panel:
+    titolo sezione + contenuto + righe tabellari;
+  - aggiunto fallback tabellare per pagine `commissioni?dettaglio=...`;
+  - filtrate sezioni utility come `Contatti`, `Area Utente (ESSE3)`,
+    `Disabilità e DSA`;
+  - aggiunto filtro anti-rumore solo per `commissioni?dettaglio=...`,
+    rimuovendo righe di menu/footer come `Condividi`, `Precedente`,
+    `Successiva`, footer Università/P.IVA, ecc.;
+  - per le pagine mirate il testo finale diventa:
+    `current pulito + sezioni strutturate deduplicate`;
+    se il current è quasi solo rumore, viene usato solo lo structured pulito.
+
+- Modificato `main_ingestion.py`:
+  - durante `apply_html_metadata_and_filter`, il parser riceve anche il source URL;
+  - la pipeline usa `html_extractor_for_source(doc.page_content, source)`,
+    quindi la logica strutturata si attiva solo sui pattern mirati.
+
+- Test leggeri eseguiti senza ingestion completa:
+  - `py_compile` superato su `src/ingestion/parser.py` e `main_ingestion.py`;
+  - test diretto via `requests` su URL critici.
+  Risultati principali:
+  - `/dipartimento/organi-collegiali`: recupera `TORTORELLA Francesco`,
+    `AULETTA Vincenzo`;
+  - `/dipartimento/personale`: recupera sezioni personale e dati strutturati;
+  - `/dipartimento/commissione-paritetica`: tabella più leggibile;
+  - `/commissioni?dettaglio=2097`: recupera componenti tabellari;
+  - `/commissioni?dettaglio=2230`: recupera `TORTORELLA Francesco` e altri membri;
+  - `/commissioni?dettaglio=1225`: output pulito `CAPUANO Nicola: Delegato`;
+  - `/commissioni?dettaglio=2169`: mantiene `Compiti` + `GRAGNANIELLO Diego: Membro`;
+  - `/commissioni?dettaglio=1180`: output pulito `SAGGESE Alessia: Delegato`;
+  - `/ingegneria-informatica/strutture-didattiche`: recupera `Aula 126`
+    + `FSTEC-06P01007`;
+  - `/electrical-engineering-for-digital-energy/strutture-didattiche`:
+    recupera `Aula A5` + `APALCOMPTE035`.
+
+- Decisione operativa:
+  prima della prossima ingestion full, partire da indice Chroma pulito per evitare
+  mix tra vecchi chunk non strutturati e nuovi chunk arricchiti.
 2026-05-19 - Qualità contenuto KB: analisi, filtri, script di ispezione e audit
 
   MERGE CONFLICT RISOLTO (src/ingestion/crawler.py)
@@ -489,13 +629,23 @@ CRONOLOGIA AGGIORNAMENTI
 
 2026-05-19 - Miglioramento qualità context headers: routing ibrido + fix prompt
 
-  PROBLEMA
+  CONTESTO
   --------
-  I context headers generati da corsi.unisa.it erano tutti LLM-generati con bassa
-  qualità: categorie generiche ("didattica - regolamento corso di studio"), entità
-  mancanti, slug numerici o filename nel subtopic (es. "Pagina corso di studio - 499",
+  Punto di partenza: tutti gli URL usavano LLM per generare i context headers.
+  L'LLM sui profili docenti (docenti.unisa.it) produceva header generici come
+  "Profilo docente" o "Servizio | profilo docente" senza il nome del professore —
+  inutili come segnale di retrieval. Fix precedente: aggiunto _HEURISTIC_ONLY_DOMAINS
+  per docenti.unisa.it e corsi.unisa.it, così il metadata title (es. "Mario Rossi |
+  Didattica") veniva usato direttamente → nome corretto nel header.
+
+  PROBLEMA (sessione corrente)
+  ----------------------------
+  Per corsi.unisa.it, l'euristico funzionava bene sulle pagine HTML (title affidabile)
+  ma produceva output spazzatura sui PDF (/uploads/rescue/__regolamenti-cds/...):
+  l'URL non contiene il nome del corso, il title è vuoto → l'euristico estraeva slug
+  numerici o filename come subtopic (es. "Pagina corso di studio - 499",
   "Regolamento corso di studio - Scheda IE232").
-  Ulteriori difetti nei docs LLM: verbali classificati come "bando/avviso DIEM",
+  Ulteriori difetti LLM residui: verbali classificati come "bando/avviso DIEM",
   categorie abbreviate ("corso di studio" invece di "regolamento corso di studio").
 
   ROUTING IBRIDO (src/ingestion/enrichment.py)

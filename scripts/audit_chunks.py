@@ -15,6 +15,7 @@ Usage:
     venv/Scripts/python scripts/audit_chunks.py --min-chars 50 --max-symbol-ratio 0.4 --export bad_chunks.json
     venv/Scripts/python scripts/audit_chunks.py --max-bad 0          # mostra tutti a console senza export
     venv/Scripts/python scripts/audit_chunks.py --limit 500          # audit solo primi 500 chunk (test rapido)
+    venv/Scripts/python scripts/audit_chunks.py --batch-size 1000    # batch Chroma più grandi/piccoli
 """
 
 import argparse
@@ -31,6 +32,7 @@ from src.encoders.embedding_init import build_embedding_model
 REPLACEMENT_CHAR = "�"
 DEFAULT_MIN_CHARS = 50
 DEFAULT_MAX_SYMBOL_RATIO = 0.45
+DEFAULT_BATCH_SIZE = 500
 
 
 def symbol_ratio(text: str) -> float:
@@ -55,12 +57,45 @@ def audit_chunk(text: str, min_chars: int, max_symbol_ratio: float) -> list[str]
     return issues
 
 
+def iter_chroma_chunks(vectorstore: Chroma, batch_size: int, limit: int = 0):
+    """Fetch Chroma in pages to avoid SQLite 'too many SQL variables'."""
+    offset = 0
+    fetched = 0
+    while True:
+        remaining = limit - fetched if limit else batch_size
+        current_limit = min(batch_size, remaining) if limit else batch_size
+        if current_limit <= 0:
+            break
+
+        batch = vectorstore.get(
+            limit=current_limit,
+            offset=offset,
+            include=["documents", "metadatas"],
+        )
+        ids = batch.get("ids") or []
+        documents = batch.get("documents") or []
+        metadatas = batch.get("metadatas") or []
+        if not ids:
+            break
+
+        for doc_id, text, meta in zip(ids, documents, metadatas):
+            yield doc_id, text or "", meta or {}
+
+        batch_count = len(ids)
+        fetched += batch_count
+        offset += batch_count
+
+        if batch_count < current_limit:
+            break
+
+
 def main():
     parser = argparse.ArgumentParser(description="Audit all Chroma child chunks for text quality")
     parser.add_argument("--min-chars", type=int, default=DEFAULT_MIN_CHARS)
     parser.add_argument("--max-symbol-ratio", type=float, default=DEFAULT_MAX_SYMBOL_RATIO)
     parser.add_argument("--show-bad-only", action="store_true", help="Print only problematic chunks")
     parser.add_argument("--limit", type=int, default=0, help="Audit only first N chunks (0=all)")
+    parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE, help="Chroma fetch batch size")
     parser.add_argument("--max-bad", type=int, default=30, help="Max bad chunks printed to console (0=all)")
     parser.add_argument("--export", type=str, default="", metavar="FILE", help="Export all bad chunks to JSON file")
     args = parser.parse_args()
@@ -73,23 +108,22 @@ def main():
         persist_directory=CHROMA_DIR_NAME,
     )
 
-    print("Fetching all chunks (this may take a moment)...")
-    result = vectorstore.get(include=["documents", "metadatas"])
-    ids = result["ids"]
-    documents = result["documents"]
-    metadatas = result["metadatas"]
+    if args.batch_size <= 0:
+        raise SystemExit("--batch-size must be greater than 0")
 
-    total = len(ids)
+    total_in_collection = vectorstore._collection.count()
+    target_total = min(args.limit, total_in_collection) if args.limit else total_in_collection
     if args.limit:
-        ids, documents, metadatas = ids[:args.limit], documents[:args.limit], metadatas[:args.limit]
-        print(f"Auditing {len(ids)}/{total} chunks (--limit {args.limit})")
+        print(f"Auditing {target_total}/{total_in_collection} chunks (--limit {args.limit}, batch {args.batch_size})")
     else:
-        print(f"Auditing {total} chunks...")
+        print(f"Auditing {target_total} chunks (batch {args.batch_size})...")
 
     issue_counts: dict[str, int] = {}
     bad_chunks: list[dict] = []
+    audited = 0
 
-    for doc_id, text, meta in zip(ids, documents, metadatas):
+    for doc_id, text, meta in iter_chroma_chunks(vectorstore, args.batch_size, args.limit):
+        audited += 1
         issues = audit_chunk(text, args.min_chars, args.max_symbol_ratio)
         if issues:
             for iss in issues:
@@ -104,13 +138,13 @@ def main():
             })
 
     n_bad = len(bad_chunks)
-    n_ok = len(ids) - n_bad
+    n_ok = audited - n_bad
 
     print()
     print(f"=== AUDIT RESULTS ===")
-    print(f"Total chunks audited : {len(ids)}")
-    print(f"OK                   : {n_ok} ({100*n_ok/max(len(ids),1):.1f}%)")
-    print(f"Problematic          : {n_bad} ({100*n_bad/max(len(ids),1):.1f}%)")
+    print(f"Total chunks audited : {audited}")
+    print(f"OK                   : {n_ok} ({100*n_ok/max(audited,1):.1f}%)")
+    print(f"Problematic          : {n_bad} ({100*n_bad/max(audited,1):.1f}%)")
 
     if issue_counts:
         print()
