@@ -3,6 +3,8 @@ import datetime
 import hashlib
 import os
 import re
+from langchain_core.documents import Document as LCDocument
+
 from collections import defaultdict
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -366,6 +368,24 @@ def run_full_pipeline(embedding_model) -> None:
     pdf_final  = [d for d in all_docs if ".pdf" in d.metadata.get("source", "").lower()]
     save_crawled_urls_to_json(html_final, "crawled_urls.json")
     save_crawled_pdfs_to_json(pdf_final, "crawled_pdfs.json")
+
+    # Static facts: administrative data from DIEM/UNISA site footer (stripped by parser)
+    static_facts = [
+        LCDocument(
+            page_content=(
+                "Dati amministrativi dell'Università degli Studi di Salerno (UNISA):\n"
+                "Sede: Via Giovanni Paolo II, 132 - 84084 Fisciano (SA)\n"
+                "Partita IVA: 00851300657\n"
+                "Codice Fiscale: 80018670655"
+            ),
+            metadata={
+                "source": "https://www.diem.unisa.it/",
+                "context_header": "contatti DIEM - dati amministrativi UNISA",
+                "title": "Dati amministrativi UNISA",
+            }
+        )
+    ]
+    all_docs = all_docs + static_facts
 
     logger.info(f"Total documents ready for indexing: {len(all_docs)}")
     index_documents(all_docs, embedding_model)

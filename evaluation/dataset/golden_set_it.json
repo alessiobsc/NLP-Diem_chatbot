@@ -18,21 +18,21 @@
       "persona": "prospective_student",
       "tags": ["degree_programs", "general"],
       "question": "Quali corsi di laurea sono offerti dal DIEM?",
-      "reference": "Il DIEM offre corsi di laurea triennale in Ingegneria Informatica, Ingegneria Elettronica, oltre a vari corsi di laurea magistrale nelle stesse aree e in Information Engineering for Digital Medicine."
+      "reference": "Il DIEM offre due corsi di laurea triennale: Ingegneria Informatica e Ingegneria dell'Informazione per la Medicina Digitale (entrambi L-8, in lingua italiana). A livello magistrale: Ingegneria Informatica (LM-32, italiano/inglese), Information Engineering for Digital Medicine (LM-32, inglese) ed Electrical Engineering for Digital Energy (LM-28, inglese). Sono presenti anche dottorati di ricerca in Ingegneria dell'Informazione e Photovoltaics."
     },
     {
       "id": "is_prosp_002",
       "persona": "prospective_student",
       "tags": ["admission", "TOLC"],
       "question": "Ho preso 18 al TOLC. Posso iscrivermi?",
-      "reference": "L'ammissione ai corsi di laurea triennale di ingegneria a UNISA richiede il superamento del test TOLC-I. Un punteggio di 18 e tipicamente sopra la soglia minima per l'iscrizione diretta, ma chi non raggiunge la soglia OFA (Obblighi Formativi Aggiuntivi) deve assolvere obblighi formativi durante il primo anno. La soglia esatta va verificata nel bando di ammissione vigente."
+      "reference": "L'ammissione ai corsi di laurea triennale del DIEM richiede il TOLC-I. Con 18/50 ci si iscrive senza OFA solo se il punteggio di Matematica e almeno 8/10; altrimenti vengono attribuiti OFA. Per iscriversi senza OFA servono: punteggio assoluto >= 20/50 con Matematica >= 5, oppure punteggio assoluto >= 16/50 con Matematica >= 8. Con punteggio < 16/50 l'iscrizione e sconsigliata."
     },
     {
       "id": "is_prosp_003",
       "persona": "prospective_student",
       "tags": ["admission", "master", "digital_medicine"],
       "question": "Quali sono i requisiti di accesso alla Laurea Magistrale in Information Engineering for Digital Medicine?",
-      "reference": "L'accesso richiede una laurea triennale (o titolo equivalente) in un'area pertinente di ingegneria o di discipline scientifiche e una conoscenza della lingua inglese di livello B2. I requisiti esatti sono indicati nel regolamento del corso di studio."
+      "reference": "Per accedere alla LM in Information Engineering for Digital Medicine (LM-32) occorre soddisfare tre categorie di requisiti: curriculari (CFU in specifici settori disciplinari), di conoscenza della lingua inglese e di preparazione personale. Quest'ultima viene verificata tramite una prova di ammissione (sessioni annuali): punteggio minimo 60/100, di cui fino a 20 punti per la carriera pregressa e fino a 80 per una prova scritta di 5 esercizi su matematica, fisica e discipline ingegneristiche (automatica, circuiti, telecomunicazioni, programmazione, architetture/reti, basi di dati e sistemi operativi). In casi specifici e previsto l'esonero dalla prova."
     },
     {
       "id": "is_prosp_004",
@@ -54,21 +54,21 @@
       "persona": "current_student",
       "tags": ["faculty", "office_hours", "Capuano"],
       "question": "Quali sono gli orari di ricevimento del Professor Capuano?", 
-      "reference": "Gli orari di ricevimento del Professor Nicola Capuano sono pubblicati sulla sua pagina docenti.unisa.it. Gli studenti dovrebbero consultare la pagina per gli orari aggiornati, dato che possono cambiare tra un semestre e l'altro."
+      "reference": "Gli orari di ricevimento del Professor Nicola Capuano sono pubblicati sulla sua pagina docenti.unisa.it (docenti.unisa.it/004322). Il ricevimento si tiene il mercoledi dalle 11:00 alle 13:00. Gli orari possono cambiare tra un semestre e l'altro: verificare sempre la pagina ufficiale."
     },
     {
       "id": "is_curr_003",
       "persona": "current_student",
       "tags": ["facility", "room"],
       "question": "Dove si trova l'aula 126?",
-      "reference": "L'aula 126 si trova in uno degli edifici del DIEM presso il campus di Fisciano dell'Universita di Salerno. Il numero indica piano e posizione; i dettagli specifici vanno verificati sulle mappe del campus disponibili sul sito DIEM."
+      "reference": "L'aula 126 si trova al primo piano dell'Edificio E del Campus di Fisciano (UNISA)."
     },
     {
       "id": "is_curr_004",
       "persona": "current_student",
       "tags": ["regulation", "graduation_grade"],
       "question": "La mia media e 28.8. Qual e il voto massimo di laurea che posso ottenere?",
-      "reference": "Il voto finale di laurea al DIEM si calcola convertendo la media ponderata degli esami in scala 110 e sommando punti bonus (per la valutazione della tesi, tirocini, mobilita internazionale, laurea entro la durata legale). Con una media di 28.8/30 il punteggio di base e circa 105.6/110; sommando il bonus tesi massimo e gli altri incrementi lo studente puo arrivare al massimo di 110/110 con eventuale lode, in base al regolamento vigente."
+      "reference": "Il voto di laurea si calcola come VMIN + min{PT+PCP, 6} + FCP, dove VMIN = (media * 110) / 30. Con media 28.8/30 il voto di partenza e 105.6/110. Il bonus massimo tra punteggio tesi (PT, 0-4) e punteggio carriera pesato (PCP) e limitato a 6 punti. Sommando il fattore correttivo FCP, lo studente puo raggiungere 110/110. La lode e attribuita con voto unanime se il punteggio calcolato e >= 112."
     },
     {
       "id": "is_curr_005",
@@ -82,7 +82,7 @@
       "persona": "current_student",
       "tags": ["regulation", "ECTS"],
       "question": "Quanti CFU vale la tesi di laurea magistrale al DIEM?",
-      "reference": "La tesi di laurea magistrale al DIEM vale tipicamente tra 15 e 21 CFU, in base allo specifico corso magistrale. Il numero esatto e indicato nel regolamento didattico di ciascun corso."
+      "reference": "La prova finale della laurea magistrale al DIEM vale 17 CFU. Lo studente e ammesso alla prova finale dopo aver superato tutte le verifiche di profitto e acquisito i relativi crediti del piano di studio."
     },
 
     {
@@ -212,7 +212,7 @@
       "persona": "external",
       "tags": ["presentation", "mission", "multidisciplinary"],
       "question": "Cosa caratterizza la missione del DIEM secondo la pagina di presentazione del dipartimento?",
-      "reference": "Il DIEM si presenta come un dipartimento multidisciplinare che integra ricerca e didattica nelle aree dell'ingegneria dell'informazione, dell'ingegneria elettrica ed elettronica, dell'ingegneria gestionale ed economica e della matematica applicata, come descritto nella sezione 'Presentazione' del sito ufficiale."
+      "reference": "La missione del DIEM si fonda su tre pilastri: ricerca di eccellenza, didattica di qualita e trasferimento tecnologico. Il dipartimento riunisce docenti delle aree CUN 09 (Ingegneria Industriale e dell'Informazione) e 01 (Scienze Matematiche e Informatiche). Ha ottenuto punteggio massimo ANVUR (ISPD 100/100) per il quinquennio 2015-2019 ed e finanziato come Dipartimento di Eccellenza MUR 2023-2027 con il progetto IT4DiMe."
     },
     {
       "id": "is_res_001",
