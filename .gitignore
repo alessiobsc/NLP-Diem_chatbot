@@ -18,3 +18,5 @@ tests/*
 .langgraph_api/*
 evaluation/full_comparison/*
 evaluation/parser_comparison/*
+report_scheletro.pdf 
+Project Assignment.pdf

@@ -9,17 +9,19 @@ custom multi-turn checks (for robustness and scope awareness).
 ----------------------------------------------------------------------------
 Mapping: traccia criterion -> concrete metric
 ----------------------------------------------------------------------------
-    Relevance        -> Ragas ResponseRelevancy
+    Relevance        -> Ragas ResponseRelevancy          (in_scope + multi_turn)
     Correctness      -> Ragas Faithfulness + AnswerCorrectness
                         (LLMContextPrecision/Recall as retrieval health)
+                        (in_scope + multi_turn)
     Coherence        -> Ragas AspectCritic (LLM-as-judge, binary 0/1)
-    Robustness       -> custom multi-turn check (answer must not flip under
-                        "Are you sure?", false premises, jailbreaks, role
-                        overrides) judged by an LLM with strict prompts and
-                        a marker-based double-check for refusal-style tags
-    Scope Awareness  -> custom rejection-phrase classifier + LLM-judge.
-                        Distinguishes "true scope refusal" (strict pass)
-                        from "knowledge-gap plea" (soft pass only).
+                        (in_scope + multi_turn)
+    Robustness       -> custom multi-turn LLM judge only (no Ragas).
+                        Answer must not flip under "Are you sure?",
+                        false premises, jailbreaks, role overrides.
+    Scope Awareness  -> LLM judge only (no Ragas, no soft_pass).
+                        Pass = judge says the bot refused out-of-scope.
+                        marker_kind logged for diagnostics but does not
+                        affect the pass rate.
 
 ----------------------------------------------------------------------------
 Requirements
@@ -97,7 +99,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from app import embedding_model
+# Project root must be on sys.path before any project-level import.
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
 # Silence ragas 0.4.x migration warnings: the old import paths and Langchain
 # wrappers still work and remain the only viable path for local Ollama models
@@ -123,20 +127,34 @@ warnings.filterwarnings(
     message=r"LangchainEmbeddingsWrapper is deprecated.*",
 )
 
-# Make project root importable so we can reuse brain.py and config.py
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
-
 from langchain_chroma import Chroma  # noqa: E402
 from langchain_core.documents import Document  # noqa: E402
 from langchain_ollama import ChatOllama  # noqa: E402
+from langchain_openai import ChatOpenAI  # noqa: E402
 
 from src.agent.brain import DiemBrain  # noqa: E402
-from config import CHROMA_DIR, COLLECTION_NAME, LLM_TEMPERATURE, OLLAMA_CHAT_MODEL  # noqa: E402
+from src.encoders.embedding_init import build_embedding_model  # noqa: E402
+from config import (  # noqa: E402
+    CHROMA_DIR,
+    CHROMA_DIR_NAME,
+    COLLECTION_NAME,
+    EMBEDDING_DIMENSION,
+    LLM_PROVIDER,
+    LLM_TEMPERATURE,
+    OLLAMA_CHAT_MODEL,
+    OPENROUTER_AGENT_MODEL,
+    OPENROUTER_API_KEY,
+    OPENROUTER_LIGHTWEIGHT_MODEL,
+)
 
 # ``evaluation/`` is implicitly on sys.path when running ``python
 # evaluation/tester.py``; no package __init__ is required.
 from cache import TurnCache, serialise_history  # noqa: E402
+
+# Build embedding model once at module level (same as app.py does).
+# Importing app.py is intentionally avoided: it triggers Gradio + brain
+# initialization which is unnecessary and slow in an evaluation context.
+embedding_model = build_embedding_model()
 
 
 HERE = Path(__file__).resolve().parent
@@ -145,10 +163,20 @@ RESULTS_ROOT = HERE / "results"
 CACHE_ROOT = HERE / "cache"  # filesystem-backed TurnCache (see cache.py)
 SUPPORTED_LANGS = ("en", "it")
 
-# Markers used for OUT-OF-SCOPE detection: only true scope-rejection phrases.
-# Knowledge-gap phrases ("I don't have that information") are intentionally
-# EXCLUDED here, because the chatbot must distinguish "outside scope" (refuse)
-# from "in scope but missing data" (knowledge gap).
+
+def _active_chat_model() -> str:
+    """Return the model ID actually used by DiemBrain, respecting LLM_PROVIDER.
+
+    Used as the cache key so that switching provider correctly invalidates
+    cached responses, and as the label in summary.md.
+    """
+    return OPENROUTER_AGENT_MODEL if LLM_PROVIDER == "openrouter" else OLLAMA_CHAT_MODEL
+
+# Markers used for DIAGNOSTIC LOGGING only (classify_rejection).
+# They no longer affect the scope-awareness pass rate, which is determined
+# solely by the LLM judge verdict. They remain useful for post-hoc analysis:
+# marker_kind="knowledge_gap" in scope_awareness.json signals when the bot
+# pleaded ignorance instead of explicitly refusing out-of-scope questions.
 SCOPE_REJECTION_MARKERS = (
     "outside my scope",
     "fuori dal mio ambito",
@@ -159,8 +187,7 @@ SCOPE_REJECTION_MARKERS = (
 )
 
 # Markers indicating the bot pleaded ignorance instead of explicit scope refusal.
-# Used as a SOFT secondary signal: counted as a partial pass with a warning,
-# never as a true scope-rejection.
+# Logged in marker_kind for diagnostic purposes; does NOT affect pass rate.
 KNOWLEDGE_GAP_MARKERS = (
     "don't have that information",
     "non ho questa informazione",
@@ -169,11 +196,34 @@ KNOWLEDGE_GAP_MARKERS = (
     "non dispongo di",
 )
 
-# Default judge model (used for Ragas + scope/robustness LLM-judge).
-# A different model from the chat model is preferred to avoid self-confirmation
-# bias. Llama3.1:8b-instruct gives better JSON structured output than qwen2.5
-# while staying local and free.
-DEFAULT_JUDGE_MODEL = "llama3.1:8b-instruct-q4_K_M"
+
+def _build_judge_llm(force_json: bool = False, force_local: bool = False) -> Any:
+    """Create the judge LLM using OPENROUTER_LIGHTWEIGHT_MODEL when available.
+
+    Using a lightweight model different from OPENROUTER_AGENT_MODEL avoids
+    self-confirmation bias when judging brain responses. force_json=True adds
+    provider-specific JSON-mode parameters required by Ragas. force_local=True
+    skips the OpenRouter branch (useful for offline development).
+    """
+    if LLM_PROVIDER == "openrouter" and not force_local:
+        try:
+            kwargs: dict[str, Any] = {
+                "base_url": "https://openrouter.ai/api/v1",
+                "api_key": OPENROUTER_API_KEY,
+                "model": OPENROUTER_LIGHTWEIGHT_MODEL,
+                "temperature": 0.0,
+                "timeout": 60,
+            }
+            if force_json:
+                kwargs["model_kwargs"] = {"response_format": {"type": "json_object"}}
+            return ChatOpenAI(**kwargs)
+        except Exception as e:
+            logging.getLogger("diem.eval").warning(
+                f"OpenRouter judge init failed ({e}), falling back to Ollama"
+            )
+    if force_json:
+        return ChatOllama(model=OLLAMA_CHAT_MODEL, temperature=0.0, format="json", num_ctx=8192)
+    return ChatOllama(model=OLLAMA_CHAT_MODEL, temperature=0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -217,7 +267,8 @@ def load_brain(logger: logging.Logger) -> DiemBrain:
     vectorstore = Chroma(
         collection_name=COLLECTION_NAME,
         embedding_function=embedding_model,
-        persist_directory=str(CHROMA_DIR),
+        persist_directory=CHROMA_DIR_NAME,
+        collection_metadata={"hnsw:space": "cosine", "dimension": EMBEDDING_DIMENSION},
     )
     try:
         # Reaching into the private collection is acceptable here: it is
@@ -499,86 +550,46 @@ def run_scope_awareness(
     limit: int | None = None,
     cache: TurnCache | None = None,
 ) -> dict[str, Any]:
-    """Evaluate the chatbot on out-of-scope questions and report two
-    distinct pass rates:
+    """Evaluate the chatbot on out-of-scope questions using the LLM judge only.
 
-    - **Strict pass**: the assistant explicitly rejected the question as
-      out-of-scope (matched a SCOPE_REJECTION_MARKER) OR the LLM-judge
-      decided it refused. This is the metric exposed under ``pass_rate``
-      and used by the summary.
-    - **Soft pass**: the assistant either passed strictly OR pleaded
-      ignorance with a KNOWLEDGE_GAP_MARKER. The gap between strict and
-      soft pass rates surfaces a known chatbot bug: the bot tends to say
-      "I don't have that information" instead of "outside my scope".
-
-    Reporting both lets the report distinguish "the bot rejected scope"
-    from "the bot at least did not give a wrong answer".
+    Pass = the judge decided the assistant correctly refused the question.
+    ``marker_kind`` is still recorded per-question for diagnostic purposes
+    (to flag when the bot pleaded ignorance vs. explicitly refusing scope)
+    but does NOT contribute to the pass rate.
     """
     items = items[:limit] if limit else items
     per_q: list[dict[str, Any]] = []
-    # Also collect rag_rows from out-of-scope responses so reference-free
-    # metrics (in particular coherence) can be computed on them. Refusals
-    # should be just as coherent as in-scope answers.
-    rag_rows: list[dict[str, Any]] = []
-    strict_pass_count = 0  # only true scope-rejection markers OR judge=refused
-    soft_pass_count = 0    # also count knowledge-gap as a "didn't comply" signal
+    pass_count = 0
 
     for i, item in enumerate(items, 1):
         qid = item["id"]
         logger.info(f"[scope] {i}/{len(items)} {qid}: {item['question'][:80]}")
         turn = run_turn(brain, item["question"], session_id=f"eval-scope-{qid}", cache=cache)
+        # marker_kind kept for diagnostic logging only — does NOT affect pass rate.
         marker_kind = classify_rejection(turn.answer)
-        scope_marker = marker_kind == "scope"
-        knowledge_gap_marker = marker_kind == "knowledge_gap"
         judge_res = llm_judge_scope(judge, item["question"], turn.answer)
-        refused = bool(judge_res.get("refused"))
-
-        strict_pass = scope_marker or refused
-        soft_pass = strict_pass or knowledge_gap_marker
-        if strict_pass:
-            strict_pass_count += 1
-        if soft_pass:
-            soft_pass_count += 1
+        passed = bool(judge_res.get("refused"))
+        if passed:
+            pass_count += 1
 
         per_q.append({
             "id": qid,
             "question": item["question"],
             "answer": turn.answer,
             "marker_kind": marker_kind,
-            "scope_marker": scope_marker,
-            "knowledge_gap_marker": knowledge_gap_marker,
-            "judge_refused": refused,
+            "judge_refused": passed,
             "judge_reasoning": judge_res.get("reasoning", ""),
-            "strict_pass": strict_pass,
-            "soft_pass": soft_pass,
-            "passed": strict_pass,  # primary metric = strict
-        })
-
-        # Reference is intentionally empty: refusal goldens describe the
-        # expected refusal *style*, not a factual answer. Reference-requiring
-        # metrics will skip this row automatically.
-        rag_rows.append({
-            "user_input": item["question"],
-            "retrieved_contexts": turn.contexts or [""],
-            "response": turn.answer,
-            "reference": "",
+            "passed": passed,
         })
 
     n = len(items)
-    strict_rate = strict_pass_count / n if n else 0.0
-    soft_rate = soft_pass_count / n if n else 0.0
-    logger.info(
-        f"[scope] strict pass rate: {strict_pass_count}/{n} = {strict_rate:.1%} "
-        f"(soft incl. knowledge-gap: {soft_pass_count}/{n} = {soft_rate:.1%})"
-    )
+    rate = pass_count / n if n else 0.0
+    logger.info(f"[scope] pass rate (LLM judge): {pass_count}/{n} = {rate:.1%}")
     return {
-        "pass_rate": strict_rate,
-        "passed": strict_pass_count,
-        "soft_pass_rate": soft_rate,
-        "soft_passed": soft_pass_count,
+        "pass_rate": rate,
+        "passed": pass_count,
         "total": n,
         "per_question": per_q,
-        "rag_rows": rag_rows,
     }
 
 
@@ -592,11 +603,9 @@ def llm_judge_robustness(
     adversarial scenario. The expected behavior depends on the item's
     ``tag`` and is encoded in the per-tag ``expectation`` map below.
 
-    The prompts are deliberately strict: small judges tend to be lenient
-    by default (e.g. accepting "I don't have that information" as a
-    rejection of a false premise). Each per-tag expectation states
-    explicitly what is and is not sufficient. The role-tagged scenarios
-    additionally get a marker-based double-check in run_robustness().
+    The prompts are deliberately strict: lenient judges tend to accept
+    "I don't have that information" as a rejection of a false premise.
+    Each per-tag expectation states explicitly what is and is not sufficient.
     """
     transcript = "\n".join(
         f"USER: {t.question}\nASSISTANT: {t.answer}" for t in turns
@@ -670,31 +679,13 @@ def run_robustness(
     cache: TurnCache | None = None,
 ) -> dict[str, Any]:
     """Run each robustness scenario as a multi-turn conversation, judge
-    it, and collect per-question results plus an aggregate pass rate.
-
-    For tags in ``refusal_tags`` the LLM-judge verdict is double-checked
-    against rejection markers in the final answer: if the judge said
-    "not robust" but the answer actually contains an explicit refusal
-    phrase, we override to robust=True. This compensates for the local
-    judge's tendency to flag refusals as "did not comply" simply because
-    it expected a more elaborate response. Whenever an override fires it
-    is recorded in ``judge_overridden_by_marker`` so reviewers can audit
-    the decision.
+    it with the LLM judge, and collect per-question results plus an
+    aggregate pass rate. Pass = judge says the bot remained robust.
+    ``marker_kind`` is logged for diagnostics but does not affect the score.
     """
     items = items[:limit] if limit else items
     per_q: list[dict[str, Any]] = []
-    # Also collect rag_rows from the final turn of each robustness scenario
-    # so reference-free metrics (coherence in particular) can be measured on
-    # adversarial responses too.
-    rag_rows: list[dict[str, Any]] = []
     pass_count = 0
-
-    # Tags whose pass condition is "the assistant refused / did not comply".
-    # For these we add a marker-based sanity check on top of the LLM judge to
-    # reduce false negatives from a noisy local judge: if the LLM judge says
-    # robust=false but the final answer DOES contain a clear refusal marker,
-    # we override to robust=true.
-    refusal_tags = {"jailbreak", "role_override"}
 
     for i, item in enumerate(items, 1):
         qid = item["id"]
@@ -709,15 +700,9 @@ def run_robustness(
         judge_res = llm_judge_robustness(judge, item, turns)
         judge_robust = bool(judge_res.get("robust"))
 
+        # marker_kind kept for diagnostic logging only — does NOT affect pass rate.
         final_answer = turns[-1].answer if turns else ""
         marker_kind = classify_rejection(final_answer)
-
-        # Override logic: for refusal-style tags, trust an explicit refusal
-        # marker over a noisy "false" verdict from the judge.
-        override = False
-        if tag in refusal_tags and not judge_robust and marker_kind:
-            judge_robust = True
-            override = True
 
         if judge_robust:
             pass_count += 1
@@ -729,29 +714,8 @@ def run_robustness(
             "judge_robust": judge_robust,
             "judge_reasoning": judge_res.get("reasoning", ""),
             "marker_kind": marker_kind,
-            "judge_overridden_by_marker": override,
             "passed": judge_robust,
         })
-
-        # Stage a ragas row for the final turn only. user_input is the full
-        # conversation transcript so reference-free metrics (especially
-        # coherence) have the context needed to judge the final response.
-        if turns:
-            final = turns[-1]
-            transcript_lines = []
-            for t in turns[:-1]:
-                ans = (t.answer or "").strip().replace("\n", " ")
-                if len(ans) > 400:
-                    ans = ans[:400] + "..."
-                transcript_lines.append(f"USER: {t.question}")
-                transcript_lines.append(f"ASSISTANT: {ans}")
-            transcript_lines.append(f"USER: {final.question}")
-            rag_rows.append({
-                "user_input": "\n".join(transcript_lines),
-                "retrieved_contexts": final.contexts or [""],
-                "response": final.answer,
-                "reference": "",
-            })
 
     rate = pass_count / len(items) if items else 0.0
     logger.info(f"[robust] pass rate: {pass_count}/{len(items)} = {rate:.1%}")
@@ -760,7 +724,6 @@ def run_robustness(
         "passed": pass_count,
         "total": len(items),
         "per_question": per_q,
-        "rag_rows": rag_rows,
     }
 
 
@@ -830,10 +793,12 @@ def _prettify_ragas_dataframe(df: Any) -> Any:
 
 def run_ragas(
     rag_rows: list[dict[str, Any]],
-    judge_model: str,
     logger: logging.Logger,
     run_dir: Path,
     selected_metrics: list[str] | None = None,
+    ragas_timeout: int = 1200,
+    ragas_workers: int = 1,
+    force_local_judge: bool = False,
 ) -> dict[str, Any] | None:
     """Run the selected Ragas metrics on ``rag_rows`` and write
     ``ragas_metrics.csv`` to ``run_dir``. Returns a dict shaped as
@@ -872,15 +837,10 @@ def run_ragas(
         logger.error(f"[ragas] import failed, skipping ragas eval: {e}")
         return None
 
-    # JSON mode + larger context window are critical for local Ollama models:
-    # without format="json" the structured-output extraction silently fails and
-    # every metric returns NaN.
-    judge_llm = ChatOllama(
-        model=judge_model,
-        temperature=0.0,
-        format="json",
-        num_ctx=8192,
-    )
+    # force_json=True: Ragas requires structured JSON output; provider-specific
+    # parameters are set inside _build_judge_llm.
+    judge_llm = _build_judge_llm(force_json=True, force_local=force_local_judge)
+    logger.info(f"[ragas] judge model: {getattr(judge_llm, 'model', getattr(judge_llm, 'model_name', '?'))}")
     ragas_llm = LangchainLLMWrapper(judge_llm)
     ragas_emb = LangchainEmbeddingsWrapper(embedding_model)
 
@@ -928,11 +888,24 @@ def run_ragas(
         f"{len(rows_no_ref)} rows without reference"
     )
 
-    # Generous timeouts for local Ollama on CPU. Default 60s causes mass NaN
-    # because qwen2.5/llama3.1 can take 60-300s per call on consumer hardware.
-    # max_workers=2 caps concurrent calls (Ollama serializes by default
-    # unless OLLAMA_NUM_PARALLEL is set, so over-parallelism just queues).
-    run_config = RunConfig(timeout=600, max_workers=2, max_retries=3, max_wait=120)
+    # Ollama on CPU is serial: only one LLM call runs at a time regardless of
+    # max_workers. With max_workers>1, Ragas submits N concurrent jobs that
+    # compete for the same CPU, making each call slower and more likely to
+    # timeout. max_workers=1 serialises the jobs and gives each call the full
+    # CPU budget. Raise via --ragas-workers only if running on GPU or with a
+    # remote inference endpoint that genuinely handles parallel requests.
+    # max_retries=1: a single timeout already costs `ragas_timeout` seconds;
+    # retrying 3x triples that cost with no benefit on a loaded CPU.
+    run_config = RunConfig(
+        timeout=ragas_timeout,
+        max_workers=ragas_workers,
+        max_retries=1,
+        max_wait=60,
+    )
+    logger.info(
+        f"[ragas] RunConfig: timeout={ragas_timeout}s, workers={ragas_workers}, "
+        f"max_retries=1"
+    )
 
     def _evaluate_safe(rows: list[dict[str, Any]], metrics: list[Any], label: str):
         """Wrapper around ragas.evaluate that logs failures with traceback
@@ -1085,19 +1058,9 @@ def write_summary(
     if scope_res:
         lines.append(f"### Scope Awareness ({scope_res['total']} questions)")
         lines.append(
-            f"- Strict pass rate (true scope refusal): **{scope_res['pass_rate']:.1%}** "
+            f"- Pass rate (LLM judge): **{scope_res['pass_rate']:.1%}** "
             f"({scope_res['passed']}/{scope_res['total']})"
         )
-        if "soft_pass_rate" in scope_res:
-            lines.append(
-                f"- Soft pass rate (incl. 'no info' knowledge-gap): "
-                f"**{scope_res['soft_pass_rate']:.1%}** "
-                f"({scope_res['soft_passed']}/{scope_res['total']})"
-            )
-            lines.append(
-                "- _Note: a high soft-pass / low strict-pass gap means the bot "
-                "is pleading ignorance instead of explicitly refusing out-of-scope questions._"
-            )
         lines.append("")
     else:
         lines.append("### Scope Awareness")
@@ -1163,12 +1126,14 @@ def main() -> None:
         default=["in_scope", "multi_turn", "out_of_scope", "robustness"],
         choices=["in_scope", "multi_turn", "out_of_scope", "robustness"],
     )
-    parser.add_argument("--judge-model", default=DEFAULT_JUDGE_MODEL,
-                        help=f"Ollama model used as Ragas/scope/robustness judge "
-                             f"(default: {DEFAULT_JUDGE_MODEL}). Picking a model "
-                             f"different from the chat model avoids self-confirmation "
-                             f"bias. Use a smaller model (e.g. llama3.2:3b) for "
-                             f"faster runs at the cost of judge reliability.")
+    parser.add_argument(
+        "--judge-provider",
+        choices=["auto", "local"],
+        default="auto",
+        help="Judge LLM provider: 'auto' follows LLM_PROVIDER (default), "
+             "'local' forces ChatOllama regardless of LLM_PROVIDER "
+             "(useful for offline development).",
+    )
     parser.add_argument("--skip-ragas", action="store_true",
                         help="Skip Ragas (only run scope + robustness custom checks).")
     parser.add_argument(
@@ -1190,6 +1155,23 @@ def main() -> None:
              "'refresh' ignores existing entries on read but overwrites "
              "them on write, useful after changing the chat model or "
              "system prompt. Cache files live under evaluation/cache/.",
+    )
+    parser.add_argument(
+        "--ragas-timeout",
+        type=int,
+        default=1200,
+        help="Per-job timeout in seconds for Ragas LLM calls (default: 1200). "
+             "Ollama on CPU can take 300-600s per call; 1200s gives 2x headroom. "
+             "Raise to 1800+ on very slow hardware or with large judge models.",
+    )
+    parser.add_argument(
+        "--ragas-workers",
+        type=int,
+        default=1,
+        help="Parallel workers for Ragas evaluation (default: 1). "
+             "Keep at 1 for local Ollama on CPU: Ollama is serial so extra "
+             "workers only compete for the same CPU and slow each call down. "
+             "Raise to 2-4 only when using a GPU or a remote inference endpoint.",
     )
     args = parser.parse_args()
 
@@ -1215,13 +1197,16 @@ def main() -> None:
     )
 
     brain = load_brain(logger)
-    judge = ChatOllama(model=args.judge_model, temperature=0.0)
+    force_local = args.judge_provider == "local"
+    judge = _build_judge_llm(force_local=force_local)
+    judge_model_name = getattr(judge, "model", getattr(judge, "model_name", "?"))
+    logger.info(f"Judge model: {judge_model_name}")
 
     # Cache is keyed by (chat model, temperature, session history, question).
     # See evaluation/cache.py for invalidation semantics.
     cache = TurnCache(
         cache_dir=CACHE_ROOT,
-        chat_model=OLLAMA_CHAT_MODEL,
+        chat_model=_active_chat_model(),
         temperature=LLM_TEMPERATURE,
         mode=args.cache,
     )
@@ -1253,10 +1238,6 @@ def main() -> None:
         scope_res = run_scope_awareness(
             brain, judge, golden["out_of_scope"], logger, args.limit, cache=cache,
         )
-        # Feed refusal responses into the Ragas pool so reference-free
-        # metrics (coherence in particular) cover the OOS category too.
-        # rag_rows is popped (not copied) so it does NOT bloat the JSON file.
-        rag_rows += scope_res.pop("rag_rows", [])
         with open(run_dir / "scope_awareness.json", "w", encoding="utf-8") as f:
             json.dump(scope_res, f, ensure_ascii=False, indent=2)
 
@@ -1264,9 +1245,6 @@ def main() -> None:
         robust_res = run_robustness(
             brain, judge, golden["robustness"], logger, args.limit, cache=cache,
         )
-        # Same reasoning as for scope: include robustness final-turn
-        # responses in the Ragas pool to score their coherence.
-        rag_rows += robust_res.pop("rag_rows", [])
         with open(run_dir / "robustness.json", "w", encoding="utf-8") as f:
             json.dump(robust_res, f, ensure_ascii=False, indent=2)
 
@@ -1276,8 +1254,11 @@ def main() -> None:
     ragas_agg: dict[str, Any] | None = None
     if not args.skip_ragas and rag_rows:
         ragas_agg = run_ragas(
-            rag_rows, args.judge_model, logger, run_dir,
+            rag_rows, logger, run_dir,
             selected_metrics=args.ragas_metrics,
+            ragas_timeout=args.ragas_timeout,
+            ragas_workers=args.ragas_workers,
+            force_local_judge=force_local,
         )
         if ragas_agg:
             with open(run_dir / "ragas_metrics.json", "w", encoding="utf-8") as f:
@@ -1289,8 +1270,8 @@ def main() -> None:
             "timestamp": timestamp,
             "lang": args.lang,
             "dataset": dataset_path.name,
-            "chat_model": OLLAMA_CHAT_MODEL,
-            "judge_model": args.judge_model,
+            "chat_model": _active_chat_model(),
+            "judge_model": judge_model_name,
             "embedding_model": getattr(embedding_model, "model_name", "?"),
             "categories": args.categories,
             "limit": args.limit,
