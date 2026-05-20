@@ -66,13 +66,25 @@ _DEGENERATE_FALLBACK = "Mi dispiace, non sono riuscito a trovare informazioni su
 
 def chat_fn(message: str, history: list):
     accumulated = ""
-    for chunk in brain.chat_stream(message, DEFAULT_SESSION_ID):
-        if chunk == STREAM_DEGENERATE_SIGNAL:
-            # Answer was degenerate (<30 chars): replace entire display with fallback.
-            yield _DEGENERATE_FALLBACK
-            return
-        accumulated += chunk
-        yield accumulated
+    emitted = False
+    try:
+        for chunk in brain.chat_stream(message, DEFAULT_SESSION_ID):
+            if chunk == STREAM_DEGENERATE_SIGNAL:
+                # Answer was degenerate (<30 chars): replace entire display with fallback.
+                yield _DEGENERATE_FALLBACK
+                return
+            if not chunk:
+                continue
+            accumulated += chunk
+            emitted = True
+            yield accumulated
+    except Exception as e:
+        logger.exception(f"Gradio chat stream error: {e}")
+        yield "Mi dispiace, si è verificato un errore."
+        return
+
+    if not emitted:
+        yield "Mi dispiace, non sono riuscito a generare una risposta."
 
 
 demo = gr.ChatInterface(

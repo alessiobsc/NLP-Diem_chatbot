@@ -5,10 +5,6 @@ and trafilatura content quality.
 
 import io
 import sys
-
-from app import embedding_model
-
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 from collections import Counter
 from pathlib import Path
 from urllib.parse import urlparse
@@ -17,8 +13,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 from langchain_chroma import Chroma
 from config import CHROMA_DIR, COLLECTION_NAME, EMBEDDING_DIMENSION
+from src.encoders.embedding_init import build_embedding_model
 
 
 def domain_of(url: str) -> str:
@@ -64,7 +62,7 @@ def main() -> None:
 
     vectorstore = Chroma(
         collection_name=COLLECTION_NAME,
-        embedding_function=embedding_model,
+        embedding_function=build_embedding_model(),
         persist_directory=str(CHROMA_DIR),
         collection_metadata={"hnsw:space": "cosine", "dimension": EMBEDDING_DIMENSION},
     )

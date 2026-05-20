@@ -90,21 +90,21 @@
       "persona": "international_student",
       "tags": ["internationalization", "responsibility"],
       "question": "Chi e il responsabile dell'internazionalizzazione del DIEM?",
-      "reference": "Il DIEM ha un docente delegato per l'internazionalizzazione, i cui contatti sono pubblicati sul sito del dipartimento nella sezione Dipartimento o International."
+      "reference": "Il DIEM ha un docente delegato per l'internazionalizzazione, il suo nome è Diego Gragnaniello."
     },
     {
       "id": "is_intl_002",
       "persona": "international_student",
       "tags": ["mobility", "erasmus"],
       "question": "Quali opportunita di mobilita internazionale sono disponibili?",
-      "reference": "Gli studenti del DIEM possono partecipare a programmi di scambio Erasmus+, accordi di doppio titolo con universita partner e altri programmi di mobilita internazionale. Le opportunita specifiche sono elencate nella sezione International del sito DIEM e nel bando Erasmus annuale."
+      "reference": "Gli studenti del DIEM possono partecipare a programmi e accordi internazionali come Erasmus Plus, cooperazione internazionale, doppio titolo, dottorati con tesi in co-tutela, International Credit Mobility e iniziative con Visiting Professors. Le opportunita specifiche sono elencate nella sezione International del sito DIEM e nel bando Erasmus annuale."
     },
     {
       "id": "is_intl_003",
       "persona": "international_student",
       "tags": ["english_taught"],
       "question": "Ci sono corsi del DIEM tenuti interamente in inglese?",
-      "reference": "Alcuni corsi di laurea magistrale del DIEM e singoli insegnamenti sono tenuti in inglese. L'elenco specifico, che include la magistrale in Information Engineering for Digital Medicine, e disponibile sulle pagine corsi.unisa.it di ciascun corso."
+      "reference": "I corsi di laurea tenuti interamente in inglese sono ELECTRICAL ENGINEERING FOR DIGITAL ENERGY, INFORMATION ENGINEERING FOR DIGITAL MEDICINE e il corso di laurea magistrale in INFORMATION ENGINEERING FOR DIGITAL MEDICINE."
     },
 
     {
@@ -119,50 +119,50 @@
       "persona": "external",
       "tags": ["research", "areas"],
       "question": "Quali sono le aree di ricerca attive al DIEM?",
-      "reference": "Le aree di ricerca del DIEM coprono informatica (intelligenza artificiale, ingegneria del software, computer vision, NLP), ingegneria elettrica ed elettronica (telecomunicazioni, elettronica, sistemi di potenza), ingegneria gestionale ed economica, matematica applicata e automatica/robotica. Dettagli su ciascuna linea di ricerca sono disponibili nella sezione Ricerca del sito DIEM."
+      "reference": "Le aree di ricerca attive nel DIEM sono: Automatica, Campi elettromagnetici, Elettrotecnica, Fisica, Informatica, Ingegneria Informatica, Matematica applicata, Organizzazione e Pianificazione del Territorio, Telecomunicazioni e Statistica.."
     },
     {
       "id": "is_other_003",
       "persona": "external",
       "tags": ["laboratories"],
       "question": "Quali laboratori sono disponibili al DIEM?",
-      "reference": "Il DIEM ospita molti laboratori che coprono le sue aree di ricerca, incluso laboratori di robotica, computer vision, networking, elettronica, telecomunicazioni e ingegneria del software. L'elenco completo con descrizioni e pubblicato nella sezione Ricerca / Laboratori del sito DIEM."
+      "reference": "I laboratori disponibili al DIEM sono: Caratterizzazione Elettromagnetica dei Materiali, Circuiti Elettronici di Potenza, Computazione Naturale, Computer Science Research Lab, Embedded Intelligent Systems, Energy Storage and Energy Sources, Geofisica e Analisi dei Segnali, Ingegneria dei Sistemi di Controllo, Intelligent Bioengineering Technologies, Knowledge Management and Information Systems, Macchine Intelligenti per il Riconoscimento di Video, Immagini e Audio, Robotica, Security, Semantics and Social Networks, Tecnologie Elettriche per la Digital Energy, Telecomunicazioni e Teoria dell’Informazione."
     },
     {
       "id": "is_other_004",
       "persona": "external",
       "tags": ["laboratories", "robotics", "equipment"],
       "question": "Quali strumenti sono disponibili nel Laboratorio di Robotica?",
-      "reference": "Il Laboratorio di Robotica del DIEM e attrezzato con robot industriali e collaborativi, piattaforme robotiche mobili, sensori, sistemi di visione e infrastruttura di calcolo per la ricerca e la didattica in robotica. La lista esatta degli strumenti e pubblicata sulla pagina del laboratorio."
+      "reference": "La strumentazione del laboratorio di robotica comprende: 2 robot antropomorfi Comau Smart-Six montati su slitta attuata, 1 robot UR10, 1 robot Franka Emika a 7 gradi, 1 robot Clearpath Husky customizzato a trazione differenziale, 3 stereo camere intelligenti Zed, 1 endoscopio, 1 unità di misurazioni inerziali, 1 laser scanner 2D, 4 sensori di forza/coppia, 3 gripper pneumatici a due e tre dita, 1 gripper elettrico a due dita, 1 end-effector per l’ablazione dentale, 1 stampante 3D e 9 postazioni PC con Matlab e ROS2."
     },
     {
       "id": "is_other_005",
       "persona": "external",
       "tags": ["governance", "commission"],
       "question": "Chi sono i membri della Commissione Paritetica Docenti-Studenti?",
-      "reference": "La Commissione Paritetica Docenti-Studenti (CPDS) del DIEM e composta da un numero pari di docenti e rappresentanti degli studenti, elencati per nome sulla pagina di governance del dipartimento."
+      "reference": " Vincenzo Auletta è Presidente, Emilia Del Pezzo è Vice-Presidente, Gabriele Di Lorenzo, Ettore Napoli e Alessia Terranova sono membri, mentre Giovanni Petrone è Segretario."
     },
     {
       "id": "is_other_006",
       "persona": "external",
       "tags": ["governance", "director"],
       "question": "Chi e il direttore del DIEM?",
-      "reference": "Il DIEM e diretto da un Direttore di Dipartimento eletto fra i professori ordinari. Nome e contatti del direttore in carica sono pubblicati sulla homepage del dipartimento."
+      "reference": "Il direttore del DIEM è Francesco Tortorella."
     },
     {
       "id": "is_other_007",
       "persona": "external",
       "tags": ["phd", "doctorate"],
       "question": "Il DIEM offre corsi di dottorato?",
-      "reference": "Si, il DIEM e coinvolto in corsi di dottorato, in particolare nel Dottorato in Ingegneria dell'Informazione e in altri corsi di dottorato correlati. Informazioni su ammissione, curricula e dottorandi attuali sono pubblicate nella sezione Ricerca / Dottorato del sito DIEM."
+      "reference": "Si, i dottorati di ricerca sono relativi all'Ingegneria dell’Informazione e al Photovoltaics"
     },
 
     {
       "id": "is_news_001",
       "persona": "current_student",
       "tags": ["homepage", "news", "lessons"],
-      "question": "Quali avvisi recenti sono pubblicati sulla homepage del DIEM riguardo modifiche di lezioni o cambi d'aula?",
-      "reference": "La homepage del DIEM pubblica nella sezione 'ultime news' avvisi su modifiche di lezioni, cambi d'aula e sospensioni didattiche, tra cui avvisi per il II anno di Ingegneria Informatica (canale A-H), per il I anno (canale I-Z), avvisi su modifiche di orari e aule e comunicazioni sull'avvio del tutorato didattico. I contenuti variano nel tempo."
+      "question": "Quale avvisi sono pubblicati sulla homepage del DIEM ?",
+      "reference": "La homepage del DIEM pubblica nella sezione 'ultime news' avvisi su modifiche di lezioni, su modifiche di orari e aule, comunicazioni sull'avvio del tutorato didattico e comunicazioni su eventi. I contenuti variano nel tempo."
     },
     {
       "id": "is_news_002",
@@ -176,14 +176,14 @@
       "persona": "prospective_student",
       "tags": ["offerta_formativa", "triennale", "degree_programs"],
       "question": "Quali corsi di laurea triennale sono elencati nella pagina dell'offerta formativa del DIEM?",
-      "reference": "La pagina dell'offerta formativa del DIEM elenca i corsi di laurea triennale in Ingegneria Informatica e Ingegneria Elettronica, con link alle rispettive pagine su corsi.unisa.it."
+      "reference": "La pagina dell'offerta formativa del DIEM elenca i corsi di laurea triennale in Ingegneria Informatica e Ingegneria dell'informazione per medicina digitale."
     },
     {
       "id": "is_offer_002",
       "persona": "prospective_student",
       "tags": ["offerta_formativa", "magistrale", "degree_programs"],
       "question": "Quali corsi di laurea magistrale del DIEM sono elencati nella pagina dell'offerta formativa?",
-      "reference": "La pagina dell'offerta formativa del DIEM elenca i corsi di laurea magistrale in Ingegneria Informatica, Ingegneria Elettronica e Information Engineering for Digital Medicine, con link alle rispettive pagine su corsi.unisa.it."
+      "reference": "La pagina dell'offerta formativa del DIEM elenca i corsi di laurea magistrale in Ingegneria Informatica, Eletrical Engineering for Digital Energy e Information Engineering for Digital Medicine."
     },
     {
       "id": "is_imm_001",

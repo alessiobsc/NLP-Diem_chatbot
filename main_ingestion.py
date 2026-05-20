@@ -6,8 +6,6 @@ import re
 from collections import defaultdict
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from app import embedding_model
-
 os.environ.setdefault("PYTHONUNBUFFERED", "1")
 
 from dotenv import load_dotenv
@@ -48,6 +46,18 @@ TRACKING_QUERY_KEYS = {
 }
 MIN_DEDUP_CONTENT_CHARS = 300
 
+DIEM_BANDI_STRUCTURE_ID = "300638"
+RECENT_BANDI_MODULES = (
+    ("139", "Incarichi di Insegnamento", "struttura"),
+    ("504", "Collaborazioni con il Dipartimento", "struttura"),
+    ("316", "Personale Tecnico Amministrativo", "struttura"),
+    ("226", "Dottorati di Ricerca", None),
+    ("67", "Assegni di Ricerca", "struttura"),
+    ("292", "Borse di Ricerca", "struttura"),
+    ("293", "Borse e Premi", "cdsStruttura"),
+    ("505", "Altri bandi", "struttura"),
+)
+
 
 def dedupe_docs_by_source(docs: list) -> list:
     """Keep the first document for each source URL."""
@@ -62,8 +72,25 @@ def dedupe_docs_by_source(docs: list) -> list:
     return unique_docs
 
 
+def build_recent_bandi_urls(reference_year: int | None = None) -> list[tuple[str, str, int]]:
+    """Build explicit DIEM bandi URLs for current and previous year."""
+    current_year = reference_year or datetime.datetime.now().year
+    years = (current_year, current_year - 1)
+    urls: list[tuple[str, str, int]] = []
+
+    for year in years:
+        for module_id, label, structure_param in RECENT_BANDI_MODULES:
+            url = f"https://www.diem.unisa.it/home/bandi?modulo={module_id}"
+            if structure_param:
+                url += f"&{structure_param}={DIEM_BANDI_STRUCTURE_ID}"
+            url += f"&anno={year}"
+            urls.append((url, label, year))
+
+    return urls
+
+
 def canonicalize_source_url(url: str) -> str:
-    """Normalize a source URL without changing semantically relevant filters."""
+    """Normalize a source URL while preserving semantically relevant filters."""
     split = urlsplit((url or "").strip())
     scheme = split.scheme.lower() or "https"
     netloc = split.netloc.lower()
@@ -94,7 +121,7 @@ def source_alias_key(url: str) -> str:
     Build a cautious alias key for URLs that can point to the same source.
 
     The key intentionally keeps course slugs and teacher IDs separate; the
-    content hash is only used as a confirmation inside this alias group.
+    content hash is only used as confirmation inside this alias group.
     """
     canonical = canonicalize_source_url(url)
     split = urlsplit(canonical)
@@ -219,6 +246,26 @@ def crawl_phase() -> tuple[list, list]:
     raw_html_docs.extend(raw_diem)
     pdf_docs.extend(diem_pdfs)
 
+    recent_bandi_urls = build_recent_bandi_urls()
+    logger.info(
+        f"[1b/3] Crawling recent DIEM bandi explicit URLs "
+        f"({len(recent_bandi_urls)} URLs: current year + previous year) ..."
+    )
+    bandi_docs_total = 0
+    for i, (url, label, year) in enumerate(recent_bandi_urls, 1):
+        docs = list(filter_docs(dedupe_docs_by_source(
+            list(crawl(url, base_url="https://www.diem.unisa.it/", max_depth=1))
+        )))
+        batch_pdfs = load_pdfs_from_links(docs, seen_pdf_urls)
+        raw_html_docs.extend(docs)
+        pdf_docs.extend(batch_pdfs)
+        bandi_docs_total += len(docs)
+        logger.info(
+            f"  [{i:02d}/{len(recent_bandi_urls)}] {year} {label} "
+            f"({len(docs)} pages, {len(batch_pdfs)} PDF pages)"
+        )
+    logger.info(f"  -> Recent DIEM bandi crawl added {bandi_docs_total} HTML docs")
+
     # 1b. Crawl docenti.unisa.it
     total_docenti = len(docenti_urls)
     current_year = datetime.datetime.now().year
@@ -270,15 +317,18 @@ def apply_html_metadata_and_filter(raw_html_docs: list) -> list:
     - docs with explicit non-Italian lang attribute are removed
     """
     kept, date_enriched, dropped = [], 0, 0
+    dropped_empty = 0
     for doc in raw_html_docs:
+        source = doc.metadata.get("source", "")
         html_meta = extract_html_metadata(doc.page_content)
         doc.metadata.update(html_meta)
         if "date" in html_meta:
             date_enriched += 1
-        doc.page_content = html_extractor_for_source(
-            doc.page_content,
-            doc.metadata.get("source", ""),
-        )
+        doc.page_content = html_extractor_for_source(doc.page_content, source)
+        if not doc.page_content.strip():
+            logger.debug(f"  SKIP empty/low-value extraction: {source}")
+            dropped_empty += 1
+            continue
         if doc.metadata.get("language", "").startswith(NON_ITALIAN_LANG_PREFIXES):
             logger.debug(f"  SKIP non-IT (lang={doc.metadata['language']}): {doc.metadata.get('source', '')}")
             dropped += 1
@@ -293,6 +343,8 @@ def apply_html_metadata_and_filter(raw_html_docs: list) -> list:
         f"  -> Language filter (metadata-based): dropped {dropped} non-Italian pages "
         f"(kept {len(kept)}/{len(raw_html_docs)})"
     )
+    if dropped_empty:
+        logger.info(f"  -> Structured/HTML extractor dropped {dropped_empty} empty or low-value pages")
     return kept
 
 
@@ -352,7 +404,9 @@ def main() -> None:
         return
 
     # --full
-    # TODO (Software Architect): Avoid importing `embedding_model` locally here to prevent circular dependencies or hidden side effects.
+    from src.encoders.embedding_init import build_embedding_model
+
+    embedding_model = build_embedding_model()
     run_full_pipeline(embedding_model)
 
 

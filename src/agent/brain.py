@@ -337,7 +337,10 @@ class DiemBrain(DiemNodes):
 
         if not answer:
             if rejection:
-                yield self._strip_rejection_tags(rejection)
+                rejection_text = self._strip_rejection_tags(rejection)
+                yield rejection_text or "Mi dispiace, non sono riuscito a generare una risposta."
+            else:
+                yield "Mi dispiace, non sono riuscito a generare una risposta."
             return
 
         # Degenerate answer: signal caller to replace the full display.
