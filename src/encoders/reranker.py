@@ -12,7 +12,7 @@ from typing import List
 import requests
 from langchain_core.documents import Document
 from sentence_transformers import CrossEncoder
-from config import EMBEDDING_PROVIDER, LOCAL_RERANKER_MODEL, OPENROUTER_API_KEY, OPENROUTER_RERANKER_MODEL
+from config import LOCAL_RERANKER_MODEL, OPENROUTER_API_KEY, OPENROUTER_RERANKER_MODEL, RERANKER_PROVIDER
 from src.utils.logger import get_logger
 
 
@@ -100,9 +100,9 @@ def _rerank_local(query: str, documents: List[Document], top_n: int) -> List[Doc
 
 def rerank(query: str, documents: List[Document], top_n: int = 3) -> List[Document]:
     """Dispatches to the appropriate reranking function based on the provider."""
-    if EMBEDDING_PROVIDER == "openrouter":
+    if RERANKER_PROVIDER == "openrouter":
         return _rerank_with_openrouter(query, documents, top_n)
-    elif EMBEDDING_PROVIDER == "local":
+    elif RERANKER_PROVIDER == "local":
         return _rerank_local(query, documents, top_n)
     else:
-        raise NotImplementedError(f"EMBEDDING_PROVIDER '{EMBEDDING_PROVIDER}' is not supported. Use 'local' or 'openrouter'.")
+        raise NotImplementedError(f"RERANKER_PROVIDER '{RERANKER_PROVIDER}' is not supported. Use 'local' or 'openrouter'.")

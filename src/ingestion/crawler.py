@@ -38,9 +38,12 @@ SKIP_DOCUMENT_SUBSTRINGS: Tuple[str, ...] = (
     "?sitemap",
     "/print()",
     "/history.go(",
+    "unisa-rescue-page",
     ".pdf",
     "/en/",
     "/zh/",
+    "/valutazione-della-didattica",
+    "/pubblicazioni?anno=0",  # "all years" publication aggregation — keep only year-specific URLs
 )
 
 OFFERTA_FORMATIVA_PATH = "/didattica/offerta-formativa"
@@ -432,26 +435,31 @@ def extract_diem_faculty_urls() -> List[str]:
         logger.error(f"  WARNING: could not fetch or process faculty list from personale page: {e}")
         return []
 
-
 # ==============================================================================
 # POST-PROCESSING & I/O
 # ==============================================================================
 
-def filter_docs(docs: Iterable) -> Iterable:
-    """Filter out documents whose source URL matches known exclude patterns."""
-    dropped_count = 0
-    for doc in docs:
-        source_url = doc.metadata.get("source", "")
+def filter_docs(docs: Iterable) -> list:
+    """Drop docs whose source URL contains substrings we want to skip, then dedup by URL."""
+    docs = list(docs)
+    filtered = [
+        d for d in docs
+        if not any(p in d.metadata.get("source", "") for p in SKIP_DOCUMENT_SUBSTRINGS)
+        and not is_pre_2020_url(d.metadata.get("source", ""))
+    ]
 
-        contains_skip_substring = any(sub in source_url for sub in SKIP_DOCUMENT_SUBSTRINGS)
-        is_too_old = is_pre_2020_url(source_url)
+    # Dedup by source URL — same URL crawled from multiple entry points yields identical content
+    seen: set = set()
+    deduped = []
+    for d in filtered:
+        url = d.metadata.get("source", "")
+        if url not in seen:
+            seen.add(url)
+            deduped.append(d)
 
-        if not contains_skip_substring and not is_too_old:
-            yield doc
-        else:
-            dropped_count += 1
-
-    logger.debug(f"Filtered {dropped_count} documents")
+    logger.debug(f"Filtered {len(docs) - len(filtered)} documents by URL pattern/date, "
+                 f"deduped {len(filtered) - len(deduped)} duplicate URLs")
+    return deduped
 
 
 def save_crawled_pdfs_to_json(pdf_docs: Iterable, filename: str) -> None:

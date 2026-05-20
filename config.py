@@ -26,7 +26,7 @@ load_dotenv()
 PROJECT_ROOT: Path = Path(__file__).resolve().parent
 
 # ChromaDB Storage paths
-CHROMA_DIR_NAME: str = "chroma_diem"
+CHROMA_DIR_NAME: str = os.getenv("CHROMA_DIR_NAME", "chroma_diem")
 CHROMA_DIR: Path = PROJECT_ROOT / CHROMA_DIR_NAME
 PARENT_STORE_DIR: Path = CHROMA_DIR / "parent_store"
 
@@ -52,12 +52,18 @@ LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "local")
 if LLM_PROVIDER not in ["local", "openrouter"]:
     raise NotImplementedError(f"LLM_PROVIDER '{LLM_PROVIDER}' is not supported. Use 'local' or 'openrouter'.")
 
-# Embedding/Reranking provider: "local" (default, huggingface) or "openrouter"
+# Embedding provider: "local" (default, huggingface) or "openrouter"
 EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "local")
 
 if EMBEDDING_PROVIDER not in ["local", "openrouter"]:
     raise NotImplementedError(f"EMBEDDING_PROVIDER '{EMBEDDING_PROVIDER}' is not supported. Use 'local' or 'openrouter'.")
 
+
+# Reranking provider: "local" (default, huggingface) or "openrouter"
+RERANKER_PROVIDER: str = os.getenv("RERANKER_PROVIDER", "local")
+
+if RERANKER_PROVIDER not in ["local", "openrouter"]:
+    raise NotImplementedError(f"RERANKER_PROVIDER '{RERANKER_PROVIDER}' is not supported. Use 'local' or 'openrouter'.")
 
 # =============================================================================
 # MODEL CONFIGURATION - LOCAL
@@ -68,7 +74,7 @@ LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.1"))
 
 # Local Embedding & Reranking Settings (used when EMBEDDING_PROVIDER=local)
 LOCAL_EMBEDDING_MODEL: str = os.getenv("LOCAL_EMBEDDING_MODEL", "intfloat/multilingual-e5-base")
-LOCAL_RERANKER_MODEL: str = os.getenv("LOCAL_RERANKER_MODEL", "BAAI/bge-reranker-base")
+LOCAL_RERANKER_MODEL: str = os.getenv("LOCAL_RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
 
 
 # =============================================================================
@@ -76,7 +82,7 @@ LOCAL_RERANKER_MODEL: str = os.getenv("LOCAL_RERANKER_MODEL", "BAAI/bge-reranker
 # =============================================================================
 # General Settings
 OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
-OPENROUTER_AGENT_MODEL: str = os.getenv("OPENROUTER_AGENT_MODEL", "qwen/qwen3-32b")
+OPENROUTER_AGENT_MODEL: str = os.getenv("OPENROUTER_AGENT_MODEL", "openai/gpt-oss-120b")
 OPENROUTER_LIGHTWEIGHT_MODEL: str = os.getenv("OPENROUTER_LIGHTWEIGHT_MODEL", "meta-llama/llama-3.1-8b-instruct")
 
 # Embedding Model Settings
@@ -95,11 +101,11 @@ DEFAULT_SESSION_ID: str = "diem-session"
 
 # Retrieval Settings
 # BI_ENCODER_K: number of documents retrieved in the first stage (fast retrieval)
-BI_ENCODER_K: int = int(os.getenv("BI_ENCODER_K", "20"))
+BI_ENCODER_K: int = int(os.getenv("BI_ENCODER_K", "15"))
 # CROSS_ENCODER_K: number of documents kept after reranking in the second stage (precision reranking)
 CROSS_ENCODER_K: int = int(os.getenv("CROSS_ENCODER_K", "3"))
 
-RETRIEVER_SCORE_THRESHOLD: float = float(os.getenv("RETRIEVER_SCORE_THRESHOLD", "0.7"))
+RETRIEVER_SCORE_THRESHOLD: float = float(os.getenv("RETRIEVER_SCORE_THRESHOLD", "0.5"))
 
 # Document Splitting Settings (Parent-Child Strategy)
 # Parent Document Settings (Broad context)

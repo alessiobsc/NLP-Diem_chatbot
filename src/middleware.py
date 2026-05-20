@@ -39,7 +39,7 @@ _SCOPE_KEYWORDS = {
     "dipartimento", "informatica", "ingegneria", "matematica", "voto", "voti",
     "media", "cfu", "crediti", "tirocinio", "tesi", "iscrizione", "ammissione",
     "orario", "ricevimento", "riceve", "aula", "laboratorio", "erasmus", "borsa", "studente", "studenti",
-    "piano", "regolamento", "offerta", "formativa", "magistrale", "triennale",
+    "piano", "regolamento", "offerta", "formativa", "magistrale", "triennale", "missione", "giunta",
     "dottorato", "master", "faculty", "department", "enrollment", "grade",
     "average", "graduation", "thesis", "exam", "lecture", "semester",
     # Academic person/role patterns — specific enough to be safe scope indicators
@@ -56,28 +56,41 @@ _SCOPE_SYSTEM = (
     "Respond with exactly one word: yes or no. No explanations, no punctuation."
 )
 _SCOPE_PROMPT = (
-    "Is this question in scope for a university department assistant?\n\n"
-    "Answer 'no' ONLY if the question is clearly about one of these off-topic categories:\n"
-    "- Food, recipes, cooking\n"
-    "- Sports, games, entertainment, music, movies\n"
-    "- Politics or news unrelated to the university\n"
-    "- Shopping, products, prices\n"
-    "- Personal advice, relationships, health\n"
-    "- General trivia or knowledge with no academic context\n"
-    "- Questions about historical figures or celebrities with no university connection\n\n"
-    "Answer 'yes' if the question:\n"
-    "- Mentions any academic topic, course, exam, department, or university service\n"
-    "- Asks about any person (could be a professor, researcher, or staff member)\n"
-    "- Contains mainly pronouns or implicit references with no clearly off-topic content (likely a follow-up question)\n"
-    "- Is ambiguous or could have any academic interpretation\n\n"
-    "When in doubt, answer 'yes'."
+    "Is this question in scope for a university department chatbot?\n\n"
+    "Answer 'no' only if the question is clearly unrelated to any university or academic context. "
+    "Examples that must get 'no':\n"
+    "- 'What is the best pasta recipe?' (food/cooking)\n"
+    "- 'How do I make tiramisu?' (food/cooking)\n"
+    "- 'Who won the Champions League?' (sports)\n"
+    "- 'What are the NBA playoffs results?' (sports)\n"
+    "- 'Recommend me a Netflix series' (entertainment)\n"
+    "- 'What are the best songs by Coldplay?' (music/entertainment)\n"
+    "- 'What is the price of an iPhone?' (shopping/products)\n"
+    "- 'Which car should I buy?' (shopping/products)\n"
+    "- 'How do I fix a broken relationship?' (personal advice)\n"
+    "- 'Should I break up with my partner?' (personal advice)\n"
+    "- 'What are the symptoms of flu?' (medical advice)\n"
+    "- 'How do I lose weight?' (health/medical)\n"
+    "- 'Tell me a joke' (entertainment/trivia)\n"
+    "- 'What is the capital of France?' (general trivia unrelated to university)\n"
+    "- 'Who is Taylor Swift?' (celebrity with no university connection)\n"
+    "- 'How do I invest in Bitcoin?' (finance/investment)\n"
+    "- 'What is the weather forecast?' (general information)\n"
+    "- 'Write me a poem about love' (creative writing, no academic context)\n"
+    "These are examples — apply the same logic to any other topic that is clearly outside "
+    "a university or academic context.\n\n"
+    "Answer 'yes' for:\n"
+    "- Anything touching a university, department, faculty, research, or academic life\n"
+    "- Governance or administrative bodies (board, committee, giunta, consiglio...)\n"
+    "- Third mission, public engagement, technology transfer, spin-off activities\n"
+    "- Any person who could plausibly be a professor, researcher, or staff member\n"
+    "- Ambiguous or follow-up questions — when in doubt, answer 'yes'."
 )
 
 
 _SCOPE_REJECTION = (
-    "This question is outside my scope. "
-    "I can only answer questions about DIEM (Department of Information and Electrical Engineering "
-    "and Applied Mathematics) at the University of Salerno."
+    "Mi dispiace, posso aiutarti solo con domande relative al DIEM e all'Università di Salerno — "
+    "corsi di laurea, docenti, ricerca, regolamenti, laboratori e servizi del dipartimento."
 )
 
 _OFFENSIVE_FALLBACK = (

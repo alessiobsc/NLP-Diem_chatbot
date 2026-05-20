@@ -150,50 +150,82 @@ REWRITE_PROMPT = (
 )
 
 CONTEXT_HEADER_PROMPT = """
-ROLE: Conservative metadata writer for a DIEM retrieval index.
-TASK: Write one short retrieval label that helps a vector search engine route this DIEM/UNISA text.
+ROLE: Metadata writer for a DIEM/UNISA retrieval index.
+TASK: Write one short Italian retrieval label for the given text chunk. The label is used as a retrieval signal — maximum specificity improves search accuracy.
 
 OUTPUT:
-One Italian label, maximum 12 words.
+One Italian label, maximum 12 words. No markdown, no square brackets, no "Context:" prefix. Lowercase except proper nouns.
 
 FORMAT:
-tipo documento
-or
-tipo documento - argomento esplicito
+<category> - <specific entity or topic>
 
-Use the second part only if the specific topic is clearly visible in the local parent chunk text.
+Use the second form (with " - ") ALWAYS when possible. Omit only if no specific entity can be found anywhere in the text or URL. A label without a subtopic is a last resort.
 
-GUIDANCE:
-Prefer stable document-type labels when clearly supported by TEXT, GLOBAL METADATA, or URL.
+URL PATH GUIDE (primary signal for category):
+- /ricerca/progetti-finanziati → "progetti finanziati DIEM"
+- /ricerca/premi-ricerca       → "premi ricerca DIEM"
+- /ricerca/aree-di-ricerca     → "aree di ricerca DIEM"
+- /ricerca/laboratori          → "laboratorio DIEM"
+- /international/              → "accordi internazionali DIEM"
+- /dipartimento/eccellenza     → "dipartimento di eccellenza DIEM"
+- /dipartimento/               → "dipartimento DIEM"
+- /terza-missione/             → "terza missione DIEM"
+- /uploads/ (bando/avviso PDF) → "bando DIEM" or "avviso DIEM"
+- __schede-sua/                → "scheda SUA corso di studio"
+- __regolamenti-cds/           → "regolamento corso di studio"
 
-Useful DIEM-oriented label families include:
-- docente/personale: profilo docente, pubblicazioni docente, curriculum docente, ricevimento docente, didattica docente, docenti e personale DIEM
-- didattica: didattica DIEM, offerta formativa DIEM, consigli didattici DIEM, focus didattica DIEM, scheda insegnamento, pagina corso di studio, regolamento corso di studio, scheda SUA corso di studio
-- dipartimento: organi collegiali DIEM, commissioni e delegati DIEM, commissione paritetica docenti-studenti DIEM, strutture DIEM, dipartimento di eccellenza DIEM
-- ricerca: aree di ricerca DIEM, focus ricerca DIEM, progetti finanziati DIEM, premi ricerca DIEM, laboratorio DIEM
-- terza missione: terza missione DIEM, trasferimento tecnologico DIEM, impatto sociale DIEM
-- international: accordi Erasmus Plus DIEM, accordi di cooperazione internazionale DIEM, mobilità internazionale DIEM
+LABEL FAMILIES:
+- didattica: scheda insegnamento, pagina corso di studio, regolamento corso di studio, scheda SUA corso di studio, offerta formativa DIEM
+- dipartimento: organi collegiali DIEM, strutture DIEM, dipartimento di eccellenza DIEM, commissione paritetica DIEM
+- ricerca: progetti finanziati DIEM, premi ricerca DIEM, aree di ricerca DIEM, laboratorio DIEM
+- terza missione: terza missione DIEM, trasferimento tecnologico DIEM
+- international: accordi internazionali DIEM, accordi Erasmus Plus DIEM, mobilità internazionale DIEM
 - comunicazioni: news DIEM, evento DIEM, avviso DIEM, bando DIEM
 - servizi: servizi e contatti DIEM, pagina DIEM
 
-These labels are guidance, not answers to copy blindly. Choose a label only when it is supported by the provided evidence.
+SPECIFICITY RULES (in priority order):
 
-RULES:
-- Use GLOBAL METADATA and SOURCE URL to identify the source document or page type.
-- Use the local parent chunk text to identify the specific section or topic.
-- Use only evidence present in TEXT, GLOBAL METADATA, or URL.
-- Do not add facts, names, offices, universities, courses, teachers, or subjects that are not visible.
-- Choose the most specific label clearly supported by TEXT, GLOBAL METADATA, or URL.
-- If the document type is clear but the local topic is not clear, return only the document type.
-- If neither document type nor local topic is clear, return a neutral label based on the visible source, such as "Pagina DIEM".
-- Add a subtopic after "-" only if it is explicit in the local parent chunk.
-- Prefer exact words from URL, title, source_page, first meaningful lines, and key passages.
-- Do not write summaries or claims.
-- Avoid verbs such as gestisce, fornisce, prepara, consente, permette, contiene.
-- Avoid vague labels like "pagina generale", "servizio", or "informazioni" when URL, metadata, or TEXT shows a clearer type.
-- Do not call text "progetto di ricerca" unless URL, metadata, or TEXT explicitly says research project, funded project, or project funding.
-- Return only one short header in the form: document/source type - local topic.
-- Do not use square brackets, placeholders, markdown, explanations, or "Context:" prefix.
+1. SCHEDE SUA (__schede-sua/ in URL):
+   - Subtopic = degree program name found in the text (e.g. "Ingegneria Informatica", "Ingegneria Informatica Magistrale", "Digital Health").
+   - Example: "scheda SUA corso di studio - Ingegneria Informatica Magistrale"
+   - Never use generic section names (piano degli studi, obiettivi formativi) as subtopic here.
+
+2. REGOLAMENTI (__regolamenti-cds/ in URL):
+   - Subtopic = degree program name found in the text.
+   - Example: "regolamento corso di studio - Ingegneria Elettronica"
+   - Never use generic section names (piano degli studi, requisiti di accesso) as subtopic here.
+
+3. PROGETTI FINANZIATI (/ricerca/progetti-finanziati in URL):
+   - If the text describes a SINGLE project: subtopic = the project title or research topic (concise, max 5 words).
+   - If the text lists MANY projects with no single dominant title: omit subtopic entirely.
+   - NEVER use "progetto di ricerca", "progetti finanziati", or "progetti di ricerca" as subtopic — these repeat the category.
+
+4. UPLOADED DOCUMENTS (/uploads/ in URL):
+   - The category depends entirely on the document content, not the URL path.
+   - If the text is a bando, avviso, decreto, or graduatoria: use "bando DIEM" or "avviso DIEM" + subtopic from the actual title or first heading in the text.
+   - If the text is a verbale, delibera, o verbale di riunione/consultazione: use "verbale DIEM" + subtopic from the actual heading (e.g. "verbale DIEM - consultazione parti interessate").
+   - If the text is a syllabus, programma del corso, or brochure informativa: use "scheda insegnamento" or "offerta formativa DIEM".
+   - If the document is a prize or award (premio, riconoscimento): use "premi ricerca DIEM".
+   - Do NOT read the URL filename as the subtopic — derive it from the document text.
+   - Do NOT default to any fixed phrase.
+
+5. STATISTICHE CORSI (__statistiche-corsi/ in URL):
+   - Category = "statistiche corsi di laurea"
+   - Subtopic = degree program name.
+   - Example: "statistiche corsi di laurea - Ingegneria Informatica"
+
+6. ALL OTHER PAGES:
+   - Subtopic = the most specific entity or topic visible in the text: research area, technology, specific subject.
+
+GENERAL RULES:
+- Use SOURCE URL as primary signal for category.
+- Use TEXT to identify the subtopic — read the first heading or title in the text first.
+- Use EXACT category names from the label families above — never abbreviate (e.g. write "regolamento corso di studio", NOT "corso di studio"; write "scheda SUA corso di studio", NOT "scheda SUA").
+- Do NOT write summaries, claims, or verbs (gestisce, fornisce, contiene, ecc.).
+- Do NOT use "didattica DIEM" for content from unisa.it or corsi.unisa.it.
+- Do NOT write "tipo documento" or "categoria documento" literally.
+- Do NOT repeat the category name as subtopic (e.g. "progetti finanziati DIEM - progetti finanziati" is wrong).
+- Do NOT use all caps; normalize to sentence case.
 
 TEXT:
 {text}

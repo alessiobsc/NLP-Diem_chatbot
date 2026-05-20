@@ -15,13 +15,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from config import CHROMA_DIR
-from src.ingestion.enrichment import (
+from src.ingestion.header_heuristic import (
     ASSERTIVE_HEADER_PATTERNS,
     GENERIC_HEADER_PATTERNS,
-    OLLAMA_ENDPOINT,
-    OLLAMA_MODEL,
-    OLLAMA_TIMEOUT_SECONDS,
     build_header_context,
+    extract_year_tag,
     fallback_context_header,
     normalize_context_header,
 )
@@ -29,7 +27,7 @@ from src.prompts import CONTEXT_HEADER_PROMPT
 
 
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODEL = "mistralai/mistral-nemo"
+DEFAULT_MODEL = "meta-llama/llama-3.1-8b-instruct"
 DEFAULT_PARENT_STORE = CHROMA_DIR / "parent_store"
 BACKUP_PARENT_STORE = PROJECT_ROOT / "chroma_diem.backup_header_bad" / "parent_store"
 DEFAULT_JSON_OUT = PROJECT_ROOT / "evaluation" / "results" / "header_model_comparison.json"
@@ -79,14 +77,27 @@ def choose_parent_store(path: Path | None) -> Path:
     return BACKUP_PARENT_STORE
 
 
-def sample_parent_docs(parent_store: Path, limit: int, seed: int, min_chars: int) -> list[tuple[Path, dict[str, Any]]]:
+def sample_parent_docs(
+    parent_store: Path,
+    limit: int,
+    seed: int,
+    min_chars: int,
+    exclude_domains: list[str] | None = None,
+) -> list[tuple[Path, dict[str, Any]]]:
+    exclude = set(exclude_domains or [])
     docs = []
     for path in sorted(parent_store.iterdir()):
         if not path.is_file():
             continue
         doc = load_parent_document(path)
-        if doc and len(doc["page_content"]) >= min_chars:
-            docs.append((path, doc))
+        if not doc or len(doc["page_content"]) < min_chars:
+            continue
+        if exclude:
+            from urllib.parse import urlparse
+            domain = urlparse(doc["metadata"].get("source", "")).netloc.lower()
+            if domain in exclude:
+                continue
+        docs.append((path, doc))
 
     random.Random(seed).shuffle(docs)
     return docs[:limit]
@@ -98,23 +109,6 @@ def first_response_line(value: str) -> str:
         if line:
             return line
     return ""
-
-
-def call_ollama(prompt: str, timeout: float) -> tuple[str, float]:
-    start = time.time()
-    response = requests.post(
-        OLLAMA_ENDPOINT,
-        json={
-            "model": OLLAMA_MODEL,
-            "prompt": prompt,
-            "stream": False,
-            "options": {"temperature": 0.0, "num_predict": 60},
-        },
-        timeout=timeout,
-    )
-    elapsed = time.time() - start
-    response.raise_for_status()
-    return first_response_line(response.json().get("response", "")), elapsed
 
 
 def call_openrouter(api_key: str, model: str, prompt: str, timeout: float) -> tuple[str, float]:
@@ -171,7 +165,6 @@ def generate_for_doc(
     openrouter_api_key: str,
     openrouter_model: str,
     openrouter_timeout: float,
-    ollama_timeout: float,
 ) -> dict[str, Any]:
     page_content = doc["page_content"]
     metadata = doc["metadata"]
@@ -180,22 +173,15 @@ def generate_for_doc(
     header_context = build_header_context(page_content, source, metadata)
     prompt = CONTEXT_HEADER_PROMPT.format(text=header_context, url=source)
 
-    fallback = normalize_context_header(
+    year_tag = extract_year_tag(source, metadata, page_content)
+
+    _fallback_base = normalize_context_header(
         fallback_context_header(page_content, source, metadata),
         page_content,
         source,
         metadata,
     )
-
-    ollama_raw = ""
-    ollama_header = ""
-    ollama_error = ""
-    ollama_seconds = 0.0
-    try:
-        ollama_raw, ollama_seconds = call_ollama(prompt, ollama_timeout)
-        ollama_header = normalize_context_header(ollama_raw, page_content, source, metadata)
-    except Exception as exc:
-        ollama_error = str(exc)
+    fallback = f"{_fallback_base} {year_tag}".strip() if year_tag else _fallback_base
 
     openrouter_raw = ""
     openrouter_header = ""
@@ -208,7 +194,8 @@ def generate_for_doc(
             prompt,
             openrouter_timeout,
         )
-        openrouter_header = normalize_context_header(openrouter_raw, page_content, source, metadata)
+        _llm_base = normalize_context_header(openrouter_raw, page_content, source, metadata)
+        openrouter_header = f"{_llm_base} {year_tag}".strip() if year_tag else _llm_base
     except Exception as exc:
         openrouter_error = str(exc)
 
@@ -217,17 +204,12 @@ def generate_for_doc(
         "title": title,
         "parent_chars": len(page_content),
         "fallback_header": fallback,
-        "ollama_raw_header": ollama_raw,
-        "ollama_header": ollama_header,
-        "ollama_seconds": round(ollama_seconds, 3),
-        "ollama_error": ollama_error,
         "openrouter_raw_header": openrouter_raw,
         "openrouter_header": openrouter_header,
         "openrouter_seconds": round(openrouter_seconds, 3),
         "openrouter_error": openrouter_error,
         "flags": {
             "fallback": flag_header(fallback, source, title),
-            "ollama": flag_header(ollama_header, source, title),
             "openrouter": flag_header(openrouter_header, source, title),
         },
         "content_preview": page_content[:700],
@@ -238,7 +220,6 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     summary: dict[str, Any] = {"sample_size": len(results), "models": {}}
     for name, header_key, seconds_key, error_key in (
         ("fallback", "fallback_header", None, None),
-        ("ollama", "ollama_header", "ollama_seconds", "ollama_error"),
         ("openrouter", "openrouter_header", "openrouter_seconds", "openrouter_error"),
     ):
         headers = [r.get(header_key, "") for r in results]
@@ -270,8 +251,7 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
         "",
         f"- Parent store: `{report['parent_store']}`",
         f"- Sample size: `{summary['sample_size']}`",
-        f"- OpenRouter model: `{report['openrouter_model']}`",
-        f"- Ollama model: `{report['ollama_model']}`",
+        f"- LLM model: `{report['openrouter_model']}`",
         "",
         "## Summary",
         "",
@@ -293,13 +273,12 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
         "",
         "## Cases",
         "",
-        "| # | Source | Title | Fallback | Ollama local | Mistral Nemo | Flags |",
-        "| ---: | --- | --- | --- | --- | --- | --- |",
+        f"| # | Source | Title | Fallback (heuristic) | {report['openrouter_model']} | Flags |",
+        "| ---: | --- | --- | --- | --- | --- |",
     ])
     for index, result in enumerate(report["results"], 1):
         flags = {
             "fallback": result["flags"]["fallback"],
-            "ollama": result["flags"]["ollama"],
             "openrouter": result["flags"]["openrouter"],
         }
         rows.append(
@@ -308,7 +287,6 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
             f"{md_escape(result['source'])} | "
             f"{md_escape(result['title'])} | "
             f"{md_escape(result['fallback_header'])} | "
-            f"{md_escape(result['ollama_header'] or result['ollama_error'])} | "
             f"{md_escape(result['openrouter_header'] or result['openrouter_error'])} | "
             f"{md_escape(flags)} |"
         )
@@ -318,14 +296,14 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
 
 def main() -> None:
     load_dotenv()
-    parser = argparse.ArgumentParser(description="Compare fallback, local Ollama, and OpenRouter header generation.")
+    parser = argparse.ArgumentParser(description="Compare fallback heuristic vs OpenRouter model for context header generation.")
     parser.add_argument("--parent-store", type=Path, default=None)
     parser.add_argument("--limit", type=int, default=30)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--min-chars", type=int, default=80)
     parser.add_argument("--openrouter-model", default=DEFAULT_MODEL)
     parser.add_argument("--openrouter-timeout", type=float, default=45)
-    parser.add_argument("--ollama-timeout", type=float, default=OLLAMA_TIMEOUT_SECONDS)
+    parser.add_argument("--exclude-domains", default="", help="Comma-separated domains to exclude, e.g. docenti.unisa.it")
     parser.add_argument("--json-out", type=Path, default=DEFAULT_JSON_OUT)
     parser.add_argument("--md-out", type=Path, default=DEFAULT_MD_OUT)
     args = parser.parse_args()
@@ -334,16 +312,20 @@ def main() -> None:
     if not openrouter_api_key:
         raise SystemExit("OPENROUTER_API_KEY is missing in .env or environment.")
 
+    exclude_domains = [d.strip() for d in args.exclude_domains.split(",") if d.strip()]
+
     parent_store = choose_parent_store(args.parent_store)
     if not parent_store.exists():
         raise SystemExit(f"Parent store not found: {parent_store}")
 
-    samples = sample_parent_docs(parent_store, args.limit, args.seed, args.min_chars)
+    samples = sample_parent_docs(parent_store, args.limit, args.seed, args.min_chars, exclude_domains)
     if not samples:
         raise SystemExit(f"No readable parent docs found in: {parent_store}")
 
     print(f"Parent store: {parent_store}")
-    print(f"Comparing {len(samples)} samples: fallback vs {OLLAMA_MODEL} vs {args.openrouter_model}")
+    if exclude_domains:
+        print(f"Excluded domains: {', '.join(exclude_domains)}")
+    print(f"Comparing {len(samples)} samples: fallback (heuristic) vs {args.openrouter_model}")
 
     results = []
     started_at = time.time()
@@ -353,25 +335,21 @@ def main() -> None:
             openrouter_api_key=openrouter_api_key,
             openrouter_model=args.openrouter_model,
             openrouter_timeout=args.openrouter_timeout,
-            ollama_timeout=args.ollama_timeout,
         )
         result["parent_file"] = path.name
         results.append(result)
 
         print(
             f"[{index:02d}/{len(samples)}] "
-            f"ollama={result['ollama_seconds']:.2f}s "
-            f"openrouter={result['openrouter_seconds']:.2f}s | "
+            f"{result['openrouter_seconds']:.2f}s | "
             f"fallback='{result['fallback_header']}' | "
-            f"ollama='{result['ollama_header'] or 'ERROR'}' | "
-            f"openrouter='{result['openrouter_header'] or 'ERROR'}'"
+            f"llm='{result['openrouter_header'] or result['openrouter_error'] or 'ERROR'}'"
         )
 
     report = {
         "parent_store": str(parent_store),
         "sample_seed": args.seed,
         "openrouter_model": args.openrouter_model,
-        "ollama_model": OLLAMA_MODEL,
         "total_elapsed_seconds": round(time.time() - started_at, 3),
         "summary": summarize(results),
         "results": results,

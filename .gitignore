@@ -2,7 +2,7 @@
 .venv/
 venv/
 __pycache__/
-chroma_diem/
+chroma_diem*/
 *.pyc
 crawled_urls.json
 crawled_pdfs.json
@@ -14,7 +14,6 @@ logs/
 chroma_diem.backup_header_bad/
 evaluation/results/*
 !evaluation/results/.gitkeep
-src/data/badwords.b64
 tests/*
 .langgraph_api/*
 evaluation/full_comparison/*

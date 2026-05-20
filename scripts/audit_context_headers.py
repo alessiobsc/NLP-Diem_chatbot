@@ -216,6 +216,20 @@ def fetch_parent_documents(parent_store_dir: Path) -> list[dict[str, Any]]:
     return parents
 
 
+def _has_specific_subtopic(header: str) -> bool:
+    """Return True if header has a non-trivial subtopic after ' - '."""
+    if " - " not in header:
+        return False
+    _, subtopic = header.split(" - ", 1)
+    subtopic = subtopic.strip().lower()
+    return bool(subtopic) and subtopic not in GENERIC_HEADER_PATTERNS
+
+
+def _header_strip_prefix(header: str) -> str:
+    """Strip 'Context: ' prefix for pattern matching."""
+    return re.sub(r"^context\s*:\s*", "", header, flags=re.IGNORECASE).strip()
+
+
 def header_flags(
     header: str,
     source_counter: Counter[str],
@@ -224,16 +238,21 @@ def header_flags(
     sample_docs: list[str],
 ) -> list[str]:
     flags: list[str] = []
-    lowered = header.lower()
+    bare = _header_strip_prefix(header)
+    lowered = bare.lower()
     joined_context = "\n".join(sample_sources + sample_titles + sample_docs).lower()
-    word_count = len(header.split())
+    word_count = len(bare.split())
 
     if not header:
         flags.append("missing_header")
     if word_count > 35 or len(header) > 260:
         flags.append("header_long")
+
+    # Only flag as generic if there is no specific subtopic after " - "
     if any(pattern in lowered for pattern in GENERIC_HEADER_PATTERNS):
-        flags.append("generic_header")
+        if not _has_specific_subtopic(bare):
+            flags.append("generic_header")
+
     if any(pattern in lowered for pattern in ASSERTIVE_PATTERNS):
         flags.append("header_contains_claim")
     if sum(source_counter.values()) >= 100:
@@ -249,6 +268,11 @@ def header_flags(
         flags.append("possibly_wrong_type:project_on_course_url")
     if "docente" in lowered and any("corsi.unisa.it" in src for src in sample_sources):
         flags.append("possibly_wrong_type:teacher_on_course_url")
+
+    # Docenti pages should always have a name after " - "
+    docenti_sources = [s for s in sample_sources if "docenti.unisa.it" in s]
+    if docenti_sources and "docente" in lowered and not _has_specific_subtopic(bare):
+        flags.append("docente_no_name")
 
     return sorted(set(flags))
 
