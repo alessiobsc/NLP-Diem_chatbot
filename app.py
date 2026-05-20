@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from langchain_chroma import Chroma
 import gradio as gr
 
-from src.agent.brain import DiemBrain
+from src.agent.brain import DiemBrain, STREAM_DEGENERATE_SIGNAL
 from src.encoders.embedding_init import build_embedding_model
 from src.utils.logger import get_logger
 
@@ -62,9 +62,15 @@ brain = DiemBrain(vectorstore)
 # ─────────────────────────────────────────────────────────────────────────────
 # Gradio UI
 # ─────────────────────────────────────────────────────────────────────────────
+_DEGENERATE_FALLBACK = "Mi dispiace, non sono riuscito a trovare informazioni sufficienti per rispondere a questa domanda."
+
 def chat_fn(message: str, history: list):
     accumulated = ""
     for chunk in brain.chat_stream(message, DEFAULT_SESSION_ID):
+        if chunk == STREAM_DEGENERATE_SIGNAL:
+            # Answer was degenerate (<30 chars): replace entire display with fallback.
+            yield _DEGENERATE_FALLBACK
+            return
         accumulated += chunk
         yield accumulated
 

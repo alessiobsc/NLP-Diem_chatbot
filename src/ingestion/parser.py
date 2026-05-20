@@ -13,6 +13,8 @@ logger = get_logger(__name__)
 YEAR_CUTOFF = 2020
 TEMPORAL_SCAN_CHARS = 2500
 RAW_PDF_SCAN_CHARS = 2500
+MIN_DOC_CHARS = 20
+MAX_SYMBOL_RATIO = 0.45
 
 METADATA_DATE_KEYS = (
     "date", "created", "creation_date", "creationdate", "moddate",
@@ -136,6 +138,7 @@ def extract_html_metadata(html: str) -> dict:
 
 
 def clean_text(text: str) -> str:
+    text = text.replace("�", "'")
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
@@ -549,6 +552,13 @@ def is_low_text_quality_document(doc) -> tuple[bool, str]:
     """Return whether a document should be dropped before enrichment/indexing."""
     if is_raw_pdf_artifact(doc.page_content):
         return True, "raw PDF object stream"
+    text = doc.page_content.strip()
+    if len(text) < MIN_DOC_CHARS:
+        return True, f"too short ({len(text)} chars)"
+    non_alnum = sum(1 for c in text if not c.isalnum() and not c.isspace())
+    ratio = non_alnum / len(text)
+    if ratio > MAX_SYMBOL_RATIO:
+        return True, f"high symbol ratio ({ratio:.2f})"
     return False, ""
 
 

@@ -43,6 +43,7 @@ SKIP_DOCUMENT_SUBSTRINGS: Tuple[str, ...] = (
     "/en/",
     "/zh/",
     "/valutazione-della-didattica",
+    "/pubblicazioni?anno=0",  # "all years" publication aggregation — keep only year-specific URLs
 )
 
 OFFERTA_FORMATIVA_PATH = "/didattica/offerta-formativa"
