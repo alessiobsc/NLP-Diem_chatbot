@@ -707,3 +707,88 @@ CRONOLOGIA AGGIORNAMENTI
   Miglioramento complessivo: ~93-95% dei doc su tutti e 3 i seed.
   Errori residui: ~3-5% (stochastic LLM su PDF con contenuto misto, irreducibili
   al livello del modello 8b senza aumentare la qualità del modello).
+
+2026-05-21 - Crawl/ingestion: structured pages mirate, dedup prudente, bandi recenti, focus corsi
+
+  STRUCTURED EXTRACTION MIRATA PER PAGINE CRITICHE
+  ------------------------------------------------
+  Validata e applicata logica di parsing strutturato solo su URL critici con
+  accordion/tabelle informative, evitando applicazione globale sul sito.
+  Pattern coperti:
+    - /dipartimento/organi-collegiali
+    - /dipartimento/personale
+    - /dipartimento/commissione-paritetica
+    - /dipartimento/commissioni?dettaglio=...
+    - corsi.unisa.it/.../strutture-didattiche
+  Strategia finale: usare structured-only dove il parsing strutturato contiene
+  tutta l'informazione utile; usare current+structured solo dove il testo
+  descrittivo "Compiti" sarebbe perso. Rimossa dicitura artificiale
+  "Sezioni strutturate estratte" dal contenuto finale per ridurre rumore.
+  Verificato su pagine critiche che vengono recuperati correttamente:
+    - componenti di Direttore/Giunta/Consiglio;
+    - personale per ruolo;
+    - commissioni e relativi membri;
+    - aule/codici/ubicazioni/capienza delle strutture didattiche.
+
+  DEDUPLICAZIONE URL/CONTENUTO PIU' PRUDENTE
+  ------------------------------------------
+  Reintrodotta dedup source_alias + content_hash dopo test sui 2225 URL
+  crawlati. Logica prudente:
+    - canonicalizzazione URL per rimuovere differenze non semantiche;
+    - dedup per source/canonical source;
+    - hash contenuto usato solo come conferma su testi normalizzati lunghi
+      (>300 caratteri);
+    - evitare dedup cross-course e cross-docente per non perdere pagine
+      semanticamente diverse ma testualmente simili.
+
+  CRAWL BANDI RECENTI DIEM
+  ------------------------
+  Aggiunta generazione esplicita degli URL bandi DIEM per anno corrente e anno
+  precedente, sulle categorie:
+    - Incarichi di Insegnamento;
+    - Collaborazioni con il Dipartimento;
+    - Personale Tecnico Amministrativo;
+    - Dottorati di Ricerca;
+    - Assegni di Ricerca;
+    - Borse di Ricerca;
+    - Borse e Premi;
+    - Altri bandi.
+  Test preventivo su 16 URL (8 categorie x 2 anni):
+    - OK: 16/16;
+    - URL con contenuto probabile: 13;
+    - PDF link trovati: 239;
+    - link bandi/dettaglio trovati: 763.
+  Obiettivo: includere anche i bandi 2025 oltre a quelli 2026 senza aprire
+  tutto lo storico 2016-2026.
+
+  FOCUS DELLA DIDATTICA DEI CORSI
+  -------------------------------
+  Problema rilevato: il crawl corsi con max_depth=1 prendeva la pagina
+  /focus ma non le sottopagine /focus?id=..., quindi mancavano contenuti come
+  Academy DIEM, Tutorato, EUR-ACE, Dopo la Laurea e guide di iscrizione.
+  Test max_depth=2 globale scartato: recupera più pagine ma apre troppo rumore
+  (print(), history.go(-1), urp&, ammicent&, email trasformate in URL, PDF
+  trattati come HTML, sezioni laterali non richieste).
+  Soluzione applicata: regola mirata sui corsi:
+    - fetch esplicito di https://corsi.unisa.it/<corso>/focus;
+    - estrazione solo dei link con stesso path /focus e query id=...;
+    - download diretto delle pagine /focus?id=... come raw HTML Document;
+    - passaggio nei normali filter_docs/dedupe/metadati/parser.
+  Test preventivo:
+    - corsi testati: 7;
+    - pagine /focus raggiunte: 7/7;
+    - focus?id trovati: 19;
+    - dettagli scaricati: 19/19;
+    - pagine vuote o troppo corte: 0.
+
+  CONFIGURAZIONE E VERIFICHE
+  --------------------------
+  Aggiunto supporto a python main_ingestion.py --crawl-only e --full con lazy
+  embedding model, così il crawling può essere testato senza inizializzare
+  embedding/indexing inutilmente.
+  Verificato che il provider embedding possa restare OpenRouter mentre la
+  generazione dei contextual header può usare fallback Ollama locale.
+  Nota tester.py: con EMBEDDING_PROVIDER=openrouter Ragas può richiedere metodi
+  async (aembed_documents/aembed_query) non ancora implementati in
+  OpenRouterEmbeddings; da correggere se si vuole usare Ragas async con quel
+  provider.

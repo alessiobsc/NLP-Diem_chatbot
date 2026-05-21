@@ -4,11 +4,12 @@ import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Iterable, Dict, Set, Tuple, List, Optional
-from urllib.parse import urldefrag, urljoin, urlparse
+from urllib.parse import parse_qs, urlencode, urldefrag, urljoin, urlparse, urlunparse
 
 import requests
 import urllib3
 from bs4 import BeautifulSoup
+from langchain_core.documents import Document
 from langchain_community.document_loaders import RecursiveUrlLoader
 from requests import Session
 from requests.adapters import HTTPAdapter
@@ -288,6 +289,78 @@ def crawl_html_sitemap(
                     count += 1
                     yield doc
                 logger.debug(f"    [{i:02d}/{len(seeds)}] {seed} ({count} pages)")
+
+
+def extract_course_focus_urls(course_url: str, session: Optional[Session] = None) -> List[str]:
+    """Extract detail URLs from a course /focus page without broadening recursion."""
+    focus_url = f"{course_url.rstrip('/')}/focus"
+    active_session = session or create_resilient_session()
+    should_close = session is None
+
+    try:
+        response = active_session.get(focus_url, timeout=REQUEST_TIMEOUT)
+        response.raise_for_status()
+    except Exception as e:
+        logger.debug(f"Unable to fetch course focus page {focus_url}: {e}")
+        if should_close:
+            active_session.close()
+        return []
+
+    try:
+        soup = BeautifulSoup(response.text, "lxml")
+        focus_parsed = urlparse(focus_url)
+        focus_path = focus_parsed.path.rstrip("/")
+        detail_urls: Set[str] = set()
+
+        for anchor in soup.find_all("a", href=True):
+            href = anchor.get("href", "").strip()
+            if not href or href.startswith(("javascript:", "mailto:", "tel:")):
+                continue
+
+            absolute_url, _ = urldefrag(urljoin(focus_url, href))
+            parsed = urlparse(absolute_url)
+            query = parse_qs(parsed.query)
+            focus_ids = query.get("id")
+
+            if parsed.netloc != focus_parsed.netloc:
+                continue
+            if parsed.path.rstrip("/") != focus_path:
+                continue
+            if not focus_ids:
+                continue
+
+            normalized_query = urlencode({"id": focus_ids[0]})
+            detail_urls.add(
+                urlunparse(("https", parsed.netloc, parsed.path.rstrip("/"), "", normalized_query, ""))
+            )
+
+        return sorted(detail_urls)
+    finally:
+        if should_close:
+            active_session.close()
+
+
+def crawl_course_focus_detail_pages(course_url: str) -> List[Document]:
+    """Fetch only /focus?id=... detail pages for a course as raw HTML documents."""
+    docs: List[Document] = []
+
+    with create_resilient_session() as session:
+        focus_urls = extract_course_focus_urls(course_url, session=session)
+        if not focus_urls:
+            logger.debug(f"No course focus detail URLs found for {course_url}")
+            return docs
+
+        logger.info(f"  -> Found {len(focus_urls)} course focus detail URLs for {course_url}")
+
+        for focus_url in focus_urls:
+            try:
+                response = session.get(focus_url, timeout=REQUEST_TIMEOUT)
+                response.raise_for_status()
+                docs.append(Document(page_content=response.text, metadata={"source": focus_url}))
+            except Exception as e:
+                logger.warning(f"Unable to fetch course focus detail page {focus_url}: {e}")
+
+    return docs
 
 
 def extract_corsi_urls(raw_docs: Iterable) -> List[str]:

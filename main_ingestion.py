@@ -16,6 +16,7 @@ load_dotenv()
 
 from src.ingestion.crawler import (
     crawl,
+    crawl_course_focus_detail_pages,
     crawl_html_sitemap,
     extract_corsi_urls,
     extract_diem_faculty_urls,
@@ -302,10 +303,18 @@ def crawl_phase() -> tuple[list, list]:
                 fallback_depth=3,
             ))
         )))
+        focus_docs = list(filter_docs(dedupe_docs_by_source(
+            crawl_course_focus_detail_pages(url)
+        )))
+        if focus_docs:
+            docs = dedupe_docs_by_source(docs + focus_docs)
         batch_pdfs = load_pdfs_from_links(docs, seen_pdf_urls)
         raw_html_docs.extend(docs)
         pdf_docs.extend(batch_pdfs)
-        logger.info(f"  [{i:02d}/{total_corsi}] {url}  ({len(docs)} sub-pages)")
+        logger.info(
+            f"  [{i:02d}/{total_corsi}] {url}  "
+            f"({len(docs)} sub-pages, {len(focus_docs)} focus detail pages)"
+        )
 
     return raw_html_docs, pdf_docs
 
