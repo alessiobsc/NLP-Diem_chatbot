@@ -165,6 +165,7 @@ def generate_for_doc(
     openrouter_api_key: str,
     openrouter_model: str,
     openrouter_timeout: float,
+    openrouter_model_b: str | None = None,
 ) -> dict[str, Any]:
     page_content = doc["page_content"]
     metadata = doc["metadata"]
@@ -199,6 +200,30 @@ def generate_for_doc(
     except Exception as exc:
         openrouter_error = str(exc)
 
+    model_b_raw = ""
+    model_b_header = ""
+    model_b_error = ""
+    model_b_seconds = 0.0
+    if openrouter_model_b:
+        try:
+            model_b_raw, model_b_seconds = call_openrouter(
+                openrouter_api_key,
+                openrouter_model_b,
+                prompt,
+                openrouter_timeout,
+            )
+            _b_base = normalize_context_header(model_b_raw, page_content, source, metadata)
+            model_b_header = f"{_b_base} {year_tag}".strip() if year_tag else _b_base
+        except Exception as exc:
+            model_b_error = str(exc)
+
+    flags: dict[str, list[str]] = {
+        "fallback": flag_header(fallback, source, title),
+        "openrouter": flag_header(openrouter_header, source, title),
+    }
+    if openrouter_model_b:
+        flags["model_b"] = flag_header(model_b_header, source, title)
+
     return {
         "source": source,
         "title": title,
@@ -208,20 +233,24 @@ def generate_for_doc(
         "openrouter_header": openrouter_header,
         "openrouter_seconds": round(openrouter_seconds, 3),
         "openrouter_error": openrouter_error,
-        "flags": {
-            "fallback": flag_header(fallback, source, title),
-            "openrouter": flag_header(openrouter_header, source, title),
-        },
+        "model_b_raw_header": model_b_raw,
+        "model_b_header": model_b_header,
+        "model_b_seconds": round(model_b_seconds, 3),
+        "model_b_error": model_b_error,
+        "flags": flags,
         "content_preview": page_content[:700],
     }
 
 
-def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
+def summarize(results: list[dict[str, Any]], model_b: str | None = None) -> dict[str, Any]:
     summary: dict[str, Any] = {"sample_size": len(results), "models": {}}
-    for name, header_key, seconds_key, error_key in (
+    model_specs = [
         ("fallback", "fallback_header", None, None),
         ("openrouter", "openrouter_header", "openrouter_seconds", "openrouter_error"),
-    ):
+    ]
+    if model_b:
+        model_specs.append(("model_b", "model_b_header", "model_b_seconds", "model_b_error"))
+    for name, header_key, seconds_key, error_key in model_specs:
         headers = [r.get(header_key, "") for r in results]
         flag_counter = Counter(flag for r in results for flag in r["flags"][name])
         model_summary = {
@@ -246,12 +275,19 @@ def md_escape(value: Any) -> str:
 
 def write_markdown(path: Path, report: dict[str, Any]) -> None:
     summary = report["summary"]
-    rows = [
-        "# Context Header Model Comparison",
-        "",
+    model_b = report.get("openrouter_model_b")
+    model_a_label = report["openrouter_model"]
+    model_b_label = model_b or ""
+
+    header_meta = [
         f"- Parent store: `{report['parent_store']}`",
         f"- Sample size: `{summary['sample_size']}`",
-        f"- LLM model: `{report['openrouter_model']}`",
+        f"- Model A: `{model_a_label}`",
+    ]
+    if model_b:
+        header_meta.append(f"- Model B: `{model_b_label}`")
+
+    rows = ["# Context Header Model Comparison", ""] + header_meta + [
         "",
         "## Summary",
         "",
@@ -269,27 +305,29 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
             f"{md_escape(flags)} |"
         )
 
-    rows.extend([
-        "",
-        "## Cases",
-        "",
-        f"| # | Source | Title | Fallback (heuristic) | {report['openrouter_model']} | Flags |",
-        "| ---: | --- | --- | --- | --- | --- |",
-    ])
+    cases_header = f"| # | Source | Title | Fallback (heuristic) | {model_a_label}"
+    cases_separator = "| ---: | --- | --- | --- | ---"
+    if model_b:
+        cases_header += f" | {model_b_label}"
+        cases_separator += " | ---"
+    cases_header += " | Flags |"
+    cases_separator += " | --- |"
+
+    rows.extend(["", "## Cases", "", cases_header, cases_separator])
+
     for index, result in enumerate(report["results"], 1):
-        flags = {
-            "fallback": result["flags"]["fallback"],
-            "openrouter": result["flags"]["openrouter"],
-        }
-        rows.append(
-            "| "
-            f"{index} | "
+        flags_all = result["flags"]
+        row = (
+            f"| {index} | "
             f"{md_escape(result['source'])} | "
             f"{md_escape(result['title'])} | "
             f"{md_escape(result['fallback_header'])} | "
-            f"{md_escape(result['openrouter_header'] or result['openrouter_error'])} | "
-            f"{md_escape(flags)} |"
+            f"{md_escape(result['openrouter_header'] or result['openrouter_error'])}"
         )
+        if model_b:
+            row += f" | {md_escape(result.get('model_b_header') or result.get('model_b_error', ''))}"
+        row += f" | {md_escape(flags_all)} |"
+        rows.append(row)
 
     path.write_text("\n".join(rows) + "\n", encoding="utf-8")
 
@@ -302,6 +340,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--min-chars", type=int, default=80)
     parser.add_argument("--openrouter-model", default=DEFAULT_MODEL)
+    parser.add_argument("--model-b", default=None, help="Second OpenRouter model for side-by-side comparison (optional)")
     parser.add_argument("--openrouter-timeout", type=float, default=45)
     parser.add_argument("--exclude-domains", default="", help="Comma-separated domains to exclude, e.g. docenti.unisa.it")
     parser.add_argument("--json-out", type=Path, default=DEFAULT_JSON_OUT)
@@ -325,7 +364,10 @@ def main() -> None:
     print(f"Parent store: {parent_store}")
     if exclude_domains:
         print(f"Excluded domains: {', '.join(exclude_domains)}")
-    print(f"Comparing {len(samples)} samples: fallback (heuristic) vs {args.openrouter_model}")
+    comparison_label = f"fallback (heuristic) vs {args.openrouter_model}"
+    if args.model_b:
+        comparison_label += f" vs {args.model_b}"
+    print(f"Comparing {len(samples)} samples: {comparison_label}")
 
     results = []
     started_at = time.time()
@@ -335,23 +377,28 @@ def main() -> None:
             openrouter_api_key=openrouter_api_key,
             openrouter_model=args.openrouter_model,
             openrouter_timeout=args.openrouter_timeout,
+            openrouter_model_b=args.model_b,
         )
         result["parent_file"] = path.name
         results.append(result)
 
-        print(
+        line = (
             f"[{index:02d}/{len(samples)}] "
-            f"{result['openrouter_seconds']:.2f}s | "
+            f"A={result['openrouter_seconds']:.2f}s | "
             f"fallback='{result['fallback_header']}' | "
-            f"llm='{result['openrouter_header'] or result['openrouter_error'] or 'ERROR'}'"
+            f"A='{result['openrouter_header'] or result['openrouter_error'] or 'ERROR'}'"
         )
+        if args.model_b:
+            line += f" | B({result['model_b_seconds']:.2f}s)='{result['model_b_header'] or result['model_b_error'] or 'ERROR'}'"
+        print(line)
 
     report = {
         "parent_store": str(parent_store),
         "sample_seed": args.seed,
         "openrouter_model": args.openrouter_model,
+        "openrouter_model_b": args.model_b,
         "total_elapsed_seconds": round(time.time() - started_at, 3),
-        "summary": summarize(results),
+        "summary": summarize(results, model_b=args.model_b),
         "results": results,
     }
 

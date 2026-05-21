@@ -44,6 +44,8 @@ _SCOPE_KEYWORDS = {
     "average", "graduation", "thesis", "exam", "lecture", "semester",
     # Academic person/role patterns — specific enough to be safe scope indicators
     "insegna", "insegnamento", "ricercatore", "pubblicazioni", "curriculum", "personale",
+    # Administrative/contact data published on DIEM/UNISA site
+    "fiscale", "iva", "footer", "indirizzo", "contatti", "pec",
 }
 
 _SCOPE_SYSTEM = (
@@ -53,6 +55,8 @@ _SCOPE_SYSTEM = (
     "DIEM covers topics such as: courses and degrees (computer science, electrical engineering, mathematics), "
     "professors and researchers, exams, academic regulations, labs, research projects, "
     "department services, Erasmus programs, and university life at UniSa. "
+    "Administrative and contact data published on the DIEM or UNISA website — including "
+    "P.IVA, codice fiscale, addresses, phone numbers, and PEC — are also in scope. "
     "Respond with exactly one word: yes or no. No explanations, no punctuation."
 )
 _SCOPE_PROMPT = (
