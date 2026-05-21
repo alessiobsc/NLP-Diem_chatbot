@@ -4,8 +4,8 @@ venv/
 __pycache__/
 chroma_diem*/
 *.pyc
-crawled_urls.json
-crawled_pdfs.json
+crawled_urls*.json
+crawled_pdfs*.json
 evaluation/cache/
 evaluation/results/
 evaluation/crawler_comparison/
@@ -18,5 +18,6 @@ tests/*
 .langgraph_api/*
 evaluation/full_comparison/*
 evaluation/parser_comparison/*
-report_scheletro.pdf 
+report_scheletro.pdf
 Project Assignment.pdf
+db/crawl_state.db

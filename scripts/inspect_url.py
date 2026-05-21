@@ -8,12 +8,14 @@ Usage:
 """
 
 import argparse
+import io
 import os
 import sys
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.ingestion.crawler import crawl, get_section_base
-from src.ingestion.parser import extract_html_metadata, html_extractor
+from src.ingestion.parser import extract_html_metadata, html_extractor_for_source
 
 
 def main():
@@ -46,7 +48,7 @@ def main():
         print("\n--- RAW HTML ---")
         print(raw_html)
     else:
-        text = html_extractor(raw_html)
+        text = html_extractor_for_source(raw_html, url)
         char_count = len(text) if text else 0
         print(f"\n--- EXTRACTED TEXT ({char_count} chars) ---")
         print(text if text else "[empty -- html_extractor returned nothing]")

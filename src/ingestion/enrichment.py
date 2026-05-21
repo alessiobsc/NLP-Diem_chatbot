@@ -33,6 +33,7 @@ _OLLAMA_FAILURES = 0
 # Domains where heuristic always produces optimal headers (e.g. professor name from title)
 _HEURISTIC_ONLY_DOMAINS = frozenset({
     "docenti.unisa.it",
+    "easycourse.unisa.it",
 })
 
 
@@ -92,21 +93,21 @@ def generate_context_header(text: str, url: str, metadata: dict | None = None) -
                     f"parent_chars={len(text or '')}; prompt_chars={len(prompt)}"
                 )
                 response = requests.post(
-                    OPENROUTER_ENDPOINT,
-                    headers={
-                        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                        "Content-Type": "application/json",
-                        "HTTP-Referer": "https://github.com/local/diem-chatbot",
-                        "X-Title": "DIEM Context Header Enrichment",
-                    },
-                    json={
-                        "model": OPENROUTER_CONTEXT_HEADER_MODEL,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "temperature": 0,
-                        "max_tokens": 60,
-                    },
-                    timeout=OPENROUTER_TIMEOUT_SECONDS,
-                )
+                        OPENROUTER_ENDPOINT,
+                        headers={
+                            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                            "Content-Type": "application/json",
+                            "HTTP-Referer": "https://github.com/local/diem-chatbot",
+                            "X-Title": "DIEM Context Header Enrichment",
+                        },
+                        json={
+                            "model": OPENROUTER_CONTEXT_HEADER_MODEL,
+                            "messages": [{"role": "user", "content": prompt}],
+                            "temperature": 0,
+                            "max_tokens": 60,
+                        },
+                        timeout=OPENROUTER_TIMEOUT_SECONDS,
+                    )
                 response.raise_for_status()
                 raw_header = response.json()["choices"][0]["message"]["content"].strip().splitlines()[0]
                 header = normalize_context_header(raw_header, text, url, metadata)
@@ -203,7 +204,7 @@ def generate_context_header(text: str, url: str, metadata: dict | None = None) -
         header = normalize_context_header(fallback_context_header(text, url, metadata), text, url, metadata)
 
     year_tag = extract_year_tag(url, metadata, text)
-    if year_tag:
+    if year_tag and "easycourse.unisa.it" not in url:
         header = f"{header} {year_tag}"
 
     header = ensure_context_prefix(header)
