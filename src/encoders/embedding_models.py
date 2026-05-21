@@ -2,6 +2,7 @@ from typing import List
 from langchain_huggingface import HuggingFaceEmbeddings
 from openai import OpenAI
 from src.utils.logger import get_logger
+import asyncio
 
 
 logger = get_logger(__name__)
@@ -67,6 +68,14 @@ class OpenRouterEmbeddings:
         except Exception as e:
             logger.error(f"Error calling OpenRouter embedding API: {e}")
             raise e
+
+    async def aembed_documents(self, texts: List[str]) -> List[List[float]]:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self.embed_documents, texts)
+
+    async def aembed_query(self, text: str) -> List[float]:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self.embed_query, text)
 
 
 class E5HuggingFaceEmbeddings(HuggingFaceEmbeddings):
