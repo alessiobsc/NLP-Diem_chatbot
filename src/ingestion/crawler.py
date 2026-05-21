@@ -116,11 +116,48 @@ def create_resilient_session() -> Session:
 # UTILITY FUNCTIONS
 # ==============================================================================
 
-def is_pre_2020_url(url: str) -> bool:
-    """Check if the URL belongs to an academic year prior to 2020."""
-    normalized_url = url.replace("_", "/")
-    years = [int(y) for y in re.findall(r"\b(19\d{2}|20[01]\d)\b", normalized_url)]
-    return any(year < 2020 for year in years)
+ACCUMULATIVE_URL_PATTERNS = ("/pubblicazioni", "public-engagement", "premi-ricerca")
+
+# Structured PDF collections versioned by year in path — URL filter defers to document-level grouping
+PDF_VERSIONED_PATHS = ("__schede-sua", "__almalaurea", "__regolamenti-cds", "__statistiche-corsi", "__piano-studi-cds")
+
+
+def _extract_max_year(url: str) -> int | None:
+    """Return the maximum year found in a URL.
+
+    Handles both 4-digit years and YYYY-YY academic year patterns (e.g. 2024-25 → 2025).
+    """
+    normalized = url.replace("_", "/")
+    years = [int(y) for y in re.findall(r"\b(19\d{2}|20\d{2})\b", normalized)]
+    for m in re.finditer(r"\b(20\d{2})-(\d{2})\b", normalized):
+        years.append(2000 + int(m.group(2)))
+    return max(years) if years else None
+
+
+def should_skip_url_by_year(url: str) -> bool:
+    """Return True if URL year is below the applicable cutoff.
+
+    Accumulative (pubblicazioni, public-engagement, premi-ricerca): cutoff 2020; also skip anno=0.
+    Structured PDF collections: cutoff 2020, latest-version logic handled at document level.
+    All other URLs: cutoff 2025 — skip only if max year found in URL < 2025.
+    YYYY-YY academic year patterns (e.g. 2024-25) are resolved to the second year (2025).
+    """
+    if any(p in url for p in ACCUMULATIVE_URL_PATTERNS):
+        if re.search(r"[?&]anno=0\b", url):
+            return True
+        max_year = _extract_max_year(url)
+        return max_year is not None and max_year < 2020
+
+    max_year = _extract_max_year(url)
+
+    if any(p in url for p in PDF_VERSIONED_PATHS):
+        return max_year is not None and max_year < 2020
+
+    # Individual PDFs: defer to document-level filter; only drop pre-2020
+    if url.lower().split("?")[0].endswith(".pdf"):
+        return max_year is not None and max_year < 2020
+
+    return max_year is not None and max_year < 2025
 
 
 def get_section_base(url: str) -> str:
@@ -256,7 +293,7 @@ def _is_valid_sitemap_url(url: str, expected_netloc: str) -> bool:
         return False
     if any(excluded in url for excluded in EXCLUDE_DIRS):
         return False
-    if is_pre_2020_url(url):
+    if should_skip_url_by_year(url):
         return False
     return True
 
@@ -445,7 +482,7 @@ def filter_docs(docs: Iterable) -> list:
     filtered = [
         d for d in docs
         if not any(p in d.metadata.get("source", "") for p in SKIP_DOCUMENT_SUBSTRINGS)
-        and not is_pre_2020_url(d.metadata.get("source", ""))
+        and not should_skip_url_by_year(d.metadata.get("source", ""))
     ]
 
     # Dedup by source URL — same URL crawled from multiple entry points yields identical content

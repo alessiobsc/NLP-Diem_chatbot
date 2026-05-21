@@ -789,3 +789,221 @@ CRONOLOGIA AGGIORNAMENTI
   Miglioramento complessivo: ~93-95% dei doc su tutti e 3 i seed.
   Errori residui: ~3-5% (stochastic LLM su PDF con contenuto misto, irreducibili
   al livello del modello 8b senza aumentare la qualità del modello).
+
+2026-05-21 - Crawler EasyCourse: calendario esami e orario lezioni settimanale
+
+  CONTESTO
+  --------
+  Aggiunta integrazione con le API pubbliche di EasyCourse (easycourse.unisa.it)
+  per arricchire la KB con dati real-time: calendario appelli 2025/2026 e
+  orario settimanale delle lezioni dei 5 corsi DIEM (06127, 06128, 06227,
+  06232, 06233).
+
+  NUOVO MODULO: src/ingestion/easycourse.py
+  -----------------------------------------
+  Due funzioni pubbliche:
+
+  1. fetch_easycourse_documents(anno="2025") -> list[LCDocument]
+     - Endpoint: combo.php (sw=et_, catalogo esami) + test_call.php (appelli).
+     - Parsing: json.JSONDecoder().raw_decode() per gestire risposte con
+       prefisso JS "var et_elenco_cdl = [...]" seguite da altri statement.
+     - Logica: per ogni CDL DIEM, per ogni sessione il cui label contiene
+       "2026" (filtro CURRENT_YEAR_FILTER), richiama test_call.php e
+       aggrega gli appelli.
+     - Output: 1 LCDocument per (CDL, insegnamento) con TUTTI gli appelli
+       2026 elencati — un retrieval restituisce la foto completa degli esami
+       dell'insegnamento (vs 854 doc separati per appello che frammentavano).
+     - Risultato verificato: 147 documenti, formato: Corso / Insegnamento /
+       CFU / Tipo esame / Docente / Anno accademico / Appelli (N): lista.
+
+  2. fetch_easycourse_lectures(anno="2025") -> list[LCDocument]
+     - Endpoint: combo.php (sw=ec_, catalogo lezioni — DIVERSO da et_!) +
+       grid_call.php (griglia settimanale).
+     - Differenza chiave rispetto a combo esami: il catalogo lezioni (ec_)
+       non include l'anno 1 (le matricole usano codici IE127 distinti).
+       Usare i codici del catalogo et_ portava a celle sempre vuote.
+     - Richiesta: UNA POST per CDL con tutti gli anno2[] in bundle (come
+       fa il form browser), non una per anno-corso. Parametri corretti
+       intercettati via Playwright: all_events=0 (non 1), anno2 da catalogo ec_.
+     - Parsing celle: i campi top-level (nome_insegnamento, giorno, ora_inizio,
+       ora_fine, aula, docente) bastano — nessuna analisi HTML necessaria.
+       Giorno numerico (1=Lunedì...7=Domenica) mappato a nome italiano.
+     - Output: 1 LCDocument per (CDL, insegnamento) con i slot della settimana
+       corrente (date.today()). Ref_date nel metadata per tracciabilità.
+     - Risultato verificato: 30 documenti (settimana 18-24 maggio 2026).
+
+  INTEGRAZIONE main_ingestion.py
+  -------------------------------
+  In run_full_pipeline() dopo il crawl HTML/PDF, blocco try/except:
+    exam_docs  = fetch_easycourse_documents()
+    lecture_docs = fetch_easycourse_lectures()
+    all_docs += exam_docs + lecture_docs
+  Se la fetch fallisce, la pipeline continua (warning, non errore bloccante).
+
+  COMPATIBILITA' CON AGGIORNAMENTO SETTIMANALE
+  --------------------------------------------
+  fetch_easycourse_lectures() usa date.today() — ogni --full aggiorna
+  automaticamente l'orario alla settimana corrente. La source URL e'
+  stabile per CDL, quindi Chroma sovrascrive i doc obsoleti. Non richiede
+  merge da origin/angel (CrawlStateManager) per funzionare.
+
+2026-05-21 - Filtro temporale riprogettato + fix estrazione HTML accordion
+
+  PARTE 1: FILTRO TEMPORALE MULTI-TIER (src/ingestion/crawler.py, parser.py)
+  ---------------------------------------------------------------------------
+
+  PROBLEMA
+  --------
+  Il filtro temporale originale usava un cutoff fisso al 2020 su tutti gli URL
+  e documenti. Questo catturava anni di contenuto obsoleto (piani di studio
+  2021, regolamenti 2022, schede SUA 2020-2023) che ingombrava la KB con dati
+  superati, riducendo la precisione del retrieval.
+
+  SOLUZIONE: tre categorie di URL con cutoff differenziati
+  --------------------------------------------------------
+  Introdotte costanti ACCUMULATIVE_URL_PATTERNS e PDF_VERSIONED_PATHS in
+  crawler.py. La funzione `should_skip_url_by_year` (sostituisce le precedenti
+  `is_pre_2020_url` / `is_pre_2025_url`) applica regole diverse per categoria:
+
+  1. URL accumulativi (pubblicazioni, public-engagement, premi-ricerca):
+     cutoff 2020. Ogni anno e' contenuto distinto e non sostituisce il precedente.
+     Nota: `?anno=0` (vista "tutti gli anni") viene droppato perché ridondante
+     rispetto alle pagine per singolo anno.
+
+  2. Collezioni PDF versionate per anno (__schede-sua, __almalaurea,
+     __regolamenti-cds, __statistiche-corsi, __piano-studi-cds):
+     cutoff 2020 nell'URL, ma logica "latest-version" al livello documento
+     (vedi sotto) — si deferisce al filtro documento per preservare l'anno
+     piu' recente disponibile anche se antecedente al 2025.
+
+  3. Tutti gli altri URL HTML (pagine docenti, corsi, bandi, ecc.):
+     cutoff 2025 — si drop se l'anno massimo trovato nell'URL e' < 2025.
+
+  4. PDF individuali: cutoff 2020 — si defer al filtro documento.
+
+  GESTIONE ANNO ACCADEMICO YYYY-YY (es. 2024-25 -> 2025)
+  -------------------------------------------------------
+  La funzione `_extract_max_year(url)` riconosce il pattern YYYY-YY
+  (es. "2024-25" nel nome file o nel path) e lo risolve al secondo anno
+  (2025). Senza questo fix, un PDF nominato "regolamento-2024-25.pdf"
+  veniva droppato perche' l'unico anno a 4 cifre trovato era 2024 < 2025,
+  anche se rappresenta l'anno accademico corrente.
+
+  LOGICA LATEST-VERSION (due passate) in filter_recent_documents
+  ---------------------------------------------------------------
+  Passata 1: per ogni documento non-accumulativo, calcola l'anno massimo
+  trovato in URL/metadata e lo registra per la base URL (strip dei
+  parametri anno: ?anno=YYYY, /YYYY-YYYY/, /20XX_YY/, /20XX/).
+
+  Passata 2: per ogni documento, se l'anno del documento coincide con il
+  massimo anno visto per quella base URL (e >= 2020), il documento viene
+  marcato `is_latest_version=True` → cutoff abbassato a 2020. Questo
+  preserva, ad esempio, il regolamento CDS 2024 anche se il cutoff
+  generale e' 2025, se il 2024 e' la versione piu' recente disponibile.
+
+  ESEMPIO PRATICO
+  ---------------
+  Scheda SUA 2020, 2021, 2022, 2023 → droppate (esiste versione 2024).
+  Scheda SUA 2024 → tenuta (latest version, anno >= 2020 floor).
+  Piano di studi 2025 → tenuto (anno >= cutoff 2025).
+  Regolamento CDS 2024 (unica versione) → tenuto (latest version bypass).
+  Pagina docente ?anno=2022 → droppata (max year 2022 < 2025).
+  Pagina docente ?anno=2025&id=509826 → tenuta.
+  Pubblicazioni prof. 2021 → tenuta (accumulative, anno >= 2020).
+
+  AUDIT JSON
+  ----------
+  filter_recent_documents salva i documenti droppati in
+  `dropped_temporal_filter.json` con source URL e motivazione.
+  Simulazioni pre-crawl salvate in `dropped_urls_simulation.json` e
+  `dropped_pdfs_simulation.json` per review manuale.
+
+  VERIFICA
+  --------
+  Test su crawled_urls.json (1970 URL): tutti i 54 docenti con pagina
+  /didattica senza parametri → nessuno droppato. Solo ?anno=2020-2024
+  vengono rimossi correttamente.
+
+  PARTE 2: ESTRAZIONE HTML ACCORDION (src/ingestion/parser.py)
+  -------------------------------------------------------------
+
+  PROBLEMA IDENTIFICATO
+  ---------------------
+  Le pagine `docenti.unisa.it/*/didattica` elencano i corsi insegnati dal
+  docente in pannelli accordion: ogni corso e' un pannello con titolo (nome
+  corso + codice) e body (dipartimento, corso di laurea, anno).
+  Trafilatura (extractor primario) ignorava questi pannelli perche' usa un
+  algoritmo di content-detection basato su densita' testuale: i pannelli
+  accordion hanno bassa densita' di testo per singolo blocco e trafilatura
+  li classifica come "non-content". Risultato: soli 847 chars estratti su
+  una pagina didattica tipica, con NESSUN nome di corso.
+
+  PERCHE' TRAFILATURA RIMANE PRIMARIO
+  ------------------------------------
+  Prima di aggiungere la whitelist per l'accordion, e' stata condotta
+  un'analisi approfondita per valutare se sostituire trafilatura con BS4
+  come extractor primario:
+
+  Test su 1970 URL (scripts/compare_extractors.py):
+  - BS4 wins (>100 chars in piu'): 1314
+  - Tie: 645
+  - Trafilatura wins: 11 (tutti curriculum)
+  Analisi dei 11 "wins" di trafilatura: su 613 righe estratte, 295 erano
+  DUPLICATE — trafilatura ripeteva gli stessi paragrafi piu' volte.
+  BS4 con 323 righe pulite era qualitativamente migliore.
+
+  TUTTAVIA: il test di validazione completa (scripts/validate_bs4_primary.py)
+  ha rilevato un FALSO POSITIVO in `remove_site_boilerplate`:
+  la funzione `_is_site_footer_start` cerca "Universita' degli Studi di
+  Salerno" + markers indirizzo nella finestra successiva. Nei curriculum dei
+  docenti, la biografia menziona l'universita' nel corpo del testo, e la
+  finestra di 8 righe successive puo' includere righe con "c.f." (codice
+  fiscale del docente in qualche contesto). Risultato: il testo della
+  biografia veniva tagliato prematuramente → BS4 perdeva migliaia di chars
+  di contenuto reale (es. docenti.unisa.it/026557/curriculum: 6939 chars
+  di body → 1812 dopo boilerplate removal, con BS4 vs 6610 traf-dedup).
+  Fix non banale: irrigidire _is_site_footer_start richiederebbe riscrivere
+  la logica di riconoscimento footer con rischio di regressioni su altri
+  casi. Decisione: mantenere trafilatura + whitelist per casi specifici.
+
+  SOLUZIONE ADOTTATA: WHITELIST _is_structured_source
+  ----------------------------------------------------
+  Aggiunto pattern in `_is_structured_source`:
+    if netloc == "docenti.unisa.it":
+        return path.endswith("/didattica")
+  Per questi URL, `html_extractor_for_source` attiva `_extract_structured_sections`
+  che usa BeautifulSoup con selettori panel/accordion invece di trafilatura.
+  Strategia risultante: `structured_only_single_doc` (traf 847 chars → structured 949 chars)
+  con tutti i nomi dei corsi correttamente estratti.
+
+  FIX DEDUP PANEL SECTIONS
+  -------------------------
+  `_extract_panel_sections` produceva ogni titolo corso due volte:
+  una come sezione title e una come prima riga del body (perche' `_panel_body`
+  in fallback restituisce l'intero panel incluso l'heading).
+  Fix: in `_extract_panel_sections`, dopo `_extract_panel_body_lines(body)`,
+  si filtrano le righe identiche al titolo (case-insensitive).
+  Prima: "CIRCUITI, MACCHINE E IMPIANTI ELETTRICI\nCIRCUITI, MACCHINE E IMPIANTI ELETTRICI\n0612400060..."
+  Dopo:  "CIRCUITI, MACCHINE E IMPIANTI ELETTRICI\n0612400060..."
+
+  AGGIORNAMENTO inspect_url.py
+  ----------------------------
+  Lo script usava `html_extractor(html)` diretto, bypassando la logica
+  `_is_structured_source`. Aggiornato a `html_extractor_for_source(html, url)`:
+  ora riflette esattamente il comportamento della pipeline di produzione.
+
+  NUOVO SCRIPT: scripts/detect_accordion_urls.py
+  -----------------------------------------------
+  Script di discovery per trovare URL nei crawled dove l'estrazione
+  strutturata supera trafilatura di >= 30% e con >= 1 sezione trovata.
+  Campiona 1 URL per pattern netloc+path, testa entrambi gli extractors,
+  segnala i candidati da aggiungere a _is_structured_source.
+  Utilizzo: venv/Scripts/python scripts/detect_accordion_urls.py
+
+  STATO MODIFICHE
+  ---------------
+  File modificati: src/ingestion/crawler.py, src/ingestion/parser.py,
+                   scripts/inspect_url.py
+  File aggiunti:   scripts/detect_accordion_urls.py,
+                   scripts/compare_extractors.py,
+                   scripts/validate_bs4_primary.py
