@@ -319,152 +319,70 @@ CRONOLOGIA AGGIORNAMENTI
   84cb20d feat: update prompts for fully agentic RAG with year injection
   cf4303d feat: remove retrieve_node — fully agentic RAG complete
 
-2026-05-18 - Fix history pruning + tuning hint dinamico + middleware PII
+2026-05-17 - Fully Agentic: bug fix, refactoring, robustezza grafo
 
-  PROBLEMA IDENTIFICATO
-  ---------------------
-  Commit ee2036c (refactor brain→nodes+state) aveva introdotto un pruning
-  aggressivo in _node_agent: ToolMessages e AIMessages-con-tool_calls dei
-  turni precedenti venivano droppati prima di inviare i messaggi al modello.
-  Conseguenza: l'agent non vedeva il contesto già recuperato → faceva
-  retrieve inutile su ogni follow-up, anche quando la risposta era già
-  disponibile in history.
-  Commit eliminati con reset: 39a408b, ee2036c, c0bd0d1.
-  Risettato a e7d4923, poi ripristinato il refactor (ee2036c) e applicato fix.
+  REFACTORING
+  -----------
+  brain.py (~520 righe) suddiviso in 3 file:
+  - src/agent/state.py: DiemState TypedDict
+  - src/agent/nodes.py: DiemNodes mixin con tutti i _node_* methods
+  - src/agent/brain.py: DiemBrain(DiemNodes), routing, graph, public API
 
-  FIX: RIMOZIONE HISTORY PRUNING (src/agent/nodes.py)
-  ----------------------------------------------------
-  Il loop clean_messages in _node_agent ora mantiene ToolMessages e
-  AIMessages-con-tool_calls da tutti i turni. Solo le AIMessage iniettate
-  dai guardrail vengono sostituite con _PLACEHOLDER. L'agent può ora
-  decidere autonomamente di non fare retrieve su follow-up quando il
-  contesto è già presente in history.
+  BUG FIX
+  -------
+  - MAX_TOOL_CALLS → MAX_RETRIEVE_CALLS=3: solo retrieve conta verso il cap
+    (rewrite/summarize/calculate non consumano il limite)
+  - forced_retrieve node: safety net graph-level quando agent genera output
+    vuoto senza aver chiamato retrieve (tool_call_count==0, retrieved_context=="")
+  - Guardrail contamination: AIMessages di scope_guard/input_guard in
+    MemorySaver confondevano il modello sui turni successivi.
+    Fix: sostituzione con placeholder neutro in _node_agent clean_messages
+  - Credit card regex: era troppo broad (matchava ID numerici).
+    Fix: richiede separatori espliciti (XXXX XXXX XXXX XXXX)
+  - Scope guard falsi negativi su "chi è [prof]?": aggiunto keywords
+    accademici specifici (insegna, ricercatore, pubblicazioni, curriculum)
+  - Rewrite sostituiva domanda corrente con precedente: aggiunta Rule 0
+    in REWRITE_PROMPT; rewrite tool filtra guardrail messages da history
+  - force_answer: implementato nodo mancante (stub ToolMessages pendenti
+    + agent model senza tools per risposta finale)
+  - KNOWLEDGE_GAP/FUORI_SCOPE senza testo: _TAG_FALLBACKS in brain.py
+    restituisce messaggio italiano se tag è l'unico contenuto
+  - Recursion limit: alzato 20→35 per gestire query con rewrite multipli
 
-  FIX: HINT DINAMICO AGGIORNATO (src/agent/nodes.py)
-  ---------------------------------------------------
-  Hint da "retrieve is always mandatory" a:
-  "Call retrieve() UNLESS tool results already in this conversation contain
-  the specific, complete answer to this exact question. When in doubt, retrieve."
-  Bilancia efficienza (skip retrieve su follow-up ovvi) e accuratezza
-  (retrieve su domande nuove o più specifiche).
+  PROMPT
+  ------
+  - Dynamic hint: "Tool results from PREVIOUS questions must NOT be used"
+  - retrieve: "call rewrite() first" per contenuto accademico senza anno
+  - retrieve: "call rewrite() at most once per retrieve() attempt"
+  - Regola NEVER EMPTY (rule 4): rispondere sempre se contesto disponibile
+  - KNOWLEDGE_GAP: soglia allentata ("nothing useful" vs "no relevant info")
+    + obbligo spiegazione italiana dopo il tag
 
-  NUOVA REGOLA AGENT: USER DISSATISFIED (src/prompts.py)
-  -------------------------------------------------------
-  Aggiunta regola 7 in STEP 2: se l'utente segnala risposta incompleta o
-  errata, l'agent chiama retrieve() con query riformulata anche se ha
-  già contesto. Renumerato AMBIGUITY a regola 9.
+  HISTORY / CONTEXT
+  -----------------
+  - Old-turn ToolMessages pruned in _node_agent: solo coppie Human/AI
+    dai turni precedenti, eliminando i retrieved docs storici dalla
+    context window (riduce token bloat senza perdere contesto conversazionale)
 
-  FIX MIDDLEWARE PII (src/middleware.py)
-  --------------------------------------
-  Email con dominio @unisa.it (e sottodomini) non vengono più redactate.
-  Solo email non-istituzionali → "[EMAIL REDACTED]".
+  SCRIPTS
+  -------
+  - scripts/test_chatbot.py: test interattivo CLI (no Gradio/LangGraph)
+  - scripts/test_chatbot_auto.py: test automatico su 6 query predefinite
 
-  VERIFICA SU LOG
-  ---------------
-  Analisi log 2026-05-18 conferma:
-  - Follow-up immediato stesso topic: nessun retrieve (contesto riusato) ✓
-  - Query nuova: retrieve mirato ✓
-  - Ambiguità: chiarimento → retrieve ✓
-  - Insoddisfazione utente ("Ma tu prima mi avevi detto..."): re-retrieve ✓
-  - Scope out: guardrail blocca ✓
-
-  STATO GRAFO INVARIATO
-  ---------------------
-  input_guard → scope_guard → reset_state → agent ↔ tools →
-  [forced_retrieve] → output_guard → END
-  MAX_RETRIEVE_CALLS=3, recursion_limit=35
+  TEST RISULTATI (test_chatbot_auto.py)
+  -------------------------------------
+  - "Chi è Mario Vento?" → retrieve autonomo, risposta dettagliata ✓
+  - follow-up "Quanti anni ha di esperienza?" → rewrite risolve pronome ✓
+  - "Chi è Pippo Franco?" → scope guard, fallback italiano ✓
+  - "Esami terzo anno informatica" → rewrite+anno, 3 retrieve, KNOWLEDGE_GAP ✓
+  - "Capienza Aula De Candia" → 3 retrieve, force_answer, KNOWLEDGE_GAP ✓
+    (info non nel KB — comportamento corretto)
+  - "Chi è Antonio Greco?" → retrieve autonomo, PII redacted ✓
 
   COMMIT
   ------
-  c194377 fix: remove history pruning from _node_agent; preserve institutional emails
-  (+ modifiche uncommitted a nodes.py prompt hint e prompts.py regola 7)
-
-2026-05-18 - Ambiguity handling, graph visualization fix, graph export script
-
-  MIGLIORAMENTO PROMPT: AMBIGUITY HANDLING (src/prompts.py)
-  ----------------------------------------------------------
-  Regola 9 (AMBIGUITY) nel AGENT_SYSTEM_PROMPT riscritta con logica più
-  precisa e 4 esempi few-shot in formato XML (<history>, <user_latest>,
-  <retrieved>, <output>) coerente con lo stile del REWRITE_PROMPT.
-
-  Comportamento precedente:
-  - Generico: "se ambiguo, fai domanda di chiarimento"
-  - Nessun esempio su come formulare la domanda
-  - Nessuna istruzione su cosa fare dopo il chiarimento
-
-  Comportamento attuale:
-  - Trigger: retrieved context rivela entità distinte multiple (es. due
-    prof. con stesso cognome, triennale + magistrale per stesso corso,
-    stesso corso in più lauree)
-  - AI NON risponde — chiede disambiguazione nominando le entità specifiche
-    trovate nei documenti (es. "Prof. Mario Russo o Prof.ssa Carla Russo?")
-  - Dopo risposta utente: retrieve() di nuovo con query mirata → risponde
-    solo per l'entità corretta
-
-  Esempi few-shot aggiunti:
-  1. [Stesso cognome] "orari del prof. Russo?" → trovati Mario (SistOp) e
-     Carla (BasiDati) → AI chiede quale dei due
-  2. [Triennale vs Magistrale] "piano di studi Ingegneria Informatica?" →
-     trovati L-8 e LM-32 → AI chiede quale livello
-  3. [Stesso corso in più lauree] "chi insegna Matematica?" → trovati 3
-     docenti in 3 corsi diversi → AI chiede quale corso di studi
-  4. [Follow-up dopo chiarimento] utente dice "Magistrale" → AI fa
-     retrieve('piano di studi Ingegneria Informatica LM-32 magistrale
-     2025/2026') e risponde solo per la magistrale
-
-  FIX GRAFO: EDGE CONDIZIONALI CON PATH_MAP (src/agent/brain.py)
-  ---------------------------------------------------------------
-  Le tre `add_conditional_edges` mancavano del `path_map` (dizionario
-  valore_ritornato → nome_nodo). LangGraph usa il path_map per costruire
-  il grafo statico visualizzabile — senza di esso i nodi destinazione
-  risultano "sconosciuti" e il visualizzatore li mostra disconnessi.
-
-  Prima del fix: il grafo visualizzato mostrava solo
-  __start__ → input_guard → __end__; tutti gli altri nodi (scope_guard,
-  reset_state, agent, tools, forced_retrieve, force_answer, output_guard)
-  apparivano come isole non connesse.
-
-  Fix applicato:
-    add_conditional_edges("input_guard", _route_input,
-        {"scope_guard": "scope_guard", "__end__": END})
-    add_conditional_edges("scope_guard", _route_scope,
-        {"reset_state": "reset_state", "__end__": END})
-    add_conditional_edges("agent", _route_agent,
-        {"tools": "tools", "forced_retrieve": "forced_retrieve",
-         "force_answer": "force_answer", "output_guard": "output_guard"})
-
-  Dopo il fix: grafo completo visualizzato correttamente con tutti gli
-  edge condizionali e i nodi di safety (forced_retrieve, force_answer).
-
-  STATO GRAFO ATTUALE (dettagliato)
-  ----------------------------------
-  __start__
-      └─► input_guard  [OffensiveContentGuardrail regex]
-              ├─(offensivo)──► __end__
-              └─(ok)─────────► scope_guard  [keyword fast-path + LLM 8b su ambigui]
-                                    ├─(fuori scope)─► __end__
-                                    └─(in scope)────► reset_state  [azzera tool_call_count, retrieved_context, last_docs]
-                                                          └──────────► agent  [gpt-oss-120b: routing + tool selection + generazione]
-                                                                          ├─(tool call, retrieve < 3)──► tools  [esegue tool, conta retrieve]
-                                                                          │                                  └──────────────────────────► agent  (loop)
-                                                                          ├─(output vuoto, 0 retrieve)─► forced_retrieve  [safety net]
-                                                                          │                                  └──────────────────────────► agent
-                                                                          ├─(vuole retrieve, count ≥ 3)► force_answer  [forza risposta con contesto esistente]
-                                                                          │                                  └──────────────────────────► output_guard
-                                                                          └─(risposta pronta)──────────► output_guard  [OffensiveContentGuardrail + redact_pii]
-                                                                                                              └──────────────────────────► __end__
-
-  Costanti: MAX_RETRIEVE_CALLS=3, recursion_limit=35
-
-  SCRIPT EXPORT GRAFO (scripts/export_graph.py)
-  -----------------------------------------------
-  Aggiunto script per esportare il grafo come PNG (via mermaid.ink API).
-  Output: docs/graph.png. Utilizzo: venv/Scripts/python scripts/export_graph.py
-
-  COMMIT
-  ------
-  839d72a fix: enhance ambiguity handling in prompts; add clarifying question examples
-  ff5ef8e feat: add graph export functionality and update conditional edges in DiemBrain
+  39a408b refactor: split brain.py into state.py + nodes.py + brain.py
+  ee2036c fix: improve agent robustness, prompts, and history management
 
 # Template per aggiornamenti futuri:
 # YYYY-MM-DD - <titolo breve>
