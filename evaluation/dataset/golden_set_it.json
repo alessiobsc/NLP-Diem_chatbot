@@ -339,16 +339,6 @@
       "reference": "Il ricevimento del professor Capuano si tiene il mercoledi dalle 11:00 alle 13:00."
     },
     {
-      "id": "mt_002",
-      "tag": "deictic_reference",
-      "description": "Il secondo turno fa riferimento a 'il secondo' - richiede riscrittura history-aware.",
-      "turns": [
-        {"question": "Quali corsi di laurea magistrale sono offerti dal DIEM?"},
-        {"question": "Dimmi di piu sul secondo."}
-      ],
-      "reference": "Il riferimento e al secondo corso di laurea magistrale elencato nel turno precedente (tipicamente Information Engineering for Digital Medicine o un altro corso magistrale del DIEM). La risposta dovrebbe descrivere obiettivi formativi, classe di laurea, sbocchi professionali e principali aree disciplinari del corso indicato, restando ancorata al contenuto del sito DIEM."
-    },
-    {
       "id": "mt_003",
       "tag": "topic_continuation",
       "description": "Continuazione del topic senza riferimento esplicito.",
@@ -356,7 +346,7 @@
         {"question": "Quali laboratori sono disponibili al DIEM?"},
         {"question": "E quale si occupa di intelligenza artificiale?"}
       ],
-      "reference": "Tra i laboratori del DIEM, le attivita su intelligenza artificiale, machine learning e visione artificiale sono svolte principalmente in laboratori come il Laboratorio di Computazione Naturale (Marcelli), il laboratorio Embedded Intelligent Systems (Capuano) e altri laboratori afferenti alle aree di Cognitive Robotics, Autonomous Driving e Decision Support Systems. La risposta dovrebbe indicare almeno un laboratorio o gruppo di ricerca DIEM dedicato a AI/ML, citando temi presenti nelle pagine ufficiali del dipartimento."
+      "reference": "Tra i laboratori del DIEM, le attivita su intelligenza artificiale, machine learning e visione artificiale sono svolte principalmente nel laboratorio MIVIA (Macchine Intelligenti per il Riconoscimento di Video, Immagini e Audio) e nel laboratorio Intelligent Bioengineering Technologies. La risposta dovrebbe descrivere le attivita di ricerca in intelligenza artificiale svolte in questi laboratori, restando ancorata al contenuto del sito DIEM."
     }
   ]
 }
