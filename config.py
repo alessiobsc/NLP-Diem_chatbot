@@ -110,12 +110,12 @@ RETRIEVER_SCORE_THRESHOLD: float = float(os.getenv("RETRIEVER_SCORE_THRESHOLD", 
 # Document Splitting Settings (Parent-Child Strategy)
 # Parent Document Settings (Broad context)
 # TODO (Software Architect): Consider making chunk sizes configurable via environment variables.
-PARENT_CHUNK_SIZE: int = 2000
-PARENT_CHUNK_OVERLAP: int = 200
+PARENT_CHUNK_SIZE: int = 1200
+PARENT_CHUNK_OVERLAP: int = 150
 
 # Child Document Settings (Precise retrieval)
-CHILD_CHUNK_SIZE: int = 400
-CHILD_CHUNK_OVERLAP: int = 50
+CHILD_CHUNK_SIZE: int = 300
+CHILD_CHUNK_OVERLAP: int = 80
 
 # Ingestion Batching
 MAX_CHILD_CHUNKS_PER_BATCH: int = 100

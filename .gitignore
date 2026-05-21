@@ -18,3 +18,4 @@ tests/*
 .langgraph_api/*
 evaluation/full_comparison/*
 evaluation/parser_comparison/*
+db/crawl_state.db

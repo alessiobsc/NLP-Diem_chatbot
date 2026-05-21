@@ -527,7 +527,7 @@ def _is_structured_source(source: str) -> bool:
             "/dipartimento/organi-collegiali",
             "/dipartimento/commissione-paritetica",
             "/dipartimento/commissioni",
-            "/dipartimento/strutture",
+            "/dipartimento/strutture"
         }:
             return True
         if path == "/dipartimento/commissioni" and query.get("dettaglio"):
