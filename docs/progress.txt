@@ -1007,3 +1007,120 @@ CRONOLOGIA AGGIORNAMENTI
   File aggiunti:   scripts/detect_accordion_urls.py,
                    scripts/compare_extractors.py,
                    scripts/validate_bs4_primary.py
+
+2026-05-21 - EasyCourse heuristic headers + rimozione retry 429 + chunk sizes v2.1
+             (branch devAlessio)
+
+  EASYCOURSE HEURISTIC HEADER (src/ingestion/header_heuristic.py)
+  ----------------------------------------------------------------
+  Aggiunta logica dedicata in classify_context_header per easycourse.unisa.it
+  prima del blocco corsi.unisa.it. Estrae il campo "Insegnamento: <nome>" dal
+  testo via regex. Prefisso determinato dal parametro ?view=: se "easytest" in
+  view → "calendario esami", altrimenti → "orario lezioni".
+  Output: "calendario esami - <NomeInsegnamento>" o "orario lezioni - <NomeInsegnamento>".
+  La logica LLM e il year tag vengono completamente bypassati per questi URL.
+
+  BYPASS LLM PER EASYCOURSE (src/ingestion/enrichment.py)
+  --------------------------------------------------------
+  Aggiunto "easycourse.unisa.it" a _HEURISTIC_ONLY_DOMAINS → nessuna chiamata
+  OpenRouter/Ollama per i documenti EasyCourse.
+  Year tag skippato per URL easycourse.unisa.it (non ha senso aggiungere
+  "AY 2025/2026" a header già contestualizzati per anno accademico corrente).
+  Condizione aggiunta: `if year_tag and "easycourse.unisa.it" not in url`.
+
+  RIMOZIONE RETRY 429 (src/ingestion/enrichment.py)
+  --------------------------------------------------
+  Rimossa la logica di retry con backoff esponenziale (30s+60s+120s+240s=450s)
+  che causava blocchi silenziosi multi-minuto quando OpenRouter restituiva 429.
+  Sostituita con singola chiamata requests.post + response.raise_for_status():
+  fallback immediato a Ollama/euristico senza attesa.
+  Impatto: ingestion non si blocca più a metà run; fallback euristico copre
+  i casi di rate limit senza degradare la qualità degli header.
+
+  CHUNK SIZES V2.1 (config.py)
+  ----------------------------
+  Parent: 2000→1200 chars, overlap 200→150.
+  Child: 400→300 chars, overlap 50→80.
+  Motivazione: chunk più piccoli e coerenti semanticamente, meno rumore nel
+  contesto restituito all'agent. Overlap child aumentato (50→80) per migliore
+  continuità tra chunk adiacenti.
+  Richiede re-index completo → nuova collection chroma_diem_v2.1.
+
+  QUALITA' CONTEXT HEADERS (analisi in-run)
+  ------------------------------------------
+  Analisi parziale a ~6100/11044 doc (run interrotta per 429 hang):
+  - 99-100% specifici (con subtopic) per le categorie principali.
+  - "didattica" (26 doc) e "didattica DIEM" (8 doc): da diem.unisa.it/didattica/focus
+    — accettabile, conteggio basso.
+  - Nessun header vuoto o generico nei bucket principali (docenti, schede SUA,
+    regolamenti, laboratori, bandi).
+
+  COMMIT
+  ------
+  Modifiche committate su devAlessio prima del merge con develop:
+  - src/ingestion/enrichment.py (EasyCourse bypass + rimozione retry 429)
+  - src/ingestion/header_heuristic.py (EasyCourse classify_context_header)
+  - config.py (chunk sizes v2.1)
+  - src/ingestion/parser.py (whitelist accordion — vedi entry precedente)
+
+2026-05-21 - Velocizzazione pipeline agentica: rimozione rewrite/summarize tool
+             (branch devAlessio-agent-speed)
+
+  MOTIVAZIONE
+  -----------
+  Profilo latenza osservato con il setup a 4 tool (rewrite, retrieve, summarize,
+  calculate): ogni query che chiamava rewrite() prima di retrieve() aggiungeva
+  5-10s di round trip all'LLM 8b senza beneficio netto osservabile sulle risposte.
+  Il modello 120b (gpt-oss-120b) è in grado di riformulare internamente la query
+  prima di chiamare retrieve(). Deciso di integrare le responsabilità di rewrite
+  direttamente nel prompt del 120b ed eliminare il tool.
+  summarize() era già in pratica inutilizzato e rimosso contestualmente.
+
+  TOOL RIMASTI: retrieve, calculate (2 tool totali)
+
+  REWRITE INLINEATO NEL PROMPT (src/prompts.py)
+  ----------------------------------------------
+  REWRITE_PROMPT rimosso completamente (non più necessario — nessun tool lo usa).
+  AGENT_SYSTEM_PROMPT — STEP 1 riscritta:
+  - Il 120b gestisce autonomamente pronomi/riferimenti e year injection prima di
+    chiamare retrieve().
+  - Istruzione esplicita: se query è follow-up con pronomi → risolvere e passare
+    query autonoma a retrieve(). Se query è su contenuto accademico senza anno →
+    aggiungere 'anno accademico 2025/2026' alla query di retrieve().
+  - rewrite() e summarize() rimossi da STEP 1; tutti i riferimenti aggiornati.
+
+  YEAR INJECTION DIRETTA (src/agent/nodes.py + src/agent/tools.py)
+  ----------------------------------------------------------------
+  Data corrente iniettata nel system prompt a runtime:
+    from datetime import date
+    system_content = f"Today's date: {date.today().isoformat()}.\n\n" + AGENT_SYSTEM_PROMPT
+  Il tool calculate aggiornato con current_year = date.today().year e
+  descrizione ampliata per coprire sia calcoli voto sia aritmetica temporale
+  (anni accademici, scadenze).
+
+  RUOLO ACCADEMICO: DOCENTE vs RICERCATORE (src/prompts.py)
+  ----------------------------------------------------------
+  Aggiunta regola 7 in STEP 2 (ACADEMIC ROLES):
+  "If the context shows that a person teaches courses at DIEM, introduce them
+  as 'docente' — even if they also hold a 'Ricercatore RTD' position or have
+  publications. Reserve 'ricercatore' only for people whose context shows no
+  teaching activity at all."
+  Con esempio concreto: "context says 'Ricercatore RTD/B' AND 'docente di
+  Reti Logiche' → introduce as 'docente', not 'ricercatore'."
+  Motivazione: Antonio Greco (e altri RTD/B con didattica) veniva introdotto
+  come "ricercatore" perché il modello privilegiava il titolo formale sul
+  campo Attività didattica nel curriculum.
+
+  CLEANUP CODICE (src/agent/utils.py, init_models.py, brain.py)
+  -------------------------------------------------------------
+  - rewrite_query() rimossa da utils.py (~35 righe + import HumanMessage,
+    AIMessage, SystemMessage).
+  - Docstring build_lightweight_model: "guardrails, rewrite, summarize,
+    calculate" → "guardrails, calculate".
+  - Commento in _make_tools_node: "rewrite/summarize/calculate are free"
+    → "calculate is free".
+
+  FILE MODIFICATI
+  ---------------
+  src/prompts.py, src/agent/utils.py, src/agent/init_models.py,
+  src/agent/brain.py, src/agent/nodes.py, src/agent/tools.py
