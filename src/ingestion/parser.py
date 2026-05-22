@@ -1,16 +1,19 @@
+import json
 import re
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse, urldefrag, urljoin
 
 import trafilatura
 from bs4 import BeautifulSoup, Tag
 from langchain_community.document_loaders import PDFPlumberLoader
 
-from src.ingestion.crawler import is_pre_2020_url
+from src.ingestion.crawler import should_skip_url_by_year, ACCUMULATIVE_URL_PATTERNS, PDF_VERSIONED_PATHS
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-YEAR_CUTOFF = 2020
+YEAR_CUTOFF = 2025
+YEAR_CUTOFF_ACCUMULATIVE = 2020
 TEMPORAL_SCAN_CHARS = 2500
 RAW_PDF_SCAN_CHARS = 2500
 MIN_DOC_CHARS = 20
@@ -423,6 +426,8 @@ def _extract_panel_sections(root: Tag) -> list[dict]:
 
         body = _panel_body(panel)
         rows = _extract_panel_body_lines(body)
+        # Strip rows that duplicate the title (happens when _panel_body falls back to the full panel)
+        rows = [r for r in rows if r.lower() != normalized_title]
         if not rows:
             continue
 
@@ -522,6 +527,7 @@ def _is_structured_source(source: str) -> bool:
             "/dipartimento/organi-collegiali",
             "/dipartimento/commissione-paritetica",
             "/dipartimento/commissioni",
+            "/dipartimento/strutture"
         }:
             return True
         if path == "/dipartimento/commissioni" and query.get("dettaglio"):
@@ -529,6 +535,9 @@ def _is_structured_source(source: str) -> bool:
 
     if netloc == "corsi.unisa.it":
         return path.endswith("/strutture-didattiche") or path.endswith("/contatti")
+
+    if netloc == "docenti.unisa.it":
+        return path.endswith("/didattica")
 
     return False
 
@@ -768,15 +777,28 @@ def extract_years_from_metadata(metadata: dict) -> list[int]:
     return years
 
 
-def should_keep_document(doc) -> tuple[bool, str]:
+def _strip_year_param(url: str) -> str:
+    """Remove year-variant segments to produce a base URL for version grouping."""
+    url = re.sub(r"[?&]anno=\d{4}", "", url)
+    url = re.sub(r"/\d{4}-\d{4}/", "/", url)
+    url = re.sub(r"/20\d{2}_\d{2}/", "/", url)   # e.g. /2024_09/
+    url = re.sub(r"/20\d{2}/", "/", url)           # e.g. /2024/
+    return url.rstrip("?&")
+
+
+def should_keep_document(doc, effective_cutoff: int = YEAR_CUTOFF, is_latest_version: bool = False) -> tuple[bool, str]:
     source = doc.metadata.get("source", "")
     scan_text = doc.page_content[:TEMPORAL_SCAN_CHARS]
     lowered = f"{source}\n{scan_text}".lower()
-    is_pdf = ".pdf" in urlparse(source).path.lower()
     is_time_sensitive = any(
         marker in lowered
         for marker in ("avvisi", "avviso", "news", "bando", "bandi", "seminari", "eventi")
     )
+    is_pdf = ".pdf" in urlparse(source).path.lower()
+
+    # Latest version: use 2020 floor — source pages already filtered upstream by crawler
+    if is_latest_version:
+        effective_cutoff = YEAR_CUTOFF_ACCUMULATIVE
 
     metadata_or_url_years = (
         extract_years_from_metadata(doc.metadata)
@@ -784,14 +806,14 @@ def should_keep_document(doc) -> tuple[bool, str]:
     )
     if metadata_or_url_years:
         newest = max(metadata_or_url_years)
-        if newest < YEAR_CUTOFF:
+        if newest < effective_cutoff:
             return False, f"old year {newest}"
         return True, f"year {newest}"
 
     text_years = extract_years_from_text(scan_text)
     if (is_pdf or is_time_sensitive) and text_years:
         newest = max(text_years)
-        if newest < YEAR_CUTOFF:
+        if newest < effective_cutoff:
             return False, f"old text year {newest}"
         return True, f"text year {newest}"
 
@@ -799,22 +821,52 @@ def should_keep_document(doc) -> tuple[bool, str]:
 
 
 def filter_recent_documents(docs: list) -> list:
-    kept = []
-    dropped = 0
+    # Pass 1: build max year per base URL for versioned (non-accumulative) docs
+    base_max_year: dict[str, int] = {}
     for doc in docs:
-        keep, reason = should_keep_document(doc)
+        source = doc.metadata.get("source", "")
+        if any(p in source for p in ACCUMULATIVE_URL_PATTERNS):
+            continue
+        base = _strip_year_param(source)
+        years = extract_years_from_metadata(doc.metadata) + extract_years_from_text(source)
+        if years:
+            base_max_year[base] = max(base_max_year.get(base, 0), max(years))
+
+    # Pass 2: filter
+    kept = []
+    dropped_items: list[dict] = []
+    for doc in docs:
+        source = doc.metadata.get("source", "")
+
+        if any(p in source for p in ACCUMULATIVE_URL_PATTERNS):
+            keep, reason = should_keep_document(doc, effective_cutoff=YEAR_CUTOFF_ACCUMULATIVE)
+        else:
+            base = _strip_year_param(source)
+            doc_years = extract_years_from_metadata(doc.metadata) + extract_years_from_text(source)
+            doc_max = max(doc_years) if doc_years else 0
+            # Latest version of a URL group: bypass strict cutoff, only enforce 2020 floor
+            is_latest_version = bool(doc_years) and doc_max == base_max_year.get(base, 0) and doc_max >= 2020
+            keep, reason = should_keep_document(doc, is_latest_version=is_latest_version)
+
         if keep:
             doc.metadata["temporal_filter"] = reason
             kept.append(doc)
         else:
-            dropped += 1
-            source = doc.metadata.get("source", "unknown source")
+            dropped_items.append({"source": source, "reason": reason})
             logger.debug(f"  SKIP old document ({reason}): {source}")
 
+    dropped = len(dropped_items)
     logger.info(
         f"  -> Temporal filter kept {len(kept)}/{len(docs)} documents "
         f"(cutoff year: {YEAR_CUTOFF}, dropped: {dropped})"
     )
+
+    if dropped_items:
+        out_path = Path("dropped_temporal_filter.json")
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(dropped_items, f, indent=2, ensure_ascii=False)
+        logger.info(f"  -> Dropped items saved to {out_path}")
+
     return kept
 
 
@@ -917,8 +969,8 @@ def load_pdfs_from_links(raw_docs: list, seen_urls: set | None = None) -> list:
                     continue
                 seen_urls.add(pdf_url)
 
-                if is_pre_2020_url(pdf_url):
-                    logger.debug(f"  SKIP pre-2020 PDF: {pdf_url}")
+                if should_skip_url_by_year(pdf_url):
+                    logger.debug(f"  SKIP PDF by year cutoff: {pdf_url}")
                     continue
 
                 try:

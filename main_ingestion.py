@@ -1,5 +1,6 @@
 import argparse
 import datetime
+import json
 import hashlib
 import os
 import re
@@ -16,6 +17,7 @@ load_dotenv()
 
 from src.ingestion.crawler import (
     crawl,
+    crawl_course_focus_detail_pages,
     crawl_html_sitemap,
     extract_corsi_urls,
     extract_diem_faculty_urls,
@@ -302,10 +304,18 @@ def crawl_phase() -> tuple[list, list]:
                 fallback_depth=3,
             ))
         )))
+        focus_docs = list(filter_docs(dedupe_docs_by_source(
+            crawl_course_focus_detail_pages(url)
+        )))
+        if focus_docs:
+            docs = dedupe_docs_by_source(docs + focus_docs)
         batch_pdfs = load_pdfs_from_links(docs, seen_pdf_urls)
         raw_html_docs.extend(docs)
         pdf_docs.extend(batch_pdfs)
-        logger.info(f"  [{i:02d}/{total_corsi}] {url}  ({len(docs)} sub-pages)")
+        logger.info(
+            f"  [{i:02d}/{total_corsi}] {url}  "
+            f"({len(docs)} sub-pages, {len(focus_docs)} focus detail pages)"
+        )
 
     return raw_html_docs, pdf_docs
 
@@ -368,6 +378,20 @@ def run_full_pipeline(embedding_model) -> None:
     pdf_final  = [d for d in all_docs if ".pdf" in d.metadata.get("source", "").lower()]
     save_crawled_urls_to_json(html_final, "crawled_urls.json")
     save_crawled_pdfs_to_json(pdf_final, "crawled_pdfs.json")
+
+    # EasyCourse: exam calendar + current-week lecture schedule (public API, no auth)
+    try:
+        from src.ingestion.easycourse import fetch_easycourse_documents, fetch_easycourse_lectures
+        exam_docs = fetch_easycourse_documents()
+        lecture_docs = fetch_easycourse_lectures()
+        easycourse_docs = exam_docs + lecture_docs
+        logger.info(f"EasyCourse: {len(exam_docs)} exam docs + {len(lecture_docs)} lecture docs")
+        all_docs = all_docs + easycourse_docs
+        with open("easycourse_docs.json", "w", encoding="utf-8") as _f:
+            json.dump([{"url": d.metadata["source"], "content": d.page_content} for d in easycourse_docs], _f, indent=2, ensure_ascii=False)
+        logger.info("EasyCourse docs saved to easycourse_docs.json")
+    except Exception as e:
+        logger.warning(f"EasyCourse fetch failed, skipping: {e}")
 
     # Static facts: administrative data from DIEM/UNISA site footer (stripped by parser)
     static_facts = [

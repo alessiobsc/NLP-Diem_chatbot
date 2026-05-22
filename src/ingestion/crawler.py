@@ -4,11 +4,12 @@ import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Iterable, Dict, Set, Tuple, List, Optional
-from urllib.parse import urldefrag, urljoin, urlparse
+from urllib.parse import parse_qs, urlencode, urldefrag, urljoin, urlparse, urlunparse
 
 import requests
 import urllib3
 from bs4 import BeautifulSoup
+from langchain_core.documents import Document
 from langchain_community.document_loaders import RecursiveUrlLoader
 from requests import Session
 from requests.adapters import HTTPAdapter
@@ -116,11 +117,48 @@ def create_resilient_session() -> Session:
 # UTILITY FUNCTIONS
 # ==============================================================================
 
-def is_pre_2020_url(url: str) -> bool:
-    """Check if the URL belongs to an academic year prior to 2020."""
-    normalized_url = url.replace("_", "/")
-    years = [int(y) for y in re.findall(r"\b(19\d{2}|20[01]\d)\b", normalized_url)]
-    return any(year < 2020 for year in years)
+ACCUMULATIVE_URL_PATTERNS = ("/pubblicazioni", "public-engagement", "premi-ricerca")
+
+# Structured PDF collections versioned by year in path — URL filter defers to document-level grouping
+PDF_VERSIONED_PATHS = ("__schede-sua", "__almalaurea", "__regolamenti-cds", "__statistiche-corsi", "__piano-studi-cds")
+
+
+def _extract_max_year(url: str) -> int | None:
+    """Return the maximum year found in a URL.
+
+    Handles both 4-digit years and YYYY-YY academic year patterns (e.g. 2024-25 → 2025).
+    """
+    normalized = url.replace("_", "/")
+    years = [int(y) for y in re.findall(r"\b(19\d{2}|20\d{2})\b", normalized)]
+    for m in re.finditer(r"\b(20\d{2})-(\d{2})\b", normalized):
+        years.append(2000 + int(m.group(2)))
+    return max(years) if years else None
+
+
+def should_skip_url_by_year(url: str) -> bool:
+    """Return True if URL year is below the applicable cutoff.
+
+    Accumulative (pubblicazioni, public-engagement, premi-ricerca): cutoff 2020; also skip anno=0.
+    Structured PDF collections: cutoff 2020, latest-version logic handled at document level.
+    All other URLs: cutoff 2025 — skip only if max year found in URL < 2025.
+    YYYY-YY academic year patterns (e.g. 2024-25) are resolved to the second year (2025).
+    """
+    if any(p in url for p in ACCUMULATIVE_URL_PATTERNS):
+        if re.search(r"[?&]anno=0\b", url):
+            return True
+        max_year = _extract_max_year(url)
+        return max_year is not None and max_year < 2020
+
+    max_year = _extract_max_year(url)
+
+    if any(p in url for p in PDF_VERSIONED_PATHS):
+        return max_year is not None and max_year < 2020
+
+    # Individual PDFs: defer to document-level filter; only drop pre-2020
+    if url.lower().split("?")[0].endswith(".pdf"):
+        return max_year is not None and max_year < 2020
+
+    return max_year is not None and max_year < 2025
 
 
 def get_section_base(url: str) -> str:
@@ -256,7 +294,7 @@ def _is_valid_sitemap_url(url: str, expected_netloc: str) -> bool:
         return False
     if any(excluded in url for excluded in EXCLUDE_DIRS):
         return False
-    if is_pre_2020_url(url):
+    if should_skip_url_by_year(url):
         return False
     return True
 
@@ -288,6 +326,78 @@ def crawl_html_sitemap(
                     count += 1
                     yield doc
                 logger.debug(f"    [{i:02d}/{len(seeds)}] {seed} ({count} pages)")
+
+
+def extract_course_focus_urls(course_url: str, session: Optional[Session] = None) -> List[str]:
+    """Extract detail URLs from a course /focus page without broadening recursion."""
+    focus_url = f"{course_url.rstrip('/')}/focus"
+    active_session = session or create_resilient_session()
+    should_close = session is None
+
+    try:
+        response = active_session.get(focus_url, timeout=REQUEST_TIMEOUT)
+        response.raise_for_status()
+    except Exception as e:
+        logger.debug(f"Unable to fetch course focus page {focus_url}: {e}")
+        if should_close:
+            active_session.close()
+        return []
+
+    try:
+        soup = BeautifulSoup(response.text, "lxml")
+        focus_parsed = urlparse(focus_url)
+        focus_path = focus_parsed.path.rstrip("/")
+        detail_urls: Set[str] = set()
+
+        for anchor in soup.find_all("a", href=True):
+            href = anchor.get("href", "").strip()
+            if not href or href.startswith(("javascript:", "mailto:", "tel:")):
+                continue
+
+            absolute_url, _ = urldefrag(urljoin(focus_url, href))
+            parsed = urlparse(absolute_url)
+            query = parse_qs(parsed.query)
+            focus_ids = query.get("id")
+
+            if parsed.netloc != focus_parsed.netloc:
+                continue
+            if parsed.path.rstrip("/") != focus_path:
+                continue
+            if not focus_ids:
+                continue
+
+            normalized_query = urlencode({"id": focus_ids[0]})
+            detail_urls.add(
+                urlunparse(("https", parsed.netloc, parsed.path.rstrip("/"), "", normalized_query, ""))
+            )
+
+        return sorted(detail_urls)
+    finally:
+        if should_close:
+            active_session.close()
+
+
+def crawl_course_focus_detail_pages(course_url: str) -> List[Document]:
+    """Fetch only /focus?id=... detail pages for a course as raw HTML documents."""
+    docs: List[Document] = []
+
+    with create_resilient_session() as session:
+        focus_urls = extract_course_focus_urls(course_url, session=session)
+        if not focus_urls:
+            logger.debug(f"No course focus detail URLs found for {course_url}")
+            return docs
+
+        logger.info(f"  -> Found {len(focus_urls)} course focus detail URLs for {course_url}")
+
+        for focus_url in focus_urls:
+            try:
+                response = session.get(focus_url, timeout=REQUEST_TIMEOUT)
+                response.raise_for_status()
+                docs.append(Document(page_content=response.text, metadata={"source": focus_url}))
+            except Exception as e:
+                logger.warning(f"Unable to fetch course focus detail page {focus_url}: {e}")
+
+    return docs
 
 
 def extract_corsi_urls(raw_docs: Iterable) -> List[str]:
@@ -445,7 +555,7 @@ def filter_docs(docs: Iterable) -> list:
     filtered = [
         d for d in docs
         if not any(p in d.metadata.get("source", "") for p in SKIP_DOCUMENT_SUBSTRINGS)
-        and not is_pre_2020_url(d.metadata.get("source", ""))
+        and not should_skip_url_by_year(d.metadata.get("source", ""))
     ]
 
     # Dedup by source URL — same URL crawled from multiple entry points yields identical content

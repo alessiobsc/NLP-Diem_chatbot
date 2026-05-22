@@ -354,6 +354,14 @@ def classify_context_header(text: str, url: str, metadata: dict | None = None) -
             return f"Didattica docente - {person}" if person else "Didattica docente"
         return f"Profilo docente - {person}" if person else "Profilo docente"
 
+    if "easycourse.unisa.it" in host:
+        qs = parse_qs(parsed.query)
+        view = qs.get("view", [""])[0].lower()
+        cat = "calendario esami" if "easytest" in view else "orario lezioni"
+        insegnamento = re.search(r'Insegnamento:\s*(.+)', text)
+        label = insegnamento.group(1).strip().title() if insegnamento else ""
+        return f"{cat} - {label}" if label else cat
+
     if "corsi.unisa.it" in host:
         if "insegnament" in combined or re.search(r"/\d{10,}/", path):
             return "Scheda insegnamento"
