@@ -233,6 +233,14 @@ def crawl_phase() -> tuple[list, list]:
     raw_diem = list(filter_docs(dedupe_docs_by_source(
         list(crawl_html_sitemap("https://www.diem.unisa.it/", max_depth=2, fallback_depth=4))
     )))
+    # For progetti-finanziati: keep only ?stato=1 (active projects listing).
+    # ?progetto= subpages are already blocked by SKIP_DOCUMENT_SUBSTRINGS.
+    # Drop the unfiltered base page (all projects incl. concluded) and ?tip= filters.
+    raw_diem = [
+        d for d in raw_diem
+        if "progetti-finanziati" not in d.metadata.get("source", "")
+        or "stato=1" in d.metadata.get("source", "")
+    ]
     logger.info(f"  -> {len(raw_diem)} pages found")
 
     corsi_urls = extract_corsi_urls(raw_diem)
@@ -277,6 +285,14 @@ def crawl_phase() -> tuple[list, list]:
     for i, url in enumerate(docenti_urls, 1):
         base = get_section_base(url)
         docs = list(filter_docs(crawl(url, base_url=base, max_depth=3)))
+        # Keep only active project listings (?ruolo=...&stato=1).
+        # Drop ?ruolo= pages without stato filter (all projects incl. concluded).
+        # ?progetto= subpages already blocked by SKIP_DOCUMENT_SUBSTRINGS.
+        docs = [
+            d for d in docs
+            if "/ricerca/progetti?" not in d.metadata.get("source", "")
+            or "stato=1" in d.metadata.get("source", "")
+        ]
 
         matricola = url.rstrip("/").split("/")[-2]
         for anno in range(2020, current_year + 1):

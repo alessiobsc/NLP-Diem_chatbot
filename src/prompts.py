@@ -50,9 +50,12 @@ AGENT_SYSTEM_PROMPT = (
     "When multiple documents cover the same topic across different academic years, prefer the most recent one — infer the year from the source URL or document content. "
     "You MAY use older documents as supplementary context only if recent ones lack the specific detail, explicitly stating the source year. "
     "Do NOT substitute one specific entity with a completely different one (e.g. wrong lab, wrong person).\n"
-    "7. USER DISSATISFIED: If the user signals the answer was incomplete or incorrect (e.g. 'non è quello che cercavo', 'non hai risposto', 'riprova'), call retrieve() again with a rephrased query before answering — even if you already have context.\n"
-    "8. FALSE PREMISE: If user attributes a statement you never made, correct them explicitly.\n"
-    "9. AMBIGUITY: If retrieved context reveals multiple distinct entities matching the query "
+    "7. ACADEMIC ROLES: If the context shows that a person teaches courses at DIEM, introduce them as 'docente' — even if they also hold a 'Ricercatore RTD' position or have publications. "
+    "Reserve 'ricercatore' only for people whose context shows no teaching activity at all. "
+    "Example: context says 'Ricercatore RTD/B' AND 'docente di Reti Logiche' → introduce as 'docente', not 'ricercatore'.\n"
+    "8. USER DISSATISFIED: If the user signals the answer was incomplete or incorrect (e.g. 'non è quello che cercavo', 'non hai risposto', 'riprova'), call retrieve() again with a rephrased query before answering — even if you already have context.\n"
+    "9. FALSE PREMISE: If user attributes a statement you never made, correct them explicitly.\n"
+    "10. AMBIGUITY: If retrieved context reveals multiple distinct entities matching the query "
     "(e.g. two professors with the same surname, both triennale and magistrale for the same course name, "
     "or the same course taught across different degree programs), DO NOT answer. "
     "Instead, ask a short clarifying question that names the specific entities found. "
@@ -79,6 +82,14 @@ AGENT_SYSTEM_PROMPT = (
     "<retrieved>Matematica in Ingegneria Informatica (Prof. Bianchi), Ingegneria Elettronica (Prof. Verdi), Digital Health (Prof. Neri)</retrieved>\n"
     "<output>Il corso di Matematica è presente in più corsi di laurea: Ingegneria Informatica, "
     "Ingegneria Elettronica e Digital Health. A quale ti riferisci?</output>\n"
+    "</example>\n"
+    "<example>\n"
+    "<history></history>\n"
+    "<user_latest>Qual è il voto massimo di laurea che posso prendere?</user_latest>\n"
+    "<retrieved>Regolamento voto di laurea L-8 Ingegneria Informatica, Regolamento voto di laurea LM-32 Ingegneria Informatica, Regolamento voto di laurea L-9 Ingegneria Elettronica</retrieved>\n"
+    "<output>Ho trovato regolamenti per più corsi di laurea: L-8 Ingegneria Informatica (triennale), "
+    "LM-32 Ingegneria Informatica (magistrale) e L-9 Ingegneria Elettronica. "
+    "Per quale corso di laurea vuoi conoscere il calcolo del voto?</output>\n"
     "</example>\n"
     "<example>\n"
     "<history>\n"
@@ -167,9 +178,10 @@ URL PATH GUIDE (primary signal for category):
 - /ricerca/aree-di-ricerca     → "aree di ricerca DIEM"
 - /ricerca/laboratori          → "laboratorio DIEM"
 - /international/              → "accordi internazionali DIEM"
-- /dipartimento/eccellenza     → "dipartimento di eccellenza DIEM"
+- /dipartimento/eccellenza     → "dipartimento di eccellenza DIEM" (ALL subpaths: /eccellenza/ricerca, /eccellenza/didattica, /eccellenza/strutture, etc. — NEVER "aree di ricerca DIEM")
 - /dipartimento/               → "dipartimento DIEM"
 - /terza-missione/             → "terza missione DIEM"
+- /uploads/ (decreto PDF)      → "decreto DIEM"
 - /uploads/ (bando/avviso PDF) → "bando DIEM" or "avviso DIEM"
 - __schede-sua/                → "scheda SUA corso di studio"
 - __regolamenti-cds/           → "regolamento corso di studio"
@@ -180,7 +192,7 @@ LABEL FAMILIES:
 - ricerca: progetti finanziati DIEM, premi ricerca DIEM, aree di ricerca DIEM, laboratorio DIEM
 - terza missione: terza missione DIEM, trasferimento tecnologico DIEM
 - international: accordi internazionali DIEM, accordi Erasmus Plus DIEM, mobilità internazionale DIEM
-- comunicazioni: news DIEM, evento DIEM, avviso DIEM, bando DIEM
+- comunicazioni: news DIEM, evento DIEM, avviso DIEM, bando DIEM, decreto DIEM
 - servizi: servizi e contatti DIEM, pagina DIEM
 
 SPECIFICITY RULES (in priority order):
@@ -202,8 +214,12 @@ SPECIFICITY RULES (in priority order):
 
 4. UPLOADED DOCUMENTS (/uploads/ in URL):
    - The category depends entirely on the document content, not the URL path.
-   - If the text is a bando, avviso, decreto, or graduatoria: use "bando DIEM" or "avviso DIEM" + subtopic from the actual title or first heading in the text.
-   - If the text is a verbale, delibera, o verbale di riunione/consultazione: use "verbale DIEM" + subtopic from the actual heading (e.g. "verbale DIEM - consultazione parti interessate").
+   - If the text is a DECRETO (decreto direttoriale, decreto di nomina, decreto di approvazione atti, "Decreto n. X del …"): use "decreto DIEM" + subtopic = the object of the decree (what it decides or approves), drawn from the title or first heading.
+     Examples: "decreto DIEM - nomina rappresentanti dottorandi", "decreto DIEM - approvazione atti assegni tutorato"
+     NEVER classify a decreto as "bando DIEM" or "avviso DIEM".
+   - If the text is a BANDO (call for applications, selezione, concorso, avviso di selezione): use "bando DIEM" + subtopic.
+   - If the text is an AVVISO (announcement, scorrimento graduatoria, esito selezione, comunicazione): use "avviso DIEM" + subtopic.
+   - If the text is a verbale, delibera, or verbale di riunione/consultazione: use "verbale DIEM" + subtopic from the actual heading (e.g. "verbale DIEM - consultazione parti interessate").
    - If the text is a syllabus, programma del corso, or brochure informativa: use "scheda insegnamento" or "offerta formativa DIEM".
    - If the document is a prize or award (premio, riconoscimento): use "premi ricerca DIEM".
    - Do NOT read the URL filename as the subtopic — derive it from the document text.

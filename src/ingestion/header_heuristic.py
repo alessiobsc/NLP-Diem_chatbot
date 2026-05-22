@@ -351,7 +351,7 @@ def classify_context_header(text: str, url: str, metadata: dict | None = None) -
         if "ricevimento" in path or "ricevimento" in combined:
             return f"Ricevimento docente - {person}" if person else "Ricevimento docente"
         if "didattica" in path or "insegnamenti" in path:
-            return f"Didattica docente - {person}" if person else "Didattica docente"
+            return f"Corsi insegnati - {person}" if person else "Corsi insegnati"
         return f"Profilo docente - {person}" if person else "Profilo docente"
 
     if "easycourse.unisa.it" in host:
@@ -386,6 +386,11 @@ def classify_context_header(text: str, url: str, metadata: dict | None = None) -
     # URL path checks before broad text checks — prevents "laborator in text" false positives
     if "/international/" in path or "/erasmus" in path:
         return "Accordi internazionali DIEM"
+    # Eccellenza must be checked before /aree-di-ricerca — /eccellenza/ricerca would otherwise
+    # match the ricerca keyword in text and produce the wrong category.
+    if "/dipartimento/eccellenza" in path:
+        _sub = path.split("/dipartimento/eccellenza")[-1].strip("/")
+        return f"Dipartimento di eccellenza DIEM - {_sub}" if _sub else "Dipartimento di eccellenza DIEM"
     if "/aree-di-ricerca" in path:
         return "Aree di ricerca DIEM"
     if "/ricerca/laboratori" in path or "/laboratori/" in path:
@@ -396,6 +401,20 @@ def classify_context_header(text: str, url: str, metadata: dict | None = None) -
         return "Terza missione DIEM"
     if "progetti-finanziati" in path:
         return "Progetti finanziati DIEM"
+    # Decreto check before avviso/bando: decreto in filename or document opening overrides text keywords.
+    if "/uploads/" in path:
+        _fname = path.rstrip("/").rsplit("/", 1)[-1]
+        _is_decreto = _fname.startswith("decreto") or bool(
+            re.search(r"^decreto\b", text[:200], re.IGNORECASE)
+        )
+        if _is_decreto:
+            _slug = re.sub(r"^decreto[-.]", "", _fname)
+            _slug = re.sub(r"^n\W+\d+\W+del\W+[\d.]+\W*", "", _slug)
+            _slug = re.sub(r"\.(pdf|html?)$", "", _slug)
+            _slug = re.sub(r"[-_]+", " ", _slug).strip()
+            _words = [w for w in _slug.split() if not w.isdigit() and len(w) > 1][:4]
+            _subtopic = " ".join(_words)
+            return f"Decreto DIEM - {_subtopic}" if _subtopic else "Decreto DIEM"
     if any(term in combined for term in ("avviso", "avvisi", "news", "bando", "seminario", "evento")):
         return "Avviso DIEM"
     if any(term in combined for term in ("segreteria", "ufficio", "contatti")):

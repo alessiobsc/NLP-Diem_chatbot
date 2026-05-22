@@ -119,6 +119,17 @@ BUG CONFERMATI nel chatbot:
   [ ] #5 Retrieval incompleto su domande factuali ("Dove si trova il DIEM?"
         non cita Via Giovanni Paolo II 132): valutare ingestion gap e/o
         tuning di BI_ENCODER_K / RETRIEVER_SCORE_THRESHOLD.
+  [ ] #13 Scope guard falsi negativi su query ambigue/follow-up: lo scope
+        guard attuale rigetta subito senza vedere la query riscritta. Fix:
+        aggiungere un secondo scope check dopo rewrite (o dopo forced_retrieve)
+        così query ambigue che diventano chiare dopo risoluzione pronomi/anno
+        non vengono bloccate erroneamente.
+  [ ] #14 Overrepresentation progetti finanziati nel retrieval: 641/2229
+        source URL (29%) sono docenti.unisa.it/*/ricerca/progetti* e dominano
+        il bi-encoder per query non correlate. Fix pianificato: post-retrieval
+        filter in retrieve tool e _node_forced_retrieve — se query non contiene
+        keyword progetto/finanziato/ricerca, escludere doc con source contenente
+        "/ricerca/progetti" prima del reranking.
 
 REPORTING (per la relazione):
   [ ] #6 Notebook di analisi quantitativa sui CSV di Ragas
@@ -1127,3 +1138,84 @@ CRONOLOGIA AGGIORNAMENTI
   ---------------
   src/prompts.py, src/agent/utils.py, src/agent/init_models.py,
   src/agent/brain.py, src/agent/nodes.py, src/agent/tools.py
+
+2026-05-22 - Fix agent: calculate, preload reranker, multi-turn contamination, rewrite→retrieve override
+
+  CHERRY-PICK DA devAlessio-agent-speed (commit 5e769bc)
+  -------------------------------------------------------
+  Portate selettivamente solo 2 modifiche dal branch di velocizzazione
+  (senza portare la rimozione di rewrite/summarize, rimasti nel develop):
+
+  1. calculate tool aggiornato (src/agent/tools.py):
+     - Docstring estesa con due pattern d'uso: date arithmetic (anni di
+       esperienza, età) e formula accademica (voto di laurea).
+     - Prompt arricchito con current_year = date.today().year iniettato.
+     - Istruzione esplicita: per aritmetica temporale usare il contesto
+       già recuperato senza chiamare retrieve() di nuovo.
+
+  2. ACADEMIC ROLES — regola 7 AGENT_SYSTEM_PROMPT (src/prompts.py):
+     "If context shows a person teaches at DIEM → introduce as 'docente',
+     even if they hold 'Ricercatore RTD'. Reserve 'ricercatore' only for
+     people with no teaching activity."
+     Motivazione: docenti con ruolo formale RTD/B venivano introdotti
+     come "ricercatori" ignorando il campo didattica nel curriculum.
+
+  PRELOAD RERANKER LOCALE (app.py)
+  ---------------------------------
+  Se RERANKER_PROVIDER=local, _get_local_reranker() viene chiamato a
+  startup subito dopo build_embedding_model(). Evita il download/carico
+  del CrossEncoder (~20s) sulla prima query dell'utente.
+  Il singleton in reranker.py garantisce riuso senza reload.
+
+  FIX MULTI-TURN CONTAMINATION — tool window (src/agent/nodes.py)
+  ----------------------------------------------------------------
+  PROBLEMA: in _node_agent, tutti i ToolMessages (chunk recuperati da
+  retrieve) dei turni precedenti erano visibili al LLM → i doc del
+  turno 1 contaminavano la reasoning del turno 2+.
+  CLAUDE.md indicava che erano prunati, ma il codice non lo faceva.
+
+  FIX: aggiunto HISTORY_TOOL_TURNS=3. Per messaggi precedenti ai
+  3 turni più recenti, ToolMessages e AIMessages con tool_calls vengono
+  droppati. HumanMessage e AIMessage finale (risposta) rimangono.
+  Preserva il follow-up su turni recenti (agent può riusare contesto
+  degli ultimi 3 turni); contamination da turni più vecchi eliminata.
+  Log debug: "dropping N old tool messages outside window" dal turno 4+.
+  Verificato attivo nei log (13:36 — 12 messaggi droppati).
+
+  FIX REWRITE → RETRIEVE QUERY OVERRIDE (src/agent/nodes.py)
+  ------------------------------------------------------------
+  PROBLEMA: l'agent chiamava rewrite() correttamente ma poi passava a
+  retrieve() una query riformulata autonomamente, ignorando l'output
+  della rewrite. Istruzioni nel prompt non sufficienti.
+  Esempio osservato:
+    rewrite output: "Qual voto di laurea posso prendere anno accademico
+                     2025/2026 con una media del 28?"
+    retrieve query: "conversione media 28 voto di laurea regolamento
+                     universitario Salerno"
+
+  FIX: in _node_agent, dopo l'invoke del LLM, se la risposta include
+  una retrieve() tool call E nel turno corrente esiste già un ToolMessage
+  di tipo "rewrite", l'args["query"] della retrieve viene sostituito con
+  l'output della rewrite. Enforcement in codice, immune all'LLM.
+  Log: "overriding retrieve query with rewrite output: '...'"
+
+  AMBIGUITY EXAMPLE — voto di laurea (src/prompts.py)
+  ----------------------------------------------------
+  Aggiunto esempio regola 10 (AMBIGUITY): quando retrieve trova
+  regolamenti voto di laurea per più corsi (L-8, LM-32, L-9), l'agent
+  deve chiedere per quale corso prima di rispondere — non rispondere
+  con il primo regolamento trovato.
+
+  PROBLEMA IDENTIFICATO: overrepresentation progetti finanziati
+  -------------------------------------------------------------
+  641 source URL su 2229 totali (29%) sono pagine progetto di ricerca
+  (docenti.unisa.it/*/ricerca/progetti*). Ogni docente ha una pagina
+  base + una per ogni singolo progetto. Dominano il bi-encoder per
+  qualsiasi query anche non correlata alla ricerca.
+  Fix pianificato: post-retrieval filter — se query non contiene keyword
+  progetto/finanziato, escludere doc con source contenente "/ricerca/progetti"
+  prima del reranking. Non ancora implementato.
+
+  FILE MODIFICATI
+  ---------------
+  app.py, src/agent/nodes.py, src/agent/tools.py, src/prompts.py

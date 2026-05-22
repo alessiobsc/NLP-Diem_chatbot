@@ -109,17 +109,29 @@ class DiemNodes:
             )
         system = SystemMessage(content=system_content)
 
-        # Find start of current turn: everything before the last HumanMessage is history
-        last_human_idx = max(
-            (i for i, m in enumerate(state["messages"]) if isinstance(m, HumanMessage)),
-            default=-1,
+        # Find boundaries of the last HISTORY_TOOL_TURNS turns to keep tool messages for.
+        # Older turns: strip ToolMessages and tool-call AIMessages to prevent retrieved
+        # chunks from past topics contaminating the current turn's reasoning.
+        HISTORY_TOOL_TURNS = 3
+        human_indices = [i for i, m in enumerate(state["messages"]) if isinstance(m, HumanMessage)]
+        # Index of the HumanMessage that starts the oldest turn still allowed to keep tools
+        tool_window_start = human_indices[-HISTORY_TOOL_TURNS] if len(human_indices) >= HISTORY_TOOL_TURNS else 0
+
+        dropped_tools = sum(
+            1 for i, m in enumerate(state["messages"])
+            if i < tool_window_start and (isinstance(m, ToolMessage) or (isinstance(m, AIMessage) and getattr(m, "tool_calls", None)))
         )
+        if dropped_tools:
+            logger.debug(f"agent | tool_window={HISTORY_TOOL_TURNS} turns | dropping {dropped_tools} old tool messages outside window")
 
         clean_messages = []
-        for m in state["messages"]:
+        for i, m in enumerate(state["messages"]):
+            in_tool_window = i >= tool_window_start
+            if isinstance(m, ToolMessage) and not in_tool_window:
+                continue
+            if isinstance(m, AIMessage) and getattr(m, "tool_calls", None) and not in_tool_window:
+                continue
             # Replace guardrail-injected AIMessages with placeholder across all turns.
-            # ToolMessages and tool-call AIMessages are kept so the agent can reuse
-            # previously retrieved context when answering follow-up questions.
             if (
                 isinstance(m, AIMessage)
                 and not getattr(m, "tool_calls", None)
@@ -136,6 +148,26 @@ class DiemNodes:
                 clean_messages.append(m)
         response = self._agent_model_with_tools.invoke([system] + clean_messages)
         tool_calls = getattr(response, "tool_calls", None)
+
+        # If agent is calling retrieve, check if rewrite was already called this turn.
+        # If so, force the retrieve query to use the rewrite output — model compliance is unreliable.
+        if tool_calls and any(tc["name"] == "retrieve" for tc in tool_calls):
+            current_turn_start = human_indices[-1] if human_indices else 0
+            rewrite_output = next(
+                (m.content for m in state["messages"][current_turn_start:]
+                 if isinstance(m, ToolMessage) and m.name == "rewrite"),
+                None,
+            )
+            if rewrite_output:
+                overridden = []
+                for tc in tool_calls:
+                    if tc["name"] == "retrieve":
+                        tc = {**tc, "args": {**tc["args"], "query": rewrite_output}}
+                        logger.info(f"agent | overriding retrieve query with rewrite output: '{rewrite_output[:80]}'")
+                    overridden.append(tc)
+                response = AIMessage(id=response.id, content=response.content, tool_calls=overridden)
+                tool_calls = overridden
+
         if tool_calls:
             names = [tc["name"] for tc in tool_calls]
             logger.info(f"agent | retrieve_count={state['tool_call_count']} | calling tools={names}")

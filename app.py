@@ -7,6 +7,7 @@ import gradio as gr
 
 from src.agent.brain import DiemBrain, STREAM_DEGENERATE_SIGNAL
 from src.encoders.embedding_init import build_embedding_model
+from src.encoders.reranker import _get_local_reranker
 from src.utils.logger import get_logger
 
 load_dotenv()
@@ -16,6 +17,12 @@ logger = get_logger(__name__)
 
 # Global embedding model instance
 embedding_model = build_embedding_model()
+
+# Preload local reranker at startup to avoid cold download on first query
+from config import RERANKER_PROVIDER
+if RERANKER_PROVIDER == "local":
+    logger.info("Preloading local reranker model...")
+    _get_local_reranker()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Configuration

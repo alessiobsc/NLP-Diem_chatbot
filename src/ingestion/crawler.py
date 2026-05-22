@@ -45,6 +45,10 @@ SKIP_DOCUMENT_SUBSTRINGS: Tuple[str, ...] = (
     "/zh/",
     "/valutazione-della-didattica",
     "/pubblicazioni?anno=0",  # "all years" publication aggregation — keep only year-specific URLs
+    "/dipartimento/organi-collegiali/sedute",  # login-gated page, content is SPID prompt only
+    "/dipartimento/modulistica",               # login-gated page, content is SPID prompt only
+    "ricerca/progetti?progetto=",             # docenti: individual project subpages (no detail pages wanted)
+    "progetti-finanziati?progetto=",          # DIEM: individual project subpages (no detail pages wanted)
 )
 
 OFFERTA_FORMATIVA_PATH = "/didattica/offerta-formativa"

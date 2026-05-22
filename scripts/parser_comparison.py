@@ -47,7 +47,7 @@ from src.ingestion.crawler import (
     OFFERTA_FORMATIVA_PATH,
     SITEMAP_QUERY,
     build_html_sitemap_url,
-    is_pre_2020_url,
+    should_skip_url_by_year,
 )
 
 # -- SSL bypass (mirrors crawler.py) ------------------------------------------
@@ -116,7 +116,7 @@ def _extract_sitemap_urls(html: str, sitemap_url: str, base_url: str, parser: st
             continue
         if any(exc in absolute_url for exc in EXCLUDE_DIRS):
             continue
-        if is_pre_2020_url(absolute_url):
+        if should_skip_url_by_year(absolute_url):
             continue
         urls.add(absolute_url)
     return urls

@@ -108,22 +108,29 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
 
     @tool
     def calculate(context: str, operation: str, values: dict) -> str:
-        """Apply an academic calculation using the official DIEM formula from retrieved context.
-        Always call retrieve() FIRST to fetch the formula, then pass its output as context.
-        Use for ANY numeric academic calculation: graduation grade, weighted average, TOLC thresholds.
-        Never compute inline — always delegate to this tool.
-        Parameters: context (retrieved formula text), operation (what to compute), values (input dict)."""
+        """Perform any numeric or academic calculation. Never compute inline — always use this tool.
+        Two usage patterns:
+        - Simple date/numeric inference from already-retrieved context (e.g. years of experience,
+          age from dates, time since an event): pass the relevant ToolMessage text as context —
+          do NOT call retrieve() again. Example: years of experience = current year - year of first role.
+        - Academic formula calculation (graduation grade, weighted average, TOLC thresholds):
+          call retrieve() first to fetch the formula, then pass its output as context here.
+        Parameters: context (text with data or formula), operation (what to compute), values (input dict)."""
+        from datetime import date
+        current_year = date.today().year
         logger.info(f"calculate | operation='{operation}' | values={values}")
         prompt = (
-            f"Using only the official formula found in the following context, "
-            f"compute the result for: operation='{operation}', values={values}.\n\n"
+            f"Current year: {current_year}.\n"
+            f"Compute the result for: operation='{operation}', values={values}.\n\n"
             f"Context:\n{context}\n\n"
+            f"If this is a simple date arithmetic (e.g. years of experience = current year - start year), "
+            f"compute it directly from the dates visible in the context — no formula needed.\n"
+            f"If this requires an official formula (e.g. graduation grade), use only the formula found in the context.\n"
             f"IMPORTANT: In Italian graduation grade formulas (voto di laurea), if the formula ends with '/ 110' "
             f"it means the result is expressed on a scale of 110 — omit that division from your calculation. "
             f"Example: (4.1 × 27 - 7.8) / 110 → compute only (4.1 × 27 - 7.8) = 102.9 ≈ 103.\n\n"
-            f"Show the calculation steps, the final numeric result, and a brief label explaining what the result represents "
-            f"(e.g. its unit, scale, or meaning) so the result can be interpreted without re-reading the formula. "
-            f"If the formula is not found in the context, say so explicitly."
+            f"Show the calculation steps, the final numeric result, and a brief label. "
+            f"If the data needed is not in the context, say so explicitly."
         )
         return generation_model.invoke(prompt).content
 
