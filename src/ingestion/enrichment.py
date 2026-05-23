@@ -42,6 +42,9 @@ def _use_heuristic_for_url(url: str) -> bool:
     netloc = parsed.netloc.lower()
     path = parsed.path.lower()
 
+    if netloc == "www.diem.unisa.it" and path.rstrip("/") == "/dipartimento/personale":
+        return True
+
     if netloc in _HEURISTIC_ONLY_DOMAINS:
         return True
 

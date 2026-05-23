@@ -327,6 +327,13 @@ def classify_context_header(text: str, url: str, metadata: dict | None = None) -
     detail = header_detail_from_text(text)
     title = clean_text(str((metadata or {}).get("title", "")))
 
+    if host == "www.diem.unisa.it" and path.rstrip("/") == "/dipartimento/personale":
+        return (
+            "personale DIEM - professori ordinari, associati, ricercatori, "
+            "personale tecnico-amministrativo, assegnisti, dottorandi, "
+            "docenti a contratto, professori emeriti"
+        )
+
     if "__schede-sua" in path:
         base = "Scheda SUA corso di studio"
         course_name = _course_slug_from_path(path, "__schede-sua") if "corsi.unisa.it" in host else ""
