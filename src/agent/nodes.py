@@ -4,6 +4,7 @@ Node implementations for the DIEM Chatbot LangGraph StateGraph.
 DiemNodes is a mixin — DiemBrain inherits from it and provides the instance
 attributes (models, retriever, guardrails) that node methods access via self.
 """
+import datetime
 import uuid
 from typing import List
 
@@ -14,7 +15,7 @@ from src.agent.state import DiemState
 from src.agent.utils import extract_text, format_context
 from src.encoders.reranker import rerank
 from src.middleware import _SCOPE_REJECTION, _OFFENSIVE_FALLBACK, redact_pii
-from src.prompts import AGENT_SYSTEM_PROMPT, REJECTION_TAGS
+from src.prompts import get_agent_system_prompt, REJECTION_TAGS
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -96,7 +97,7 @@ class DiemNodes:
         Guardrail AIMessages in history are replaced with a neutral placeholder so
         the model sees proper Q&A pairs without being contaminated by rejection text.
         """
-        system_content = AGENT_SYSTEM_PROMPT
+        system_content = get_agent_system_prompt()
         if state["tool_call_count"] == 0 and not state["retrieved_context"]:
             system_content += (
                 "\n\nIMPORTANT: This is a new user question. "
@@ -136,6 +137,26 @@ class DiemNodes:
                 clean_messages.append(m)
         response = self._agent_model_with_tools.invoke([system] + clean_messages)
         tool_calls = getattr(response, "tool_calls", None)
+
+        # If agent is calling retrieve, check if rewrite was already called this turn.
+        # If so, force the retrieve query to use the rewrite output — model compliance is unreliable.
+        if tool_calls and any(tc["name"] == "retrieve" for tc in tool_calls):
+            current_turn_start = last_human_idx if last_human_idx >= 0 else 0
+            rewrite_output = next(
+                (m.content for m in state["messages"][current_turn_start:]
+                 if isinstance(m, ToolMessage) and m.name == "rewrite"),
+                None,
+            )
+            if rewrite_output:
+                overridden = []
+                for tc in tool_calls:
+                    if tc["name"] == "retrieve":
+                        tc = {**tc, "args": {**tc["args"], "query": rewrite_output}}
+                        logger.info(f"agent | overriding retrieve query with rewrite output: '{rewrite_output[:80]}'")
+                    overridden.append(tc)
+                response = AIMessage(id=response.id, content=response.content, tool_calls=overridden)
+                tool_calls = overridden
+
         if tool_calls:
             names = [tc["name"] for tc in tool_calls]
             logger.info(f"agent | retrieve_count={state['tool_call_count']} | calling tools={names}")
