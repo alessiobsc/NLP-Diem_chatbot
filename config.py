@@ -103,19 +103,19 @@ DEFAULT_SESSION_ID: str = "diem-session"
 # BI_ENCODER_K: number of documents retrieved in the first stage (fast retrieval)
 BI_ENCODER_K: int = int(os.getenv("BI_ENCODER_K", "15"))
 # CROSS_ENCODER_K: number of documents kept after reranking in the second stage (precision reranking)
-CROSS_ENCODER_K: int = int(os.getenv("CROSS_ENCODER_K", "3"))
+CROSS_ENCODER_K: int = int(os.getenv("CROSS_ENCODER_K", "4"))
 
-RETRIEVER_SCORE_THRESHOLD: float = float(os.getenv("RETRIEVER_SCORE_THRESHOLD", "0.5"))
+RETRIEVER_SCORE_THRESHOLD: float = float(os.getenv("RETRIEVER_SCORE_THRESHOLD", "0.45"))
 
 # Document Splitting Settings (Parent-Child Strategy)
 # Parent Document Settings (Broad context)
 # TODO (Software Architect): Consider making chunk sizes configurable via environment variables.
-PARENT_CHUNK_SIZE: int = 1200
-PARENT_CHUNK_OVERLAP: int = 150
+PARENT_CHUNK_SIZE: int = 1500
+PARENT_CHUNK_OVERLAP: int = 180
 
 # Child Document Settings (Precise retrieval)
-CHILD_CHUNK_SIZE: int = 300
-CHILD_CHUNK_OVERLAP: int = 80
+CHILD_CHUNK_SIZE: int = 350
+CHILD_CHUNK_OVERLAP: int = 70
 
 # Ingestion Batching
 MAX_CHILD_CHUNKS_PER_BATCH: int = 100
