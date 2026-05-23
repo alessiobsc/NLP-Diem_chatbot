@@ -2,6 +2,13 @@
 Prompts repository for the DIEM Chatbot.
 Centralizes all the prompts used across different components of the system.
 """
+import datetime
+
+
+def get_agent_system_prompt() -> str:
+    today = datetime.date.today().strftime("%B %d, %Y")
+    return f"Today's date is {today}.\n\n" + AGENT_SYSTEM_PROMPT
+
 
 AGENT_SYSTEM_PROMPT = (
     "You are a virtual assistant for the DIEM department "
