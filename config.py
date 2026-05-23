@@ -90,7 +90,7 @@ OPENROUTER_EMBEDDING_MODEL: str = os.getenv("OPENROUTER_EMBEDDING_MODEL", "baai/
 EMBEDDING_DIMENSION: int = int(os.getenv("EMBEDDING_DIMENSION", "1024"))
 
 # Reranker Model Settings
-OPENROUTER_RERANKER_MODEL: str = os.getenv("OPENROUTER_RERANKER_MODEL", "cohere/rerank-v3.5")
+OPENROUTER_RERANKER_MODEL: str = os.getenv("OPENROUTER_RERANKER_MODEL", "cohere/rerank-4-pro")
 
 
 # =============================================================================
