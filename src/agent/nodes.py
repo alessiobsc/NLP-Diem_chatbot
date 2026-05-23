@@ -136,6 +136,26 @@ class DiemNodes:
                 clean_messages.append(m)
         response = self._agent_model_with_tools.invoke([system] + clean_messages)
         tool_calls = getattr(response, "tool_calls", None)
+
+        # If agent is calling retrieve, check if rewrite was already called this turn.
+        # If so, force the retrieve query to use the rewrite output — model compliance is unreliable.
+        if tool_calls and any(tc["name"] == "retrieve" for tc in tool_calls):
+            current_turn_start = last_human_idx if last_human_idx >= 0 else 0
+            rewrite_output = next(
+                (m.content for m in state["messages"][current_turn_start:]
+                 if isinstance(m, ToolMessage) and m.name == "rewrite"),
+                None,
+            )
+            if rewrite_output:
+                overridden = []
+                for tc in tool_calls:
+                    if tc["name"] == "retrieve":
+                        tc = {**tc, "args": {**tc["args"], "query": rewrite_output}}
+                        logger.info(f"agent | overriding retrieve query with rewrite output: '{rewrite_output[:80]}'")
+                    overridden.append(tc)
+                response = AIMessage(id=response.id, content=response.content, tool_calls=overridden)
+                tool_calls = overridden
+
         if tool_calls:
             names = [tc["name"] for tc in tool_calls]
             logger.info(f"agent | retrieve_count={state['tool_call_count']} | calling tools={names}")
