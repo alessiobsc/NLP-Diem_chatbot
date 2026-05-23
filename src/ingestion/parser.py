@@ -522,6 +522,7 @@ def _is_structured_source(source: str) -> bool:
             "/dipartimento/organi-collegiali",
             "/dipartimento/commissione-paritetica",
             "/dipartimento/commissioni",
+            "/dipartimento/strutture",
         }:
             return True
         if path == "/dipartimento/commissioni" and query.get("dettaglio"):
@@ -530,6 +531,8 @@ def _is_structured_source(source: str) -> bool:
     if netloc == "corsi.unisa.it":
         return path.endswith("/strutture-didattiche") or path.endswith("/contatti")
 
+    if netloc == "docenti.unisa.it":
+        return path.endswith("/didattica")
     return False
 
 

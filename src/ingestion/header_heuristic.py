@@ -351,7 +351,7 @@ def classify_context_header(text: str, url: str, metadata: dict | None = None) -
         if "ricevimento" in path or "ricevimento" in combined:
             return f"Ricevimento docente - {person}" if person else "Ricevimento docente"
         if "didattica" in path or "insegnamenti" in path:
-            return f"Didattica docente - {person}" if person else "Didattica docente"
+            return f"Corsi insegnati - {person}" if person else "Corsi insegnati"
         return f"Profilo docente - {person}" if person else "Profilo docente"
 
     if "easycourse.unisa.it" in host:
