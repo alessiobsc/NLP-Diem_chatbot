@@ -423,8 +423,6 @@ def _extract_panel_sections(root: Tag) -> list[dict]:
 
         body = _panel_body(panel)
         rows = _extract_panel_body_lines(body)
-        # Strip rows that duplicate the title (happens when _panel_body falls back to the full panel)
-        rows = [r for r in rows if r.lower() != normalized_title]
         if not rows:
             continue
 
@@ -524,7 +522,6 @@ def _is_structured_source(source: str) -> bool:
             "/dipartimento/organi-collegiali",
             "/dipartimento/commissione-paritetica",
             "/dipartimento/commissioni",
-            "/dipartimento/strutture",
         }:
             return True
         if path == "/dipartimento/commissioni" and query.get("dettaglio"):
@@ -532,9 +529,6 @@ def _is_structured_source(source: str) -> bool:
 
     if netloc == "corsi.unisa.it":
         return path.endswith("/strutture-didattiche") or path.endswith("/contatti")
-
-    if netloc == "docenti.unisa.it":
-        return path.endswith("/didattica")
 
     return False
 
