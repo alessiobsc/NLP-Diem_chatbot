@@ -143,10 +143,9 @@
                      & Andrey Kiriyanov & \small a.kiriyanov@studenti.unisa.it \ -- \ 0622702577 \\[3pt]
                      & Angelo           & \small  \\[6pt]
     \textbf{Anno Accademico:} & 2025/2026 & \\[4pt]
-    \textbf{Università:}    & UniSA --- Salerno & \\
   \end{tabular}\\[3cm]
   \vfill
-  {\small\today} 
+  {\small\today}
 \end{titlepage}
 
 %% ---- ABSTRACT ----
@@ -171,17 +170,15 @@ estrazione con trafilatura (e parsing strutturato mirato per pagine accordion/ta
 chunking Parent-Child con context header contestuali su ogni chunk figlio, e un indice
 Chroma a doppio livello. La knowledge base è arricchita con dati real-time di EasyCourse
 (calendario esami e orario lezioni settimanale dei cinque corsi DIEM) e con i bandi
-istituzionali degli ultimi due anni accademici. Il sistema supporta due modalità di
+istituzionali dall'anno accademico 2020/2021 in poi. Il sistema supporta due modalità di
 deployment per LLM, embedding e reranker (locale via Ollama o cloud via OpenRouter),
-selezionabili tramite variabile d'ambiente senza modifiche al codice.
+selezionabili tramite variabile d'ambiente.
 
 La valutazione quantitativa, condotta con il framework Ragas su un golden set bilingue
 (italiano e inglese) suddiviso in quattro categorie --- in-scope, multi-turn, out-of-scope e
 robustness --- ha prodotto, su un run pilota di dodici domande, valori di ResponseRelevancy
 pari a 0,637, Faithfulness pari a 0,490, LLMContextPrecision pari a 0,847 e Coherence
-pari a 0,750. Lo studio comparativo tra trafilatura e Crawl4AI (30 domande di golden set,
-pipeline production) ha confermato la superiorità di trafilatura per fatti atomici precisi,
-con un delta statisticamente significativo di $+$0,097 in favore dell'estrattore attuale.
+pari a 0,750.
 \end{abstract}
 
 \vspace{0.5em}
@@ -215,8 +212,7 @@ i contenuti reali del sito istituzionale.
 
 Il dominio applicativo presenta alcune sfide concrete che hanno guidato le scelte
 progettuali. \textbf{Eterogeneità delle fonti:} le informazioni sono distribuite su tre domini
-(\texttt{diem.unisa.it}, \texttt{docenti.unisa.it}, \texttt{corsi.unisa.it}) con strutture di navigazione diverse
-e pagine parzialmente generate via JavaScript, rendendo necessarie strategie di crawling
+(\texttt{diem.unisa.it}, \texttt{docenti.unisa.it}, \texttt{corsi.unisa.it}) con strutture di navigazione diverse rendendo necessarie strategie di crawling
 differenziate. \textbf{Assenza di metadati temporali:} i CMS istituzionali non espongono
 segnali di data leggibili automaticamente (zero pagine su trenta campionate presentavano
 intestazioni \texttt{Last-Modified} o tag \texttt{<time datetime>}), il che complica qualsiasi forma
@@ -251,8 +247,7 @@ Il lavoro presenta i seguenti contributi originali.
         quantitativa a supporto della scelta architetturale finale.
 
   \item Un framework di valutazione su golden set bilingue con sei metriche Ragas e due
-        criteri custom (scope-awareness e robustness), con separazione in due fasi per
-        evitare valori NaN artificiali su domande senza reference.
+        criteri custom (scope-awareness e robustness).
 \end{enumerate}
 
 \subsection{Struttura del documento}
@@ -350,7 +345,7 @@ strutturati.
 \sys{} è organizzato in tre sottosistemi principali: la \textbf{pipeline di ingestion}
 (raccolta, estrazione, arricchimento e indicizzazione dei contenuti), il \textbf{core RAG
 agentico} (grafo LangGraph per la gestione della conversazione e del retrieval) e la
-\textbf{UI Gradio} per l'interazione con l'utente finale.
+\textbf{UI Gradio} per l'interazione con l'utente finale. 
 
 \begin{figure}[htbp]
 \centering
@@ -383,7 +378,7 @@ agentico} (grafo LangGraph per la gestione della conversazione e del retrieval) 
   \end{scope}
 
   %% --- RAG lane ---
-  \node[box,below=1.8cm of crawler] (input_g) {input\_guard};
+  \node[box,below=3.2cm of crawler] (input_g) {input\_guard};
   \node[box,right=of input_g] (scope_g) {scope\_guard};
   \node[box,right=of scope_g] (reset) {reset\_state};
   \node[box,right=of reset] (agent) {agent\\(LLM)};
@@ -426,29 +421,27 @@ multilingue. Reranker: inizialmente bge-reranker-base, poi aggiornato a bge-rera
 locale (fase 1--2) a architettura due modelli (fase 3: 32b agent + 9b generate) fino
 all'attuale singolo modello agente gpt-oss-120b con lightweight llama-3.1-8b-instruct.}
 
-\sys{} è costruito interamente in Python~3.11, sfruttando LangChain per le astrazioni
+\sys{} è costruito sfruttando LangChain per le astrazioni
 di base (loader, splitter, retriever, embedding), LangGraph per l'orchestrazione del
 grafo agentico e Chroma come vector store locale.
 
 \textbf{Embedding e Reranking.} Il sistema supporta due modalità di deployment,
-selezionabili tramite la variabile d'ambiente \code{EMBEDDING\_PROVIDER}. In modalità
-\emph{locale} si utilizza \texttt{intfloat/multilingual-e5-base} (768 dimensioni,
-supporto multilingue IT/EN) con prefissi asimmetrici \texttt{query:}/\texttt{passage:}
-come previsto dallo schema di addestramento E5; il reranking è affidato al cross-encoder
+selezionabili tramite la variabile d'ambiente \code{EMBEDDING\_PROVIDER}. Il reranking è affidato al cross-encoder
 \texttt{BAAI/bge-reranker-v2-m3} (CrossEncoder via sentence-transformers), istanziato
 come singleton a livello di modulo per eliminare il bottleneck di latenza inizialmente
-osservato. In modalità \emph{cloud} (OpenRouter) si utilizza \texttt{baai/bge-m3}
-(1024 dimensioni, finestra da 8K token), che non richiede prefissi, abbinato al
-reranker \texttt{cohere/rerank-v3.5} (Cohere Rerank~4 Pro, 32K contesto). La
-transizione tra le due modalità richiede un re-index completo del vector store per via
-delle dimensioni vettoriali diverse; il reranker cloud è invece sostituibile a caldo.
+osservato. Per l'embedding sia in modalità \emph{cloud} (OpenRouter) che in locale si utilizza \texttt{baai/bge-m3}
+(1024 dimensioni, finestra da 8K token) abbinato al
+reranker \texttt{Cohere Rerank~4 Pro} (32K contesto).
 
-\textbf{Modelli LLM.} Il sistema supporta due modalità di deployment: \emph{locale} via Ollama
+\textbf{Modelli LLM.}Il sistema supporta due modalit\`a di deployment: \emph{locale} via Ollama
 (\code{qwen2.5:7b} per il modello agente e per le task lightweight come guardrail,
 rewrite e calculate) e \emph{cloud} via OpenRouter (\code{openai/gpt-oss-120b} come
 modello agente per reasoning e tool selection, \code{meta-llama/llama-3.1-8b-instruct}
-per guardrail, rewrite e calculate). La scelta tra le due modalità è configurabile
-tramite la variabile d'ambiente \code{LLM\_PROVIDER} e non richiede modifiche al codice.
+per guardrail, rewrite e calculate). La modalit\`a cloud rappresenta la configurazione
+primaria e garantisce le prestazioni attese, mentre la modalit\`a locale funge da
+fallback quando l'accesso al cloud non \`e disponibile. La scelta tra le due modalit\`a
+\`e configurabile tramite la variabile d'ambiente \code{LLM\_PROVIDER} e non richiede
+modifiche al codice.
 Per l'enrichment della pipeline di ingestion (generazione context header) si utilizza
 \code{mistralai/mistral-nemo} su OpenRouter come modello primario, con fallback su
 \code{qwen2.5:3b} via Ollama e in ultima istanza su regole euristiche deterministiche.
