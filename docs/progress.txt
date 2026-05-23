@@ -1302,4 +1302,59 @@ CRONOLOGIA AGGIORNAMENTI
   Aggiunti 4 pattern a SKIP_DOCUMENT_SUBSTRINGS:
   - "/dipartimento/organi-collegiali/sedute" — pagina login-gated (solo SPID prompt)
   - "/dipartimento/modulistica"              — pagina login-gated (solo SPID prompt)
+  - "ricerca/progetti?progetto="            — subpage progetto docenti (nessun dettaglio utile)
+  - "progetti-finanziati?progetto="         — subpage progetto DIEM (nessun dettaglio utile)
   File: src/ingestion/crawler.py
+
+2026-05-23 - Tool summarize: rimozione completa (post-spike summarize_history)
+
+  STORIA COMPLETA DEL TOOL
+  ------------------------
+
+  ORIGINE — summarize(text, query) [branch devAlessio-agent-speed, poi develop]
+  Primo tool di sintesi: riceveva testo retrieved + query, restituiva riassunto
+  in italiano via modello lightweight. Pensato per accorciare contesti retrieved
+  molto lunghi (>6000 chars) prima di passarli al modello principale.
+  In pratica: non veniva quasi mai chiamato dal modello da solo. Il 120b gestisce
+  direttamente contesti lunghi senza delegare la sintesi. Tool inutilizzato.
+
+  SPIKE — summarize_history(focus, state: InjectedState) [2026-05-23]
+  Tentativo di riproporre il tool con funzione diversa: compressione agent-driven
+  della conversation history su sessioni lunghe (>= 10 turni).
+  Implementazione:
+  - InjectedState per accedere a state["messages"] senza parametri espliciti.
+  - Estrazione coppie Human/AI, sintesi col lightweight in italiano (bullet list).
+  - SUMMARIZE_HISTORY_PROMPT in prompts.py con regole di formato.
+  - _node_agent: ricerca anchor ToolMessage summarize_history → compressione
+    di tutti i messaggi precedenti in un singolo AIMessage con il summary.
+  - Hint dinamico nel system prompt da turno 10: "call summarize_history() then retrieve()".
+  - Guard already_summarized per evitare chiamate ripetute oltre il turno 10.
+  Test con scripts/test_summarize_history.py (5 scenari): qualità sintesi ottima,
+  bullet list compatta, focus funzionante, ~6-8s di latenza per chiamata.
+
+  PROBLEMA RISCONTRATO (test con test_chatbot_from_turn9.py)
+  ----------------------------------------------------------
+  Il tool veniva chiamato correttamente al turno 10 (segnale hint funzionante).
+  Tuttavia dopo la chiamata il modello non procedeva con retrieve() — generava
+  una risposta generica ("Come posso aiutarti oggi?") come se il turno fosse
+  esaurito dalla sola sintesi. Causa: il modello interpreta il ToolMessage del
+  summary come contesto sufficiente per rispondere, ignorando l'istruzione
+  "you MUST still call retrieve()". Wording dell'hint rivisto più volte senza
+  successo — compliance del modello inaffidabile su sequenza multi-tool nello
+  stesso turno.
+
+  DECISIONE FINALE — RIMOZIONE
+  ----------------------------
+  Tool rimosso completamente (develop, 2026-05-23). Tool list finale: rewrite,
+  retrieve, calculate (3 tool).
+  Motivazione: il problema di compliance post-summarize non è risolvibile in modo
+  affidabile solo via prompt su questo modello. Il costo aggiuntivo (1 round trip
+  lightweight + rischio di risposta degenerate sul turno di compressione) supera
+  il beneficio per sessioni normali (< 10 turni nella maggior parte dei casi d'uso).
+  La HISTORY_TOOL_TURNS window in _node_agent (presente su vectorstore-filter-work,
+  non ancora mergiata) rimane l'approccio preferito per gestire la crescita della
+  context window — automatico, senza round trip extra, zero compliance issues.
+  File ripristinati: src/agent/tools.py, src/agent/nodes.py, src/prompts.py.
+  SUMMARIZE_HISTORY_PROMPT rimosso da prompts.py.
+  Script residui: scripts/test_summarize_history.py, scripts/test_chatbot_from_turn9.py
+  (mantenuti come reference per eventuali futuri esperimenti).

@@ -34,8 +34,6 @@ AGENT_SYSTEM_PROMPT = (
     "If context is empty or irrelevant, retry retrieve() with a rephrased or broader query "
     "(you may call rewrite() again to get a better query before retrying). "
     "Never re-retrieve with the identical query.\n\n"
-    "**summarize(text, query)** — call when context exceeds 6000 characters OR after multiple "
-    "retrieve calls to merge and focus results. Always pass the user's question as query.\n\n"
     "**calculate(context, operation, values)** — call for ANY numerical academic calculation "
     "(grades, averages, weighted scores). Never compute inline — always delegate to the tool.\n\n"
     "You may skip rewrite() if the query is already self-contained. "
@@ -120,6 +118,25 @@ AGENT_SYSTEM_PROMPT = (
 
 
 REJECTION_TAGS = ("[FUORI_SCOPE]", "[KNOWLEDGE_GAP]")
+
+CALCULATE_PROMPT = (
+    "You are an academic calculation assistant for the DIEM department (University of Salerno).\n"
+    "Compute the requested result using ONLY the formula found in the provided context.\n\n"
+    "RULES:\n"
+    "1. Show every intermediate step clearly, labelling each variable.\n"
+    "2. Round the final result to 2 decimal places where appropriate.\n"
+    "3. State the scale/unit of the result (e.g. 'out of 110', 'points', 'CFU').\n"
+    "4. If the formula is not present in the context, say so explicitly — never invent formulas.\n\n"
+    "GRADUATION GRADE FORMULA (voto di laurea) — for reference when context contains it:\n"
+    "  VMIN = (weighted_average_30 × 110) / 30\n"
+    "  FCP  = (4.1 × weighted_average_30 − 8.8 − VMIN) × (PT / 4)\n"
+    "  PCP  = career_score × (PT / 4)\n"
+    "  Voto = VMIN + min(PT + PCP, 6) + FCP\n"
+    "  Lode: only if Voto ≥ 112 AND unanimous committee vote.\n"
+    "  career_score components: on-time graduation (+1), international program (+1) or ≥15 CFU abroad (+0.5), excellence track (+1).\n"
+    "  PT ∈ [0, 4] assigned by the committee after thesis discussion.\n\n"
+    "Respond in Italian. Start directly with the calculation steps.\n"
+)
 
 REWRITE_PROMPT = (
     "You are a specialized Query Rewriter for a RAG system. "

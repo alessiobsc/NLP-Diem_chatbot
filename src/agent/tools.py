@@ -4,7 +4,6 @@ RAG tools for the agentic DIEM Chatbot.
 Provides four composable tools:
 - rewrite: Rewrite ambiguous query into standalone question using history
 - retrieve: Search the DIEM knowledge base
-- summarize: Summarize long text
 - calculate: Apply academic calculations using retrieved formulas
 """
 
@@ -90,41 +89,22 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
         return context
 
     @tool
-    def summarize(text: str, query: str = "") -> str:
-        """Condense a long retrieved context into focused key points in Italian.
-        Call when: (1) retrieved context exceeds ~6000 characters, OR
-        (2) after multiple retrieve() calls, to merge and focus results.
-        Always pass the user's original question as query to get a focused summary.
-        Returns a concise Italian summary."""
-        logger.info(f"summarize | context_len={len(text)} | query='{query[:60]}'")
-        if query:
-            prompt = (
-                f"Extract and summarize in Italian only the information relevant to answer this question:\n"
-                f"Question: {query}\n\nContext:\n{text}"
-            )
-        else:
-            prompt = f"Summarize concisely in Italian:\n{text}"
-        return generation_model.invoke(prompt).content
-
-    @tool
     def calculate(context: str, operation: str, values: dict) -> str:
         """Apply an academic calculation using the official DIEM formula from retrieved context.
         Always call retrieve() FIRST to fetch the formula, then pass its output as context.
         Use for ANY numeric academic calculation: graduation grade, weighted average, TOLC thresholds.
         Never compute inline — always delegate to this tool.
         Parameters: context (retrieved formula text), operation (what to compute), values (input dict)."""
+        from src.prompts import CALCULATE_PROMPT
         logger.info(f"calculate | operation='{operation}' | values={values}")
-        prompt = (
-            f"Using only the official formula found in the following context, "
-            f"compute the result for: operation='{operation}', values={values}.\n\n"
-            f"Context:\n{context}\n\n"
-            f"IMPORTANT: In Italian graduation grade formulas (voto di laurea), if the formula ends with '/ 110' "
-            f"it means the result is expressed on a scale of 110 — omit that division from your calculation. "
-            f"Example: (4.1 × 27 - 7.8) / 110 → compute only (4.1 × 27 - 7.8) = 102.9 ≈ 103.\n\n"
-            f"Show the calculation steps, the final numeric result, and a brief label explaining what the result represents "
-            f"(e.g. its unit, scale, or meaning) so the result can be interpreted without re-reading the formula. "
-            f"If the formula is not found in the context, say so explicitly."
+        user_content = (
+            f"Operation: {operation}\n"
+            f"Values: {values}\n\n"
+            f"Context:\n{context}"
         )
-        return generation_model.invoke(prompt).content
+        return generation_model.invoke([
+            SystemMessage(content=CALCULATE_PROMPT),
+            HumanMessage(content=user_content),
+        ]).content
 
-    return [rewrite, retrieve, summarize, calculate]
+    return [rewrite, retrieve, calculate]
