@@ -80,7 +80,26 @@
     colback=green!5,colframe=green!60!black,
     fonttitle=\bfseries\small,
     boxrule=0.5pt,arc=3pt
+  },
+  s2estyle/.style={
+    colback=gray!5,colframe=gray!45!black,
+    fonttitle=\bfseries\small\color{gray!60!black},
+    boxrule=0.4pt,arc=3pt,
+    left=5pt,right=5pt,top=3pt,bottom=3pt,
+    breakable
   }
+}
+
+%% ---- Note di sviluppo (start-to-end helper) ----
+%% Imposta \showsdevnotesfalse prima della consegna finale per nascondere tutti i box S2E.
+\newif\ifshowsdevnotes
+\showsdevnotestrue
+\newcommand{\snote}[1]{%
+  \ifshowsdevnotes
+  \begin{tcolorbox}[s2estyle,title={Note di sviluppo (start\,\texorpdfstring{$\to$}{->}\,end)}]
+  \footnotesize #1
+  \end{tcolorbox}
+  \fi
 }
 
 %% --- Code listing style ---
@@ -118,10 +137,12 @@
   }\\[0.4cm]
   \rule{\textwidth}{1pt}\\[1.5cm]
   {\large Relazione Tecnica --- Corso di Natural Language Processing}\\[2cm]
-  \begin{tabular}{ll}
-    \textbf{Autori:}        & Andrey Kiriyanov \\[4pt]
-    \textbf{Anno Accademico:} & 2025/2026 \\[4pt]
-    \textbf{Università:}    & UniSA --- Salerno \\
+  \begin{tabular}{lll}
+    \textbf{Autori:} & Alessio Bosco    & \small a.bosco22@studenti.unisa.it \ -- \ 0622702471 \\[3pt]
+                     & Michele Apuzzo   & \small m.apuzzo13@studenti.unisa.it \ -- \ 0622702461 \\[3pt]
+                     & Andrey Kiriyanov & \small a.kiriyanov@studenti.unisa.it \ -- \ 0622702577 \\[3pt]
+                     & Angelo           & \small  \\[6pt]
+    \textbf{Anno Accademico:} & 2025/2026 & \\[4pt]
   \end{tabular}\\[3cm]
   \vfill
   {\small\today}
@@ -144,16 +165,20 @@ nodi specializzati, incorporando guardrail a più livelli (contenuto offensivo, 
 redazione PII), query rewriting automatico con contestualizzazione temporale e un ciclo
 agentico in cui il modello decide autonomamente quando e quante volte richiamare il
 retrieval. La pipeline di ingestion tratta circa cinquecento pagine web provenienti da tre
-domini UNISA tramite crawling multi-strategia, estrazione con trafilatura, chunking
-Parent-Child con context header contestuali e un indice Chroma a doppio livello.
+domini UNISA tramite crawling multi-strategia con rate limiting e caching incrementale,
+estrazione con trafilatura (e parsing strutturato mirato per pagine accordion/tabellari),
+chunking Parent-Child con context header contestuali su ogni chunk figlio, e un indice
+Chroma a doppio livello. La knowledge base è arricchita con dati real-time di EasyCourse
+(calendario esami e orario lezioni settimanale dei cinque corsi DIEM) e con i bandi
+istituzionali dall'anno accademico 2020/2021 in poi. Il sistema supporta due modalità di
+deployment per LLM, embedding e reranker (locale via Ollama o cloud via OpenRouter),
+selezionabili tramite variabile d'ambiente.
 
 La valutazione quantitativa, condotta con il framework Ragas su un golden set bilingue
 (italiano e inglese) suddiviso in quattro categorie --- in-scope, multi-turn, out-of-scope e
 robustness --- ha prodotto, su un run pilota di dodici domande, valori di ResponseRelevancy
 pari a 0,637, Faithfulness pari a 0,490, LLMContextPrecision pari a 0,847 e Coherence
-pari a 0,750. Lo studio comparativo tra trafilatura e Crawl4AI (30 domande di golden set,
-pipeline production) ha confermato la superiorità di trafilatura per fatti atomici precisi,
-con un delta statisticamente significativo di $+$0,097 in favore dell'estrattore attuale.
+pari a 0,750.
 \end{abstract}
 
 \vspace{0.5em}
@@ -187,8 +212,7 @@ i contenuti reali del sito istituzionale.
 
 Il dominio applicativo presenta alcune sfide concrete che hanno guidato le scelte
 progettuali. \textbf{Eterogeneità delle fonti:} le informazioni sono distribuite su tre domini
-(\texttt{diem.unisa.it}, \texttt{docenti.unisa.it}, \texttt{corsi.unisa.it}) con strutture di navigazione diverse
-e pagine parzialmente generate via JavaScript, rendendo necessarie strategie di crawling
+(\texttt{diem.unisa.it}, \texttt{docenti.unisa.it}, \texttt{corsi.unisa.it}) con strutture di navigazione diverse rendendo necessarie strategie di crawling
 differenziate. \textbf{Assenza di metadati temporali:} i CMS istituzionali non espongono
 segnali di data leggibili automaticamente (zero pagine su trenta campionate presentavano
 intestazioni \texttt{Last-Modified} o tag \texttt{<time datetime>}), il che complica qualsiasi forma
@@ -223,8 +247,7 @@ Il lavoro presenta i seguenti contributi originali.
         quantitativa a supporto della scelta architetturale finale.
 
   \item Un framework di valutazione su golden set bilingue con sei metriche Ragas e due
-        criteri custom (scope-awareness e robustness), con separazione in due fasi per
-        evitare valori NaN artificiali su domande senza reference.
+        criteri custom (scope-awareness e robustness).
 \end{enumerate}
 
 \subsection{Struttura del documento}
@@ -266,9 +289,9 @@ La granularità dei chunk influenza fortemente la qualità del retrieval. Chunk 
 piccoli aumentano la precisione semantica ma perdono il contesto necessario alla
 generazione; chunk troppo grandi riducono il rumore ma compromettono l'accuratezza
 della similarity search. La strategia \emph{Parent-Child} \citep{langchain2023parentdoc}
-risolve il compromesso con una gerarchia a due livelli: i chunk figli (piccoli, $\approx 400$
+risolve il compromesso con una gerarchia a due livelli: i chunk figli (piccoli, $\approx 300$
 caratteri) sono usati per il retrieval vettoriale, mentre i chunk padre corrispondenti
-(più ampi, $\approx 2000$ caratteri) vengono restituiti al modello generativo per un
+(più ampi, $\approx 1200$ caratteri) vengono restituiti al modello generativo per un
 contesto più ricco.
 
 Il \emph{contextual retrieval} proposto da Anthropic \citep{anthropic2024contextual} estende
@@ -317,10 +340,12 @@ strutturati.
 
 \subsection{Panoramica}
 
+\snote{L'architettura iniziale era una singola chain LCEL in \code{src/brain.py}. L'introduzione di LangGraph come orchestratore del grafo agentico ha richiesto la separazione del codice in più moduli (\code{state.py}, \code{nodes.py}, \code{brain.py}) e la definizione esplicita dei nodi di sicurezza separati dalla logica RAG principale.}
+
 \sys{} è organizzato in tre sottosistemi principali: la \textbf{pipeline di ingestion}
 (raccolta, estrazione, arricchimento e indicizzazione dei contenuti), il \textbf{core RAG
 agentico} (grafo LangGraph per la gestione della conversazione e del retrieval) e la
-\textbf{UI Gradio} per l'interazione con l'utente finale.
+\textbf{UI Gradio} per l'interazione con l'utente finale. 
 
 \begin{figure}[htbp]
 \centering
@@ -353,7 +378,7 @@ agentico} (grafo LangGraph per la gestione della conversazione e del retrieval) 
   \end{scope}
 
   %% --- RAG lane ---
-  \node[box,below=1.8cm of crawler] (input_g) {input\_guard};
+  \node[box,below=3.2cm of crawler] (input_g) {input\_guard};
   \node[box,right=of input_g] (scope_g) {scope\_guard};
   \node[box,right=of scope_g] (reset) {reset\_state};
   \node[box,right=of reset] (agent) {agent\\(LLM)};
@@ -389,22 +414,37 @@ store; il core RAG agentico (basso) gestisce le interazioni conversazionali.}
 
 \subsection{Stack Tecnologico}
 
-\sys{} è costruito interamente in Python~3.11, sfruttando LangChain per le astrazioni
-di base (loader, splitter, retriever, embedding), LangGraph per l'orchestrazione del
-grafo agentico e Chroma come vector store locale. Per l'embedding si utilizza il modello
-\texttt{intfloat/multilingual-e5-base} (1024 dimensioni, supporto multilingue IT/EN) in
-modalità locale, con prefissi \texttt{query:} e \texttt{passage:} per la codifica asimmetrica
-delle query rispetto ai documenti. Il reranking è affidato a un cross-encoder
-\texttt{BAAI/bge-reranker-base} (CrossEncoder via sentence-transformers), istanziato come
-singleton a livello di modulo per eliminare il bottleneck di latenza di 20 secondi
-osservato nelle versioni iniziali.
+\snote{Embedding: inizialmente solo locale e5-base; supporto OpenRouter bge-m3 aggiunto
+dopo analisi dei benefici di un modello cloud con finestra 8K e superiori performance
+multilingue. Reranker: inizialmente bge-reranker-base, poi aggiornato a bge-reranker-v2-m3
+(locale) e aggiunto cohere/rerank-v3.5 come opzione cloud. LLM: evoluzione da qwen2.5:7b
+locale (fase 1--2) a architettura due modelli (fase 3: 32b agent + 9b generate) fino
+all'attuale singolo modello agente gpt-oss-120b con lightweight llama-3.1-8b-instruct.}
 
-\textbf{Modelli LLM.} Il sistema supporta due modalità di deployment: \emph{locale} via Ollama
-(\code{qwen2.5:7b} come modello agente, \code{qwen2.5:3b} per enrichment e lightweight
-tasks) e \emph{cloud} via OpenRouter (\code{qwen/qwen3-32b} come agente,
-\code{meta-llama/llama-3.1-8b-instruct} per guardrail e rewrite). La scelta tra le
-due modalità è configurabile tramite la variabile d'ambiente \code{LLM\_PROVIDER} e
-non richiede modifiche al codice.
+\sys{} è costruito sfruttando LangChain per le astrazioni
+di base (loader, splitter, retriever, embedding), LangGraph per l'orchestrazione del
+grafo agentico e Chroma come vector store locale.
+
+\textbf{Embedding e Reranking.} Il sistema supporta due modalità di deployment,
+selezionabili tramite la variabile d'ambiente \code{EMBEDDING\_PROVIDER}. Il reranking è affidato al cross-encoder
+\texttt{BAAI/bge-reranker-v2-m3} (CrossEncoder via sentence-transformers), istanziato
+come singleton a livello di modulo per eliminare il bottleneck di latenza inizialmente
+osservato. Per l'embedding sia in modalità \emph{cloud} (OpenRouter) che in locale si utilizza \texttt{baai/bge-m3}
+(1024 dimensioni, finestra da 8K token) abbinato al
+reranker \texttt{Cohere Rerank~4 Pro} (32K contesto).
+
+\textbf{Modelli LLM.}Il sistema supporta due modalit\`a di deployment: \emph{locale} via Ollama
+(\code{qwen2.5:7b} per il modello agente e per le task lightweight come guardrail,
+rewrite e calculate) e \emph{cloud} via OpenRouter (\code{openai/gpt-oss-120b} come
+modello agente per reasoning e tool selection, \code{meta-llama/llama-3.1-8b-instruct}
+per guardrail, rewrite e calculate). La modalit\`a cloud rappresenta la configurazione
+primaria e garantisce le prestazioni attese, mentre la modalit\`a locale funge da
+fallback quando l'accesso al cloud non \`e disponibile. La scelta tra le due modalit\`a
+\`e configurabile tramite la variabile d'ambiente \code{LLM\_PROVIDER} e non richiede
+modifiche al codice.
+Per l'enrichment della pipeline di ingestion (generazione context header) si utilizza
+\code{mistralai/mistral-nemo} su OpenRouter come modello primario, con fallback su
+\code{qwen2.5:3b} via Ollama e in ultima istanza su regole euristiche deterministiche.
 
 \textbf{Persistenza della conversazione.} LangGraph gestisce la storia conversazionale
 tramite \code{MemorySaver} con chiave di sessione (\code{session\_id}), conservando
@@ -428,6 +468,8 @@ crawling, parsing/filtraggio, arricchimento contestuale e indicizzazione.
 
 \subsection{Analisi Preliminare e Scelta dei Domini}
 
+\snote{L'analisi manuale ha rivelato che \texttt{docenti.unisa.it} non è linkato direttamente da \texttt{diem.unisa.it} ma passa per \texttt{rubrica.unisa.it} tramite matricola, rendendo impossibile il crawling ricorsivo ingenuo. Il quarto dominio \texttt{easycourse.unisa.it} è stato identificato successivamente come fonte di dati real-time (esami/lezioni) non presenti sui siti statici.}
+
 Prima di procedere all'implementazione, è stata condotta un'analisi manuale della
 struttura del sito per identificare i tre domini principali che costituiscono la knowledge
 base: \texttt{www.diem.unisa.it} (informazioni istituzionali, strutture, ricerca),
@@ -440,7 +482,19 @@ ciascuno di essi.
 \subsection{Web Crawling Multi-Strategia}
 \label{sec:crawling}
 
+\snote{L'approccio iniziale usava \code{RecursiveUrlLoader} puro su tutti i domini, senza
+rate limiting. Il monkey-patching della libreria \texttt{requests} è stato sostituito con
+dependency injection tramite \code{CustomRecursiveUrlLoader} e \code{RateLimitedSession}
+(Token Bucket 5 req/s) per rispettare i server istituzionali e risolvere problemi di
+determinismo. Il \code{CrawlStateManager} con SQLite è stato aggiunto successivamente per
+abilitare il caching incrementale (ETag/Last-Modified HTTP 304) nelle re-ingestion. Le
+fonti EasyCourse, bandi e focus pages sono state aggiunte dopo aver identificato gap di
+copertura rispettivamente su orari/esami, offerte di lavoro/dottorati e contenuti didattici
+accessori (tutoraggio, EUR-ACE, sbocchi).}
+
 \subsubsection{Crawling del dominio principale}
+
+\snote{Approccio iniziale: \code{RecursiveUrlLoader} puro da un URL radice. Problema: non deterministico e incapace di raggiungere pagine con query string (\texttt{?id=...}). Soluzione: discovery via sitemap HTML (\texttt{/?sitemap}) come primo passo, poi \code{RecursiveUrlLoader} dai seed estratti. La sitemap copre deterministicamente tutte le sezioni del portale incluse quelle costruite dinamicamente.}
 
 Il sito \texttt{diem.unisa.it} viene inizialmente analizzato tramite la sitemap HTML
 disponibile all'endpoint \texttt{/?sitemap}, che fornisce in modo deterministico le sezioni
@@ -455,6 +509,8 @@ che analizza il contenuto HTML grezzo delle pagine recuperate. I PDF allegati al
 sono identificati e scaricati tramite \code{load\_pdfs\_from\_links}.
 
 \subsubsection{Crawling dei profili docenti}
+
+\snote{Problema scoperto durante il crawling ricorsivo: venivano recuperati anche docenti di altri dipartimenti (linkati incidentalmente da pagine DIEM) e mancavano docenti DIEM non linkati da nessuna pagina. La soluzione via \texttt{/dipartimento/personale} come lista canonica garantisce copertura esatta del personale DIEM senza falsi positivi.}
 
 La raccolta delle pagine dei docenti ha richiesto una soluzione ad hoc dovuta a una
 particolarità strutturale del portale. Il sito DIEM non linka direttamente le pagine dei
@@ -477,6 +533,8 @@ la navigazione alla sezione del singolo profilo.
 
 \subsubsection{Crawling dei corsi}
 
+\snote{Senza il vincolo \texttt{/offerta-formativa}, il crawler recuperava 9 corsi invece dei 7 attesi includendo corsi obsoleti linkati da sezioni storiche del sito. Il vincolo è stato aggiunto dopo aver ispezionato manualmente la lista di URL risultante. La profondità \code{max\_depth=1} iniziale non raggiungeva le pagine \texttt{/focus?id=...}; risolto con fetch esplicito di queste sottopagine.}
+
 Analogamente, ogni URL di corso viene crawlato individualmente con \code{max\_depth=2}
 e \code{base\_url} ricavato dal prefisso del corso. La funzione \code{extract\_corsi\_urls}
 è stata modificata per considerare esclusivamente i corsi presenti nella sezione
@@ -484,18 +542,58 @@ e \code{base\_url} ricavato dal prefisso del corso. La funzione \code{extract\_c
 obsoleti da altre pagine del sito, producendo duplicati e URL non pertinenti (nove URL
 invece dei sette attesi).
 
-\subsubsection{Filtraggio e normalizzazione}
+\subsubsection{Filtraggio, normalizzazione e resilienza}
 
 In tutte e tre le fasi vengono applicati due livelli di filtro. Il parametro
 \code{exclude\_dirs} esclude a monte risorse statiche e sezioni non informative (directory
 CSS, JS, login, asset multimediali) identificate empiricamente dagli output di log. La
-funzione \code{filter\_docs} rimuove documenti provenienti da URL con parametri
-indesiderati. Un ulteriore filtro linguistico scarta le pagine in inglese o cinese
-(individuate dai segmenti \texttt{/en/} e \texttt{/zh/} nell'URL o dall'attributo \texttt{lang}
-del documento HTML).
+funzione \code{filter\_docs} rimuove documenti provenienti da URL con pattern indesiderati
+(\code{SKIP\_DOCUMENT\_SUBSTRINGS}: \texttt{?sitemap}, \texttt{/print()}, \texttt{.pdf} in
+contesti HTML, \texttt{/en/}, \texttt{/zh/}, \texttt{/valutazione-della-didattica},
+\texttt{/pubblicazioni?anno=0}) e applica deduplicazione per URL canonico e per hash del
+contenuto su testi normalizzati $\ge 300$ caratteri. Un filtro linguistico scarta le pagine
+in inglese o cinese (segmenti \texttt{/en/}, \texttt{/zh/} nell'URL o attributo
+\texttt{lang} del documento HTML).
+
+\textbf{Rate limiting e caching incrementale.} Il crawler utilizza una
+\code{RateLimitedSession} con strategia Token Bucket (5 richieste/secondo) per rispettare
+i server istituzionali. La sessione è costruita tramite factory \code{create\_resilient\_session()}
+con dependency injection nel \code{CustomRecursiveUrlLoader}, eliminando il monkey-patching
+della libreria \texttt{requests}. Il modulo \code{CrawlStateManager} mantiene un database
+SQLite locale con gli \texttt{ETag} e \texttt{Last-Modified} delle pagine già visitate:
+nelle run successive, una richiesta HTTP~304 Not Modified consente di saltare il
+ri-download dei contenuti invariati, riducendo significativamente il traffico di rete
+nelle re-ingestion.
+
+\textbf{Fonti aggiuntive.} La pipeline integra due sorgenti supplementari oltre al crawl HTML/PDF.
+Il modulo \code{easycourse.py} interroga le API pubbliche di EasyCourse
+(\texttt{easycourse.unisa.it}) per recuperare il calendario degli appelli d'esame
+dell'anno accademico corrente e l'orario settimanale delle lezioni per i cinque corsi
+DIEM (codici 06127, 06128, 06227, 06232, 06233): produce 1 documento per coppia
+(CDL, insegnamento), aggiornato automaticamente ad ogni run completa. Vengono inoltre
+generati esplicitamente gli URL dei bandi DIEM per l'anno corrente e l'anno precedente
+(8 categorie: incarichi di insegnamento, collaborazioni, personale tecnico-amministrativo,
+dottorati, assegni e borse di ricerca, borse e premi, altri bandi). Infine, le pagine
+\texttt{/focus} dei singoli corsi vengono scaricate con una richiesta esplicita ai link
+\texttt{/focus?id=\ldots} estratti dal DOM della pagina principale \texttt{/focus},
+poiché la sola navigazione con \code{max\_depth=1} non raggiunge le sottopagine dinamiche
+(guide iscrizione, tutoraggio, EUR-ACE, sbocchi professionali).
 
 \subsection{Parsing e Filtraggio Temporale}
 \label{sec:parser}
+
+\snote{Il filtro temporale originale usava una sola funzione \code{is\_pre\_2020\_url} con
+cutoff fisso 2020 per tutti gli URL. Il problema emerso: pagine HTML con contenuto
+2022/2023 venivano indicizzate (troppo obsoleto), mentre PDF ``scheda SUA 2024'' come
+unica versione disponibile venivano a volte scartati (cutoff troppo aggressivo). La
+soluzione multi-tier con \code{should\_skip\_url\_by\_year} e la logica latest-version a
+due passate in \code{filter\_recent\_documents} è stata sviluppata per gestire i diversi
+tipi di contenuto in modo differenziato. L'estrazione strutturata mirata nasce invece da
+un'analisi su 1970 URL che ha mostrato i fallimenti di trafilatura sulle pagine accordion;
+il parser BS4 globale è stato scartato dopo aver scoperto un falso positivo in
+\code{remove\_site\_boilerplate} che troncava le biografie nei curriculum dei docenti.}
+
+
 
 Il contenuto testuale viene estratto con \textbf{trafilatura} \citep{barbaresi2021trafilatura},
 un estrattore basato su classificatore ML con filtro di precisione (\code{favor\_precision=True})
@@ -506,43 +604,89 @@ trafilatura supera Crawl4AI con un delta di $+$0,097 nell'overlap lessicale dell
 particolarmente su domande che richiedono fatti atomici precisi (numeri, codici, nomi).
 Per i PDF viene usato \texttt{pdfplumber} tramite il loader LangChain.
 
+\textbf{Estrazione strutturata mirata.} Trafilatura utilizza un algoritmo di content-detection
+basato sulla densità testuale dei blocchi: le pagine con struttura accordion o tabellare
+(pannelli con brevi titoli e corpi di testo) vengono classificate come ``non-content'' e
+producono output quasi nulli. Per un sottoinsieme di URL critici dove questo fallimento è
+confermato, la funzione \code{html\_extractor\_for\_source(html, source)} attiva
+un'estrazione BeautifulSoup mirata che riconosce selettori panel/accordion e restituisce
+titolo sezione $+$ righe tabellari. La whitelist è definita in \code{\_is\_structured\_source}
+e copre: \texttt{diem.unisa.it/dipartimento/personale}, \texttt{/organi-collegiali},
+\texttt{/commissione-paritetica}, \texttt{/commissioni?dettaglio=\ldots},
+\texttt{corsi.unisa.it/\ldots/strutture-didattiche}, \texttt{corsi.unisa.it/\ldots/contatti}
+e \texttt{docenti.unisa.it/\ldots/didattica} (pagine corso per docente, dove trafilatura
+ignora i pannelli accordion che elencano nome corso e codice). Per tutti gli altri URL
+il flusso di estrazione rimane invariato: trafilatura come primario, fallback BeautifulSoup
+con selettori semantici (\texttt{main}, \texttt{article}, \texttt{\#content}) in caso di
+output nullo.
+
 Poiché i CMS istituzionali non espongono metadati temporali machine-readable (zero pagine
 su trenta campionate presentavano segnali di data strutturati), il filtro temporale opera
-esclusivamente sui segnali disponibili: presenza di un anno nell'URL (ad esempio
-\texttt{?anno=2019}) e menzione esplicita di anni nel testo iniziale del documento. Le
-pagine associate ad anni precedenti al 2020 vengono scartate per evitare l'indicizzazione
-di contenuti obsoleti.
+esclusivamente sui segnali disponibili tramite la funzione \code{should\_skip\_url\_by\_year},
+che applica regole differenziate per categoria di URL.
+
+\textbf{URL accumulativi} (pubblicazioni, public-engagement, premi-ricerca): cutoff 2020.
+Ogni anno costituisce contenuto distinto non sostituito dall'anno successivo; la vista
+aggregata \texttt{?anno=0} viene sempre scartata in quanto ridondante.
+\textbf{Collezioni PDF versionate per anno} (\texttt{\_\_schede-sua}, \texttt{\_\_almalaurea},
+\texttt{\_\_regolamenti-cds}, \texttt{\_\_statistiche-corsi}, \texttt{\_\_piano-studi-cds}):
+la decisione è demandata al filtro documento, che applica una logica
+\emph{latest-version} in due passate: nella prima si calcola l'anno massimo disponibile
+per ciascuna base URL; nella seconda si mantiene solo la versione più recente (se $\ge
+2020$), scartando tutte le versioni precedenti. Questo meccanismo evita l'indicizzazione
+di regolamenti e schede SUA obsolete, conservando tuttavia l'unica versione disponibile
+anche quando risalente al 2020--2024.
+\textbf{URL HTML generici} (pagine docenti, corsi, bandi): cutoff 2025; vengono scartati
+se l'anno massimo estratto dall'URL è $<2025$, con riconoscimento del pattern accademico
+\texttt{YYYY-YY} (es.\ \texttt{2024-25} $\to$ 2025).
+\textbf{PDF individuali}: cutoff 2020, con delega alla logica latest-version.
+I documenti temporalmente filtrati vengono salvati in \texttt{dropped\_temporal\_filter.json}
+per audit manuale.
 
 \subsection{Arricchimento Contestuale: Context Header}
 \label{sec:enrichment}
 
-Nella versione iniziale del sistema, l'header contestuale generato in \code{enrichment.py}
-veniva inserito direttamente all'inizio del testo del documento intero, prima della fase di
-chunking. Questa soluzione era intrinsecamente difettosa per una pipeline Parent-Child:
-dopo lo split, solo il primo chunk padre e il primo chunk figlio ereditavano l'header,
-mentre tutti i chunk successivi dello stesso documento venivano indicizzati senza alcuna
-informazione contestuale. Poiché il retrieval avviene sui chunk figli salvati in Chroma, il
-risultato era che molteplici embedding venivano calcolati su frammenti semanticamente
-ambigui --- ``modalità d'esame'', ``ricevimento'', ``obiettivi formativi'' --- privi di
-indicazioni sul corso o docente di provenienza.
+\snote{v1: header inserito nel testo del documento intero prima dello split $\to$solo il primo
+chunk ereditava l'header. v2: header spostato nei metadata, prepend solo sui chunk figli
+via \code{ContextHeaderTextSplitter}. Modello: inizialmente Ollama \code{llama3.2:3b} solo;
+poi aggiunto OpenRouter Mistral-Nemo come primario dopo aver osservato output LLM generici
+(``Profilo docente'' senza nome) su \texttt{docenti.unisa.it}. Routing per-URL introdotto
+dopo aver scoperto che i metadata title dei profili docente sono più affidabili dell'output
+LLM. \code{repair\_context\_header\_semantics} aggiunto dopo audit manuale che ha
+identificato classificazioni LLM errate sistematiche su pattern URL noti (verbali,
+almaLaurea). Validazione con \code{simulate\_enrichment.py} su seed stratificati ha
+confermato $\approx$93--95\% miglioramento.}
 
-La soluzione adottata prevede due miglioramenti coordinati. Da un lato, la qualità
-dell'header viene aumentata passando a un modello LLM più grande (\code{llama3.2:3b}
-in locale, \code{mistralai/mistral-nemo} su OpenRouter) con un prompt specifico in
-italiano che riceve in input: URL sorgente, prime righe significative del testo (filtrate per
-parole chiave), passaggi vicini a parole chiave e estratti centrali del documento.
-Un meccanismo di fallback deterministico, basato su regole keyword-driven, viene
-attivato quando il modello non è disponibile. L'header è limitato a 18 parole e un sistema
-di cache su disco evita rielaborazioni su esecuzioni successive.
+La pipeline di arricchimento contextuale risolve un problema strutturale del retrieval su
+documenti universitari: frammenti come ``modalità d'esame'', ``ricevimento'' o ``obiettivi
+formativi'' sono semanticamente identici tra decine di pagine diverse e, senza informazioni
+di contesto negli embedding, generano falsi positivi sistematici. La soluzione prevede due
+componenti coordinati. Da un lato, la qualità
+dell'header è aumentata tramite un routing ibrido \emph{per-URL} implementato in
+\code{enrichment.py}: per i domini con metadati titolo affidabili (\texttt{docenti.unisa.it}
+HTML, \texttt{corsi.unisa.it} HTML, \texttt{easycourse.unisa.it}) viene usato direttamente
+l'euristico deterministico di \code{classify\_context\_header}; per i PDF di
+\texttt{corsi.unisa.it} (\texttt{/uploads/}) e per le pagine di \texttt{diem.unisa.it}
+viene invocato l'LLM (\code{mistralai/mistral-nemo} su OpenRouter come modello primario,
+\code{qwen2.5:3b} via Ollama come fallback, euristico come ultima risorsa). Il prompt
+in italiano riceve in input: URL sorgente, prime righe significative del testo filtrate per
+parole chiave, passaggi vicini a parole chiave ed estratti centrali del documento.
+La funzione \code{repair\_context\_header\_semantics} corregge post-hoc le classificazioni
+LLM errate su URL-pattern noti (es.\ verbali classificati come ``bando/avviso'',
+PDF \texttt{\_\_almalaurea} classificati come scheda docente). L'header è limitato a 18
+parole, include un year tag \texttt{[AY YYYY/YYYY]} quando l'anno accademico è
+rilevabile nell'URL, e un sistema di cache su disco evita rielaborazioni su esecuzioni
+successive.
 
-Dall'altro lato, l'header non viene più inserito nel corpo del documento, ma salvato nei
-metadati come campo \code{context\_header}. Questa separazione consente di gestire
-l'applicazione nel punto corretto della pipeline: in \code{database.py}, dopo la generazione
-dei chunk padre, viene applicato lo splitter personalizzato \code{ContextHeaderTextSplitter}
-(che estende \code{RecursiveCharacterTextSplitter}), il quale prepende il \code{context\_header}
-a ogni chunk figlio generato, immediatamente prima dell'indicizzazione in Chroma. In
-questo modo ogni embedding viene calcolato su un testo che combina il contenuto
-specifico del chunk con le informazioni contestuali del documento di origine.
+Dall'altro lato, l'header non viene inserito nel corpo del documento, ma salvato nei
+metadati come campo \code{context\_header}. Questa separazione consente di applicarlo
+nel punto corretto della pipeline: in \code{database.py}, dopo la generazione dei chunk
+padre, lo splitter personalizzato \code{ContextHeaderTextSplitter} (che estende
+\code{RecursiveCharacterTextSplitter}) prepende il \code{context\_header} a ogni chunk
+figlio immediatamente prima dell'indicizzazione in Chroma, mentre il corpo del parent
+rimane pulito nel \code{LocalFileStore}. In questo modo ogni embedding è calcolato su
+un testo che combina il contenuto specifico del chunk con le informazioni contestuali
+dell'origine, senza duplicare l'header nei parent restituiti al modello generativo.
 
 \begin{tcolorbox}[boxstyle,title={Esempio di context header applicato a un chunk figlio}]
 \textbf{Context header:} \textit{Corso di Ingegneria del Software -- prof. Mario Rossi -- orari esame a.a. 2025/2026}\\[4pt]
@@ -552,20 +696,27 @@ specifico del chunk con le informazioni contestuali del documento di origine.
 \subsection{Strategia di Chunking Parent-Child}
 \label{sec:chunking}
 
+\snote{Dimensioni iniziali da letteratura: parent 2000/200, child 400/50.
+Ridotte a 1200/150 e 300/80 (v2.1) dopo aver osservato eccessivo rumore contestuale
+nei chunk restituiti al modello: chunk da 2000 caratteri contenevano spesso parti di
+più sezioni eterogenee, riducendo la coerenza semantica. L'overlap child è stato
+aumentato da 50 a 80 per migliorare la continuità tra chunk adiacenti su documenti
+a struttura list-heavy (personale, commissioni).}
+
 La struttura Parent-Child è implementata con i seguenti parametri (Tabella~\ref{tab:chunking}),
 scelti empiricamente per bilanciare precisione semantica dei chunk figli e ricchezza
 contestuale dei chunk padre.
 
 \begin{table}[htbp]
 \centering
-\caption{Parametri di chunking della pipeline di ingestion.}
+\caption{Parametri di chunking della pipeline di ingestion (configurazione v2.1).}
 \label{tab:chunking}
 \begin{tabular}{lrrl}
 \toprule
 \textbf{Livello} & \textbf{Dim.} & \textbf{Overlap} & \textbf{Storage} \\
 \midrule
-Chunk padre  & 2000 car. & 200 car. & LocalFileStore (disco) \\
-Chunk figlio & 400 car.  & 50 car.  & Chroma (vettore) \\
+Chunk padre  & 1200 car. & 150 car. & LocalFileStore (disco) \\
+Chunk figlio & 300 car.  & 80 car.  & Chroma (vettore) \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -573,31 +724,41 @@ Chunk figlio & 400 car.  & 50 car.  & Chroma (vettore) \\
 Il \code{ParentDocumentRetriever} di LangChain viene configurato per usare il vector store
 Chroma (chunk figli) per la ricerca per similarità e il \code{LocalFileStore} su disco
 per il recupero dei chunk padre corrispondenti. Il retrieval restituisce quindi il chunk
-padre, più ricco di contesto, come input al modello generativo. Un bug presente nelle
-versioni iniziali --- in cui il retriever puntava esclusivamente al vector store dei chunk
-figli senza mai recuperare i parent dal file store --- è stato corretto nella fase di
-refactoring.
+padre, più ricco di contesto, come input al modello generativo. L'indicizzazione avviene
+in batch di massimo 100 chunk figli per volta per gestire la memoria durante l'inserimento
+in Chroma.
 
 \subsection{Embedding e Indicizzazione}
 
-Per l'embedding viene usato \texttt{intfloat/multilingual-e5-base}, un modello basato su
-architettura E5 addestrato su dati multilingue che supporta nativamente l'italiano.
-Il modello usa prefissi asimmetrici: le query vengono codificate con prefisso
-\texttt{query:}, mentre i documenti usano \texttt{passage:}, come previsto dallo schema di
-addestramento E5. Il modello produce vettori di 1024 dimensioni. La scelta è motivata
-dalla necessità di gestire sia domande in italiano sia documenti prevalentemente in
-italiano con alcuni elementi in inglese.
+\snote{Embedding inizialmente solo locale e5-base con \code{similarity\_score\_threshold=0.70} e \code{k=20}. La soglia 0.70 escludeva documenti rilevanti su query brevi o con terminologia parziale; abbassata a 0.50. \code{k} ridotto da 20 a 15 dopo aver verificato che i candidati oltre la posizione 15 venivano quasi sempre scartati dal reranker. Il supporto OpenRouter bge-m3 aggiunto per abilitare un setup cloud con dimensioni vettoriali maggiori (1024 vs 768) e finestra di input più ampia.}
 
-L'indicizzazione avviene in batch adattativi con un massimo di 4000 chunk figli per
-batch, per evitare problemi di memoria durante l'inserimento in Chroma. La
-\code{similarity\_score\_threshold} è impostata a 0,70 (soglia coseno), con retrieval
-iniziale di $k=20$ candidati.
+Il sistema supporta due provider di embedding selezionabili tramite
+\code{EMBEDDING\_PROVIDER}. In modalità \emph{locale}, la classe \code{E5HuggingFaceEmbeddings}
+(wrapper personalizzato di \code{HuggingFaceEmbeddings}) utilizza
+\texttt{intfloat/multilingual-e5-base} con prefissi asimmetrici \texttt{query:}/\texttt{passage:},
+producendo vettori da 768 dimensioni. In modalità \emph{cloud}, la classe
+\code{OpenRouterEmbeddings} utilizza \texttt{baai/bge-m3} via OpenRouter (1024 dimensioni,
+finestra 8K), che non richiede prefissi. In entrambi i casi i vettori vengono normalizzati
+(\code{normalize\_embeddings=True}) per la ricerca coseno.
+
+La \code{similarity\_score\_threshold} è impostata a 0,50 con retrieval iniziale di
+$k=15$ candidati, che vengono poi re-scored dal secondo stadio (cross-encoder).
 
 %% ============================================================
 \section{Core RAG Agentico}
 \label{sec:core-rag}
 
 \subsection{Evoluzione dell'Architettura: da Chain a Grafo}
+
+\snote{Fase 1 (LCEL chain lineare): flusso fisso rewrite→retrieve→rerank→LLM, nessun tool
+calling, scope check solo nel system prompt. Fase 2 (\code{create\_agent} con MemorySaver):
+agente con tool retrieve/summarize/answer; il problema era che l'agente non chiamava
+sempre retrieve, rischiando allucinazioni. Fase 3 (StateGraph esplicito con
+\code{retrieve\_node} obbligatorio): nodo retrieve fisso prima dell'agent, architettura a
+due modelli (32b agent + 9b generate). Fase 4 (fully agentic): rimosso \code{retrieve\_node},
+aggiunto \code{reset\_state}; il retrieve diventa decisione esclusiva dell'agent compensata
+da un hint dinamico nel system prompt. La fase 4 è motivata dalla necessità di non
+forzare il retrieve su query di puro calcolo.}
 
 L'architettura del core RAG ha attraversato quattro fasi evolutive distinte, riassunte
 nella Tabella~\ref{tab:evolution}.
@@ -637,6 +798,8 @@ a chiamare \code{retrieve} come primo tool del turno senza fallback in codice.
 
 \subsection{LangGraph StateGraph: Struttura del Grafo}
 \label{sec:graph}
+
+\snote{Il nodo \code{forced\_retrieve} è stato aggiunto come safety net dopo aver osservato casi in cui l'agent generava output vuoto senza chiamare retrieve (risposta degenere $<$30 caratteri). Il nodo \code{force\_answer} è stato aggiunto per gestire il caso di esaurimento del budget retrieve senza risposta finale: stuba i tool call pendenti e forza una LLM call senza tool per produrre la risposta. Il recursion limit di LangGraph è stato alzato da 20 a 35 per gestire query che richiedono più cicli rewrite+retrieve.}
 
 Il grafo è definito come un \code{StateGraph} LangGraph con stato condiviso di tipo
 \code{DiemState}:
@@ -690,16 +853,24 @@ del budget di retrieve (\code{agent} $\to$ \code{force\_answer} $\to$ \code{outp
 \subsection{Guardrail a Cascata}
 \label{sec:guardrail}
 
+\snote{\textbf{Offensive guard}: inizialmente usava LLM per la detection; sostituito con
+puro regex + badwords.b64 dopo aver osservato che su dominio universitario ristretto
+la lista statica copre tutti i casi senza falsi negativi, eliminando la latenza LLM.
+\textbf{Scope guard}: inizialmente troppo severo (``Chi è [prof]?'' veniva bloccato);
+fix con fast-path keyword di dominio DIEM ($\approx$50 termini) + prompt LLM fail-open
+con categorie esplicite da bloccare/lasciare passare. \textbf{PII}: regex carte di
+credito inizialmente troppo broad (matchava ID numerici); ristretta a richiedere
+separatori espliciti tra i quattro blocchi.}
+
 Il sistema implementa tre livelli di guardrail indipendenti.
 
 \textbf{Controllo contenuto offensivo.} La classe \code{OffensiveContentGuardrail} mantiene
 una lista di parole inappropriate (250+ termini, codificata in base64 per evitare
 esposizione diretta nel codice sorgente) e applica un pattern matching con espressioni
 regolari sull'input dell'utente (\code{input\_guard}) e sull'output del sistema
-(\code{output\_guard}). Il controllo è puramente basato su regex, dopo aver rimosso il
-componente LLM originale che introduceva latenza non necessaria: su un dominio testuale
-molto ristretto come quello universitario, la lista di parole inappropriate è stabile e
-la probabilità di falsi negativi del regex è trascurabile.
+(\code{output\_guard}). Il controllo è puramente basato su regex: su un dominio testuale ristretto come quello
+universitario, la lista di parole inappropriate è stabile e la probabilità di falsi
+negativi è trascurabile, rendendo non necessario un componente LLM dedicato.
 
 \textbf{Scope guardrail.} La classe \code{ScopeGuardrail} implementa un classificatore
 gerarchico: in prima battuta viene applicato un fast-path basato su circa 50 keyword
@@ -717,10 +888,12 @@ esplicite.
 corrispondenti a indirizzi e-mail (pattern RFC-standard) e numeri di carta di credito
 (pattern a quattro blocchi separati da spazi o trattini). In presenza di un match, il
 testo viene sostituito con un messaggio standard che rimanda a motivazioni di privacy.
-La regex per le carte di credito, inizialmente troppo ampia (matchava ID numerici
-generici), è stata ristretta a richiedere esplicitamente separatori tra i quattro blocchi.
+La regex per le carte di credito richiede esplicitamente separatori (spazi o trattini)
+tra i quattro blocchi numerici, per evitare falsi positivi su codici identificativi generici.
 
 \subsection{Gestione della Storia Conversazionale}
+
+\snote{Nelle versioni iniziali con StateGraph, \code{ToolMessage} e \code{AIMessage} con tool call pendenti si accumulavano nel \code{MemorySaver} di turno in turno, saturando rapidamente la finestra di contesto con testi di documenti recuperati dai turni precedenti. I messaggi iniettati da guardrail (rifiuti, scope rejection) confondevano il modello al turno successivo inducendolo a trattare il turno corrente come follow-up di una risposta di rifiuto. La fase di pulizia in \code{\_node\_agent} e la sostituzione dei messaggi guardrail con placeholder neutri sono state aggiunte per risolvere entrambi i problemi.}
 
 La storia conversazionale è gestita da \code{MemorySaver} (LangGraph) con chiave
 \code{session\_id}. Prima di passare i messaggi all'agente, il nodo \code{agent} applica
@@ -738,29 +911,44 @@ saturava rapidamente la finestra di contesto del modello.
 \subsection{Pipeline di Retrieval}
 \label{sec:retrieval}
 
+\snote{Cross-encoder inizialmente ricaricato ad ogni invoke $\to$ 20s di latenza. Fix:
+singleton module-level. Parametri retrieval: k inizialmente 20 e threshold 0.70;
+abbassati a 15 e 0.50 dopo aver osservato che la soglia 0.70 escludeva documenti
+rilevanti su query poco dense semanticamente. Upgrade embedding/reranker a
+dual-provider (bge-m3 + cohere/rerank-v3.5 via OpenRouter) introdotto dopo la
+decisione di supportare un setup cloud più performante senza rinunciare al fallback
+locale.}
+
 La pipeline di retrieval segue uno schema a due stadi comunemente chiamato
 \emph{retrieve and rerank}.
 
 \textbf{Primo stadio --- Bi-encoder.} Il \code{ParentDocumentRetriever} LangChain
-cerca per similarità coseno nel vector store Chroma sui chunk figli, con $k=20$
-candidati iniziali e soglia minima di 0,70. La codifica della query avviene con il
-prefisso \texttt{query:} del modello E5, la codifica dei documenti con prefisso
-\texttt{passage:}.
+cerca per similarità coseno nel vector store Chroma sui chunk figli, con $k=15$
+candidati iniziali e soglia minima di 0,50. La codifica asimmetrica dipende dal provider:
+con il modello E5 locale, la query usa il prefisso \texttt{query:} e i documenti
+\texttt{passage:}; con \texttt{baai/bge-m3} via OpenRouter non sono necessari prefissi.
 
-\textbf{Secondo stadio --- Cross-encoder.} I 20 chunk figli recuperati vengono re-scored
-da un cross-encoder \code{BAAI/bge-reranker-base}, che elabora la coppia
-(query, chunk) in ingresso e produce uno score di rilevanza più preciso rispetto alla
-similarity coseno. I tre chunk con score più alto vengono selezionati. Per ogni chunk
-figlio viene poi recuperato il chunk padre corrispondente dal \code{LocalFileStore},
-fornendo al modello generativo un contesto più ampio (fino a 2000 caratteri).
-
-Il cross-encoder era stato identificato come un collo di bottiglia di latenza ($\approx 20$
-secondi per chiamata) nelle versioni iniziali, a causa del re-caricamento del modello
-ad ogni invocazione. Il problema è stato risolto istanziando il cross-encoder come
-singleton a livello di modulo in \code{src/encoders/reranker.py}.
+\textbf{Secondo stadio --- Reranker.} I 15 chunk figli recuperati vengono re-scored
+con un secondo modello che elabora la coppia (query, chunk) e produce uno score di
+rilevanza più preciso della similarity coseno. Il reranker è dual-provider: in modalità
+locale si usa il cross-encoder \code{BAAI/bge-reranker-v2-m3} (sentence-transformers),
+istanziato come singleton a livello di modulo per eliminare il bottleneck di latenza di
+$\approx 20$s osservato nelle versioni iniziali; in modalità cloud si usa
+\code{cohere/rerank-v3.5} via OpenRouter (Cohere Rerank~4 Pro, 32K contesto). I tre
+chunk con score più alto vengono selezionati. Per ogni chunk figlio viene poi recuperato
+il chunk padre corrispondente dal \code{LocalFileStore}, fornendo al modello generativo
+un contesto più ampio (fino a 1200 caratteri).
 
 \subsection{Tool dell'Agente}
 \label{sec:tools}
+
+\snote{Tool iniziali: retrieve, summarize, answer. Il tool \code{answer} è stato rimosso
+perché l'agent model genera direttamente la risposta finale senza tool dedicato.
+\code{rewrite} aggiunto nella fase 3 per gestire pronomi e follow-up multi-turn.
+\code{calculate} aggiunto dopo aver osservato errori aritmetici del modello su calcoli
+di media ponderata e voto di laurea. \code{MAX\_TOOL\_CALLS} rinominato
+\code{MAX\_RETRIEVE\_CALLS=3} per applicare il cap solo a \code{retrieve} (il tool
+computazionalmente più costoso), lasciando liberi rewrite/summarize/calculate.}
 
 L'agente dispone di quattro tool LangGraph, descritti nella Tabella~\ref{tab:tools}.
 
@@ -773,22 +961,26 @@ L'agente dispone di quattro tool LangGraph, descritti nella Tabella~\ref{tab:too
 \toprule
 \textbf{Tool} & \textbf{Descrizione e vincoli operativi} \\
 \midrule
-\code{rewrite(query)} & Riscrive la query risolvendo pronomi, riferimenti impliciti e
-                        query incomplete. Per contenuto accademico senza anno, appende
-                        automaticamente ``a.a.\ 2025/2026''. Usa il modello lightweight.
-                        Deve essere chiamato al massimo una volta prima di ogni \code{retrieve}. \\
+\code{rewrite(query)} & Riscrive la query in una domanda standalone risolvendo
+                        pronomi, riferimenti impliciti e query incomplete. Per contenuto
+                        accademico senza anno appende automaticamente
+                        ``a.a.\ 2025/2026''. Usa il modello lightweight.
+                        Non soggetto a cap; tipicamente chiamato al massimo una volta
+                        prima di ogni \code{retrieve}. \\
 \addlinespace
-\code{retrieve(query)} & Esegue il retrieval bi-encoder + cross-encoder sulla knowledge base
+\code{retrieve(query)} & Esegue il retrieval bi-encoder + reranker sulla knowledge base
                          DIEM. Aggiorna \code{retrieved\_context} e \code{last\_docs} nello stato.
                          Obbligatorio almeno una volta per turno; soggetto a cap
-                         \code{MAX\_RETRIEVE\_CALLS=3}. \\
+                         \code{MAX\_RETRIEVE\_CALLS=3} (solo questo tool conta verso il limite). \\
 \addlinespace
-\code{summarize(text)} & Condensa contesti lunghi ($>$6000 caratteri) o fonde risultati di
-                         retrieve multipli. Usa il modello lightweight. Non soggetto a cap. \\
+\code{summarize(text, query)} & Condensa contesti lunghi ($>$6000 caratteri) o fonde risultati
+                         di retrieve multipli focalizzando sul topic della domanda originale.
+                         Usa il modello lightweight. Non soggetto a cap. \\
 \addlinespace
-\code{calculate(ctx, op, vals)} & Esegue calcoli accademici (medie, TOLC, voto di laurea)
-                                   usando formule recuperate via retrieve. Previene il
-                                   calcolo inline del modello, fonte di errori aritmetici.
+\code{calculate(ctx, op, vals)} & Esegue calcoli accademici (medie ponderate, TOLC,
+                                   voto di laurea) usando le formule recuperate via
+                                   \code{retrieve}. Delega il calcolo al modello
+                                   lightweight per prevenire errori aritmetici inline.
                                    Non soggetto a cap. \\
 \bottomrule
 \end{tabularx}
@@ -801,6 +993,24 @@ computazionale.
 
 \subsection{Prompt Engineering}
 \label{sec:prompts}
+
+\snote{\textbf{AGENT\_SYSTEM\_PROMPT}: Rule ``NEVER EMPTY'' aggiunta dopo aver osservato
+che il modello a volte emetteva solo il tag KNOWLEDGE\_GAP senza spiegazione. Soglia
+KNOWLEDGE\_GAP allentata da ``no relevant info'' a ``nothing useful'' per ridurre i
+falsi negativi su contesto parziale. Regola ACADEMIC ROLES aggiunta dopo aver
+osservato che docenti con ruolo RTD/B venivano introdotti come ``ricercatori'' invece
+di ``docenti''. \textbf{REWRITE\_PROMPT}: 6+ regole iterate per casi edge: Rule~0 (non
+sostituire domanda corrente con precedente), Rule~4 (usare history solo per follow-up),
+Rule~5 (preservare termini utente), Rule~6 (year injection per contenuto accademico).
+I tag strutturati [FUORI\_SCOPE] e [KNOWLEDGE\_GAP] sostituiscono inizialmente output
+testuali liberi perché il modello produceva spiegazioni non strutturate difficili da
+rilevare programmaticamente.}
+
+\snote{\textbf{Stack tecnologico LLM}: il modello agente è cambiato nel corso dello sviluppo
+(qwen2.5:7b Ollama $\to$architettura due modelli 32b+9b $\to$openai/gpt-oss-120b come
+singolo modello agente). I valori nella Tabella~\ref{tab:evolution} e nel testo
+riflettono la configurazione finale; le configurazioni intermedie sono documentate in
+\texttt{docs/progress.txt}.}
 
 La progettazione dei prompt ha richiesto un'iterazione significativa, poiché piccole
 variazioni nel testo producono comportamenti qualitativamente diversi.
@@ -835,6 +1045,8 @@ cui il modello a volte emetteva solo il tag senza spiegazione).
 
 \subsection{Golden Set}
 
+\snote{Il golden set è stato costruito manualmente con domande realistiche basate sul sito DIEM. Le categorie \texttt{out\_of\_scope} e \texttt{robustness} sono state aggiunte dopo i primi test manuali che hanno evidenziato comportamenti inattesi (scope guard troppo o troppo poco permissivo, retrieval drift su challenge). Le reference sono state generate automaticamente tramite LLM su un campione e richiedono revisione manuale (backlog \#0).}
+
 Il dataset di valutazione (\emph{golden set}) è composto da domande suddivise in quattro
 categorie progettate per coprire le modalità d'uso principali e i casi critici del sistema:
 
@@ -854,6 +1066,8 @@ sono utilizzate per le metriche Ragas che richiedono ground-truth; le domande se
 reference vengono valutate solo con le metriche no-reference.
 
 \subsection{Metriche di Valutazione}
+
+\snote{La valutazione a due fasi (no-reference vs reference-requiring) è stata introdotta dopo aver scoperto che Ragas produce \texttt{NaN} su righe prive di \texttt{reference} per le metriche che richiedono ground-truth. L'esecuzione in un unico batch produceva medie distorte. La metrica \texttt{Coherence} tramite \texttt{AspectCritic} è custom: Ragas non include una metrica di coerenza stilistica nel set standard, aggiunta per valutare la qualità narrativa delle risposte.}
 
 Il framework utilizza Ragas~0.4.3 \citep{es2023ragas} con sei metriche (Tabella~\ref{tab:metrics}).
 
@@ -884,6 +1098,8 @@ non vuoto.
 
 \subsection{Criteri Custom}
 
+\snote{La distinzione strict/soft pass per Scope Awareness è stata aggiunta dopo aver osservato nella smoke run che il sistema rispondeva ``Non ho informazioni'' a domande out-of-scope (soft pass corretto) invece di rifiutarle esplicitamente con [FUORI\_SCOPE] (strict pass). Senza la distinzione, il tasso di scope awareness sembrava 100\% ma nascondeva il bug \#2. La metrica Robustness con 5 tag di scenario è stata progettata per coprire i pattern di attacco osservati nei test manuali (challenge, false premise, jailbreak, prompt injection).}
+
 \textbf{Scope Awareness.} Per ogni domanda out-of-scope, il runner verifica se la
 risposta del sistema contiene un rifiuto esplicito (\emph{strict pass}: presenza di marker
 strutturati \texttt{[FUORI\_SCOPE]} o frasi di rifiuto standard) o un rifiuto implicito
@@ -902,6 +1118,8 @@ marker strutturati per i casi in cui il comportamento atteso è il rifiuto espli
 
 \subsection{Output del Runner}
 
+\snote{Il runner è stato progettato per produrre output strutturati machine-readable (JSON/CSV) oltre al log testuale, perché l'analisi manuale di run con molte domande è impraticabile. La cache su disco è stata aggiunta dopo che run ripetute con stesse domande richiedevano decine di minuti; la modalità \texttt{use} consente di ricalcolare le metriche Ragas su risposte già generate senza ri-invocare il chatbot.}
+
 Per ogni run, il runner produce un set di file strutturati: \code{run.log} (log dettagliato),
 \code{per\_question.json} (output grezzo per domanda), \code{ragas\_metrics.csv/json}
 (metriche aggregate e per domanda), \code{scope\_awareness.json},
@@ -915,6 +1133,8 @@ la temperatura, la storia conversazionale e la domanda, garantendo che run con
 configurazioni diverse non condividano cache.
 
 \subsection{Risultati: Smoke Run}
+
+\snote{La smoke run (\texttt{--limit 3}) è stata la prima run completa end-to-end del framework di valutazione, eseguita con modelli locali (qwen2.5:7b + multilingual-e5-small) per velocità. I risultati hanno identificato quattro bug confermati (backlog \#2--\#5) e due backlog bloccanti (\#0 revisione reference, \#1 run completa su GPU). Il campione di 12 domande non è statisticamente significativo ma sufficiente per la validazione del framework stesso.}
 
 Una run pilota (\emph{smoke test}, \code{--limit 3}) è stata eseguita sul golden set in
 italiano con i parametri: modello agente \code{qwen2.5:7b}, modello judge
@@ -964,6 +1184,8 @@ bilingue è necessaria per risultati definitivi.
 
 \subsection{Backlog di Valutazione}
 
+\snote{Il backlog deriva direttamente dall'analisi della smoke run e dai test manuali. Bug \#2 (scope vs knowledge gap) e \#3 (retrieval drift su challenge) sono i più impattanti sulla qualità percepita dell'interazione. Bug \#4 (rewrite come affermazione) e \#5 (retrieval incompleto geo-fatti) sono stati scoperti guardando i \texttt{per\_question.json} della smoke run.}
+
 L'analisi dei risultati della smoke run ha identificato quattro bug confermati nel sistema,
 riportati nel backlog attivo del progetto.
 
@@ -990,6 +1212,8 @@ gap di ingestion o una soglia di retrieval troppo alta.
 
 \subsection{Motivazione}
 
+\snote{Lo studio è stato motivato dall'ipotesi che trafilatura perdesse contenuto sulle pagine JS-heavy, spiegando il Faithfulness basso (0.490). L'ipotesi è stata parzialmente confutata: trafilatura perde su JS-heavy ma la ridondanza informativa del corpus compensa. Il vero differenziale di qualità è venuto dall'upgrade della pipeline (flat $\to$ ParentRetriever+rerank), non dal cambio estrattore.}
+
 A valle della prima run di valutazione (Faithfulness = 0,490--0,504), è stata formulata
 l'ipotesi che l'estrattore testuale trafilatura potesse perdere contenuto significativo
 sulle pagine JavaScript-heavy del sito DIEM, causando gap di retrieval che inducono il
@@ -997,6 +1221,8 @@ modello ad allucinare. Per verificarla è stato condotto uno studio a tre livell
 confronto tra trafilatura e Crawl4AI.
 
 \subsection{Livello A --- Qualità dell'Estrazione}
+
+\snote{Il campione di 10 URL è stato scelto per includere i casi peggiori noti per trafilatura (homepage DIEM, offerta-formativa) e casi tipici (pagine docenti, programmi corso). I due URL JS-heavy trainano quasi tutto il gap di volume (+39\%); su URL statici i due estrattori sono equivalenti o trafilatura produce meno rumore.}
 
 Entrambi gli estrattori ricevono lo stesso HTML (fetch via \texttt{requests}) su un campione
 di 10 URL rappresentativi. I risultati medi sono mostrati in Tabella~\ref{tab:level_a}.
@@ -1026,6 +1252,8 @@ nonostante il filtro di pruning.
 
 \subsection{Livello B --- Valore del Rendering JavaScript}
 
+\snote{Il livello B è stato aggiunto per verificare se il vantaggio di Crawl4AI fosse dovuto al rendering JS (Playwright) piuttosto che all'estrattore in sé. Il \code{content\_diff\_ratio} di 0.91 sulla homepage (la pagina più dinamica) ha concluso che il rendering JS aggiunge solo ~10\% di contenuto incrementale, non sufficiente a giustificare la complessità operativa di Chromium headless.}
+
 Stesso set di 10 URL, confrontando Crawl4AI con Playwright (rendering dinamico) vs.\
 \texttt{requests} (fetch statico). Il \code{content\_diff\_ratio} sulla homepage (la pagina
 più dinamica del corpus) è pari a 0,91: Playwright aggiunge circa il 10\% di contenuto
@@ -1035,6 +1263,8 @@ Chromium (installazione a livello di sistema operativo, tempi di crawl 3--10$\ti
 superiori).
 
 \subsection{Livello C --- Test Q/A End-to-End}
+
+\snote{Le prime due run (n=20, pipeline flat) mostravano delta piccoli e non conclusivi. L'upgrade a ParentRetriever+rerank ha aumentato l'overlap di entrambi gli estrattori (+22\% traf, +27\% C4AI) ma ha amplificato il vantaggio di trafilatura. Il golden set è stato esteso da 20 a 30 domande per la run definitiva per includere le 5 domande JS-heavy progettate specificamente per favorire Crawl4AI.}
 
 Il test comparativo principale misura le prestazioni di sistema con l'intera pipeline
 RAG (ParentDocumentRetriever, bi-encoder k=20, cross-encoder top-3, embedding
@@ -1067,6 +1297,8 @@ mentre trafilatura domina nelle 5 domande su fatti atomici precisi (numeri, codi
 
 \subsection{html.parser vs.\ lxml}
 
+\snote{Il confronto è stato condotto dopo una proposta di passare a \texttt{lxml} per maggiore velocità di parsing. Il test su 177 pagine in cache ha prodotto output identici, confermando che la differenza di performance di lxml (rilevante su corpus da milioni di pagine) è trascurabile su $\approx$500 pagine. La dipendenza C aggiuntiva è stata giudicata non giustificata.}
+
 Parallelamente è stato valutato il parser HTML per BeautifulSoup. Entrambi i parser sono
 stati eseguiti sui tre punti di uso nel crawler (sitemap seeds, corsi URLs, faculty links)
 su 177 pagine in cache. Il risultato è stato identico su tutti i 314 URL analizzati:
@@ -1075,6 +1307,8 @@ rifiutando \texttt{lxml} che avrebbe aggiunto una dipendenza con wheel OS-specif
 senza alcun beneficio misurabile.
 
 \subsection{Decisione Finale}
+
+\snote{La decisione è stata presa dopo tutti e tre i livelli di analisi. Il livello A suggeriva di migrare; i livelli B e C hanno ribaltato la conclusione. La lezione principale: i miglioramenti a livello di singolo componente non si trasferiscono necessariamente al sistema end-to-end quando esiste ridondanza informativa nel corpus.}
 
 Lo studio porta alla decisione di non migrare: il sistema continua a usare
 \texttt{beautifulsoup4 + trafilatura + requests}. Il vantaggio di Crawl4AI sulle pagine
@@ -1089,6 +1323,8 @@ d'uso primario del chatbot DIEM, ovvero le domande su fatti atomici precisi.
 
 \subsection{Principali Risultati}
 
+\snote{I risultati sono stati consolidati dopo la smoke run e lo studio comparativo. Il vantaggio di LangGraph rispetto a LCEL è stato verificato concretamente durante le iterazioni di debugging: interventi chirurgici su singoli nodi (es. fix del recursion limit, aggiunta del \code{forced\_retrieve}) non hanno richiesto modifiche al resto del grafo.}
+
 L'architettura agentica basata su LangGraph StateGraph si è dimostrata superiore alle
 chain lineari LCEL in termini di controllo, robustezza e flessibilità. La separazione
 esplicita dei nodi (guardrail, routing, retrieval, generazione, sicurezza output) consente
@@ -1097,8 +1333,10 @@ del sistema --- un vantaggio concretamente osservato durante le iterazioni di de
 
 Il sistema di context header ha prodotto un miglioramento qualitativo misurabile nella
 precisione del retrieval su frammenti semanticamente ambigui. L'applicazione dell'header
-a ogni chunk figlio tramite \code{ContextHeaderTextSplitter}, anziché al documento
-padre prima dello split, risolve il bug originale in modo architetturalmente corretto.
+a ogni chunk figlio tramite \code{ContextHeaderTextSplitter} garantisce che ogni
+embedding sia calcolato su un testo che combina il contenuto specifico del chunk con
+le informazioni contestuali del documento di origine, senza duplicare l'header nei
+parent restituiti al modello.
 
 Lo studio comparativo trafilatura/Crawl4AI ha fornito una lezione metodologica
 importante: i miglioramenti di qualità dell'estrattore a livello di singola pagina non
@@ -1108,6 +1346,8 @@ ridondanza informativa. Il guadagno più significativo tra tutti i run del test 
 +22\% per trafilatura, +27\% per Crawl4AI), non dal cambio di estrattore.
 
 \subsection{Limiti del Sistema}
+
+\snote{I limiti documentati qui sono emersi durante lo sviluppo e i test. L'assenza di metadati temporali è stata verificata empiricamente con \code{scripts/diagnose\_date\_tags.py} su 30 pagine campionate (0/30 con segnali leggibili). La copertura della KB è un limite strutturale noto che non è stato affrontato nel progetto corrente. Il Faithfulness basso è attribuito in parte al modello e in parte alla qualità del golden set (reference non revisionate manualmente -- backlog \#0).}
 
 \textbf{Assenza di metadati temporali.} I CMS istituzionali non espongono segnali
 di data leggibili automaticamente. Il sistema non può distinguere un programma di corso
@@ -1134,6 +1374,8 @@ re-retrieve su una query diversa invece di confermare la risposta precedente.
 
 \subsection{Lavori Futuri}
 
+\snote{Le direzioni sono ordinate per impatto atteso basato sui risultati osservati. La run completa su GPU è bloccante per tutto il resto perché i numeri della smoke run non sono statisticamente significativi. Il nodo scope-classification separato risolverebbe il bug \#2 senza toccare la logica RAG. Il dataset di regressione è necessario per evitare che fix futuri rompano comportamenti già corretti.}
+
 Le direzioni di miglioramento più promettenti, ordinate per impatto atteso, sono le
 seguenti. Primo, una run di valutazione completa con GPU e l'intero golden set bilingue
 fornirebbe i baseline definitivi necessari per guidare le ottimizzazioni successive.
@@ -1155,13 +1397,16 @@ otto nodi specializzati --- motivate da esigenze concrete emerse durante i test:
 affidabile delle domande fuori ambito, gestione robusta della conversazione multi-turno,
 latenza di retrieval accettabile e fedeltà delle risposte al contesto.
 
-I contributi principali sono una pipeline di ingestion specifica per siti universitari italiani
-con context header su ogni chunk figlio, un'architettura agentica con guardrail a cascata e
-budget controllato di retrieval, e uno studio empirico comparativo degli estrattori web che
-ha fornito evidenza quantitativa a supporto della scelta architetturale. I risultati della
-smoke run mostrano che il sistema è funzionante, con precision del contesto recuperato
-pari a 0,847 e coerenza pari a 0,750, e identificano target concreti per il miglioramento
-della Faithfulness e della scope awareness.
+I contributi principali sono: (1) una pipeline di ingestion specifica per siti universitari
+italiani con crawling resiliente, caching incrementale, filtro temporale multi-tier, parsing
+strutturato mirato, e context header semantici su ogni chunk figlio; (2) un'architettura
+agentica con guardrail a cascata, dual-provider per embedding/reranker/LLM e budget
+controllato di retrieval; (3) l'integrazione di dati real-time (EasyCourse) nella knowledge
+base; (4) uno studio empirico comparativo degli estrattori web con evidenza quantitativa
+a supporto della scelta architetturale. I risultati della smoke run mostrano che il sistema
+è funzionante, con precision del contesto recuperato pari a 0,847 e coerenza pari a 0,750,
+e identificano target concreti per il miglioramento della Faithfulness e della scope
+awareness.
 
 %% ============================================================
 \newpage
