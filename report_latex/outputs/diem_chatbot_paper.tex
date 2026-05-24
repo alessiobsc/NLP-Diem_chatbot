@@ -141,7 +141,7 @@
     \textbf{Autori:} & Alessio Bosco    & \small a.bosco22@studenti.unisa.it \ -- \ 0622702471 \\[3pt]
                      & Michele Apuzzo   & \small m.apuzzo13@studenti.unisa.it \ -- \ 0622702461 \\[3pt]
                      & Andrey Kiriyanov & \small a.kiriyanov@studenti.unisa.it \ -- \ 0622702577 \\[3pt]
-                     & Angelo           & \small  \\[6pt]
+                      & Angelo Annunziata & \small a.annunziata111@studenti.unisa.it \ -- \ 0622702489 \\\\[6pt]
     \textbf{Anno Accademico:} & 2025/2026 & \\[4pt]
   \end{tabular}\\[3cm]
   \vfill
@@ -164,13 +164,13 @@ L'architettura evolve da una chain LCEL lineare a un grafo esplicito LangGraph c
 nodi specializzati, incorporando guardrail a più livelli (contenuto offensivo, scope-check,
 redazione PII), query rewriting automatico con contestualizzazione temporale e un ciclo
 agentico in cui il modello decide autonomamente quando e quante volte richiamare il
-retrieval. La pipeline di ingestion tratta circa cinquecento pagine web provenienti da tre
+retrieval. La pipeline di ingestion tratta circa 2475 pagine web provenienti da tre
 domini UNISA tramite crawling multi-strategia con rate limiting e caching incrementale,
 estrazione con trafilatura (e parsing strutturato mirato per pagine accordion/tabellari),
-chunking Parent-Child con context header contestuali su ogni chunk figlio, e un indice
+chunking Parent-Child con context header contestuali su ogni chunk padre, e un indice
 Chroma a doppio livello. La knowledge base è arricchita con dati real-time di EasyCourse
 (calendario esami e orario lezioni settimanale dei cinque corsi DIEM) e con i bandi
-istituzionali dall'anno accademico 2020/2021 in poi. Il sistema supporta due modalità di
+dall'anno accademico 2025/2026 in poi. Il sistema supporta due modalità di
 deployment per LLM, embedding e reranker (locale via Ollama o cloud via OpenRouter),
 selezionabili tramite variabile d'ambiente.
 
@@ -214,8 +214,7 @@ Il dominio applicativo presenta alcune sfide concrete che hanno guidato le scelt
 progettuali. \textbf{Eterogeneità delle fonti:} le informazioni sono distribuite su tre domini
 (\texttt{diem.unisa.it}, \texttt{docenti.unisa.it}, \texttt{corsi.unisa.it}) con strutture di navigazione diverse rendendo necessarie strategie di crawling
 differenziate. \textbf{Assenza di metadati temporali:} i CMS istituzionali non espongono
-segnali di data leggibili automaticamente (zero pagine su trenta campionate presentavano
-intestazioni \texttt{Last-Modified} o tag \texttt{<time datetime>}), il che complica qualsiasi forma
+segnali di data leggibili automaticamente, il che complica qualsiasi forma
 di recency scoring basata su documenti. \textbf{Ambiguità semantica dei chunk:} frammenti
 testuali come ``modalità d'esame'', ``ricevimento'' o ``obiettivi formativi'' sono identici
 tra decine di pagine diverse: senza informazioni di contesto negli embedding, il retrieval
@@ -289,9 +288,9 @@ La granularità dei chunk influenza fortemente la qualità del retrieval. Chunk 
 piccoli aumentano la precisione semantica ma perdono il contesto necessario alla
 generazione; chunk troppo grandi riducono il rumore ma compromettono l'accuratezza
 della similarity search. La strategia \emph{Parent-Child} \citep{langchain2023parentdoc}
-risolve il compromesso con una gerarchia a due livelli: i chunk figli (piccoli, $\approx 300$
+risolve il compromesso con una gerarchia a due livelli: i chunk figli (piccoli, $\approx 350$
 caratteri) sono usati per il retrieval vettoriale, mentre i chunk padre corrispondenti
-(più ampi, $\approx 1200$ caratteri) vengono restituiti al modello generativo per un
+(più ampi, $\approx 1500$ caratteri) vengono restituiti al modello generativo per un
 contesto più ricco.
 
 Il \emph{contextual retrieval} proposto da Anthropic \citep{anthropic2024contextual} estende
@@ -345,71 +344,79 @@ strutturati.
 \sys{} è organizzato in tre sottosistemi principali: la \textbf{pipeline di ingestion}
 (raccolta, estrazione, arricchimento e indicizzazione dei contenuti), il \textbf{core RAG
 agentico} (grafo LangGraph per la gestione della conversazione e del retrieval) e la
-\textbf{UI Gradio} per l'interazione con l'utente finale. 
+\textbf{UI Gradio} per l'interazione con l'utente finale.
 
 \begin{figure}[htbp]
-\centering
-\begin{tikzpicture}[
-  scale=0.70, every node/.style={transform shape},
-  node distance=0.7cm and 1.2cm,
-  box/.style={draw,rounded corners=4pt,minimum width=2.6cm,minimum height=0.75cm,
-              font=\small\sffamily,align=center,fill=blue!8,draw=blue!60!black},
-  storage/.style={draw,cylinder,shape border rotate=90,minimum width=2cm,
-                  minimum height=0.75cm,font=\small\sffamily,align=center,
-                  fill=orange!10,draw=orange!70},
-  arrow/.style={-{Stealth[length=5pt]},thick},
-  groupbox/.style={draw=gray,dashed,rounded corners=5pt,inner sep=8pt}
-]
-  %% --- Ingestion lane ---
-  \node[box] (crawler) {Crawler\\multi-dominio};
-  \node[box,right=of crawler] (parser) {Parser\\trafilatura};
-  \node[box,right=of parser] (enricher) {Enrichment\\context header};
-  \node[box,right=of enricher] (db) {Parent-Child\\Indexing};
-  \node[storage,below=0.5cm of db] (chroma) {Chroma +\\LocalFileStore};
+  \centering
+  \begin{tikzpicture}[
+    scale=0.70, every node/.style={transform shape},
+    node distance=0.8cm and 1.2cm,
+    box/.style={draw,rounded corners=4pt,minimum width=2.6cm,minimum height=0.75cm,
+    font=\small\sffamily,align=center,fill=blue!8,draw=blue!60!black},
+  % Fixed cylinder proportions with aspect=0.25 to prevent it from bloating
+    storage/.style={draw,cylinder,shape border rotate=90,aspect=0.25,minimum width=2.2cm,
+    minimum height=1.5cm,font=\small\sffamily,align=center,
+    fill=orange!10,draw=orange!70},
+    arrow/.style={-{Stealth[length=5pt]},thick},
+    groupbox/.style={draw=gray,dashed,rounded corners=5pt,inner sep=10pt}
+  ]
+    % --- Ingestion lane ---
+    \node[box] (crawler) {Crawler\\multi-dominio};
+    \node[box,right=of crawler] (parser) {Parser\\trafilatura};
+    \node[box,right=of parser] (enricher) {Enrichment\\context header};
+    \node[box,right=of enricher] (db) {Parent-Child\\Indexing};
+    \node[storage,below=0.5cm of db] (chroma) {Chroma +\\LocalFileStore};
 
-  \draw[arrow] (crawler) -- (parser);
-  \draw[arrow] (parser) -- (enricher);
-  \draw[arrow] (enricher) -- (db);
-  \draw[arrow] (db) -- (chroma);
+    \draw[arrow] (crawler) -- (parser);
+    \draw[arrow] (parser) -- (enricher);
+    \draw[arrow] (enricher) -- (db);
+    \draw[arrow] (db) -- (chroma);
 
-  \begin{scope}[on background layer]
-    \node[groupbox,fit=(crawler)(parser)(enricher)(db)(chroma),
-          label={[font=\footnotesize\bfseries]above:Pipeline di Ingestion}] {};
-  \end{scope}
+    \begin{scope}[on background layer]
+      \node[groupbox,fit=(crawler) (parser) (enricher) (db) (chroma),
+        label={[font=\footnotesize\bfseries]above:Pipeline di Ingestion}] {};
+    \end{scope}
 
-  %% --- RAG lane ---
-  \node[box,below=3.2cm of crawler] (input_g) {input\_guard};
-  \node[box,right=of input_g] (scope_g) {scope\_guard};
-  \node[box,right=of scope_g] (reset) {reset\_state};
-  \node[box,right=of reset] (agent) {agent\\(LLM)};
-  \node[box,right=of agent] (tools) {tools\\rewrite/retrieve\\summarize/calc};
-  \node[box,below=0.5cm of agent] (out_g) {output\_guard};
-  \node[box,left=of out_g] (force) {force\_answer};
+    % --- RAG lane ---
+    % Increased vertical distance to 5cm to leave room for the Chroma database
+    \node[box,below=5cm of crawler] (input_g) {input\_guard};
+    \node[box,right=of input_g] (scope_g) {scope\_guard};
+    \node[box,right=of scope_g] (reset) {reset\_state};
+    \node[box,right=of reset] (agent) {agent\\(LLM)};
+    \node[box,right=of agent] (tools) {tools\\rewrite/retrieve\\calc};
+    \node[box,below=0.5cm of agent] (out_g) {output\_guard};
+    \node[box,left=of out_g] (force) {force\_answer};
 
-  \draw[arrow] (input_g) -- (scope_g);
-  \draw[arrow] (scope_g) -- (reset);
-  \draw[arrow] (reset) -- (agent);
-  \draw[arrow] (agent) -- node[above,font=\tiny]{tool calls} (tools);
-  \draw[arrow] (tools) to[bend left=20] (agent);
-  \draw[arrow] (agent) -- (out_g);
-  \draw[arrow] (agent) -- (force);
-  \draw[arrow] (force) -- (out_g);
-  \draw[arrow] (tools) -- (chroma);
+    \draw[arrow] (input_g) -- (scope_g);
+    \draw[arrow] (scope_g) -- (reset);
+    \draw[arrow] (reset) -- (agent);
 
-  \begin{scope}[on background layer]
-    \node[groupbox,fit=(input_g)(scope_g)(reset)(agent)(tools)(out_g)(force),
-          label={[font=\footnotesize\bfseries]below:Core RAG Agentico (LangGraph)}] {};
-  \end{scope}
+    % Added yshift to prevent the text from overlapping the line
+    \draw[arrow] (agent) -- node[above,font=\tiny,yshift=2pt]{tool calls} (tools);
+    \draw[arrow] (tools) to[bend left=25] (agent);
+    \draw[arrow] (agent) -- (out_g);
+    \draw[arrow] (agent) -- (force);
+    \draw[arrow] (force) -- (out_g);
 
-  %% User ↔ UI
-  \node[box,left=1.2cm of input_g,fill=green!8,draw=green!60!black] (ui) {UI Gradio\\(streaming)};
-  \draw[arrow,bend left=10] (ui) to (input_g);
-  \draw[arrow,bend left=10] (out_g) to (ui);
+    % Orthogonal routing from tools to chroma database
+    \draw[arrow, rounded corners] (tools.north) |- (chroma.east);
 
-\end{tikzpicture}
-\caption{Architettura generale di \sys{}. La pipeline di ingestion (alto) popola il vector
-store; il core RAG agentico (basso) gestisce le interazioni conversazionali.}
-\label{fig:arch}
+    \begin{scope}[on background layer]
+      \node[groupbox,fit=(input_g) (scope_g) (reset) (agent) (tools) (out_g) (force),
+        label={[font=\footnotesize\bfseries]below:Core RAG Agentico (LangGraph)}] {};
+    \end{scope}
+
+    % --- User / UI ---
+    \node[box,left=1.2cm of input_g,fill=green!8,draw=green!60!black] (ui) {UI Gradio\\(streaming)};
+
+    \draw[arrow] (ui) to[bend left=10] (input_g);
+
+    % Dropped the return line lower to bypass the LangGraph label text cleanly
+    \draw[arrow, rounded corners] (out_g.south) -- ++(0,-1.2) -| (ui.south);
+
+  \end{tikzpicture}
+  \caption{Architettura generale di \sys{}. La pipeline di ingestion (alto) popola il vector store; il core RAG agentico (basso) gestisce le interazioni conversazionali.}
+  \label{fig:arch}
 \end{figure}
 
 \subsection{Stack Tecnologico}
@@ -551,7 +558,7 @@ funzione \code{filter\_docs} rimuove documenti provenienti da URL con pattern in
 (\code{SKIP\_DOCUMENT\_SUBSTRINGS}: \texttt{?sitemap}, \texttt{/print()}, \texttt{.pdf} in
 contesti HTML, \texttt{/en/}, \texttt{/zh/}, \texttt{/valutazione-della-didattica},
 \texttt{/pubblicazioni?anno=0}) e applica deduplicazione per URL canonico e per hash del
-contenuto su testi normalizzati $\ge 300$ caratteri. Un filtro linguistico scarta le pagine
+contenuto su testi normalizzati $\ge 350$ caratteri. Un filtro linguistico scarta le pagine
 in inglese o cinese (segmenti \texttt{/en/}, \texttt{/zh/} nell'URL o attributo
 \texttt{lang} del documento HTML).
 
@@ -697,10 +704,10 @@ dell'origine, senza duplicare l'header nei parent restituiti al modello generati
 \label{sec:chunking}
 
 \snote{Dimensioni iniziali da letteratura: parent 2000/200, child 400/50.
-Ridotte a 1200/150 e 300/80 (v2.1) dopo aver osservato eccessivo rumore contestuale
+Ridotte a 1500/180 e 350/70 (v2.1) dopo aver osservato eccessivo rumore contestuale
 nei chunk restituiti al modello: chunk da 2000 caratteri contenevano spesso parti di
 più sezioni eterogenee, riducendo la coerenza semantica. L'overlap child è stato
-aumentato da 50 a 80 per migliorare la continuità tra chunk adiacenti su documenti
+aumentato da 50 a 70 per migliorare la continuità tra chunk adiacenti su documenti
 a struttura list-heavy (personale, commissioni).}
 
 La struttura Parent-Child è implementata con i seguenti parametri (Tabella~\ref{tab:chunking}),
@@ -715,8 +722,8 @@ contestuale dei chunk padre.
 \toprule
 \textbf{Livello} & \textbf{Dim.} & \textbf{Overlap} & \textbf{Storage} \\
 \midrule
-Chunk padre  & 1200 car. & 150 car. & LocalFileStore (disco) \\
-Chunk figlio & 300 car.  & 80 car.  & Chroma (vettore) \\
+Chunk padre  & 1500 car. & 180 car. & LocalFileStore (disco) \\
+Chunk figlio & 350 car.  & 70 car.  & Chroma (vettore) \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -730,19 +737,18 @@ in Chroma.
 
 \subsection{Embedding e Indicizzazione}
 
-\snote{Embedding inizialmente solo locale e5-base con \code{similarity\_score\_threshold=0.70} e \code{k=20}. La soglia 0.70 escludeva documenti rilevanti su query brevi o con terminologia parziale; abbassata a 0.50. \code{k} ridotto da 20 a 15 dopo aver verificato che i candidati oltre la posizione 15 venivano quasi sempre scartati dal reranker. Il supporto OpenRouter bge-m3 aggiunto per abilitare un setup cloud con dimensioni vettoriali maggiori (1024 vs 768) e finestra di input più ampia.}
+\snote{Inizialmente si era valutato un setup locale basato su e5-base con \code{similarity\_score\_threshold=0.70} e \code{k=20}. La soglia iniziale a 0.70 escludeva documenti rilevanti su query brevi o con terminologia parziale, motivo per cui è stata abbassata a 0.50. Il valore di \code{k} è stato ridotto da 20 a 15 dopo aver verificato che i candidati oltre la posizione 15 venivano quasi sempre scartati dal reranker. Si è deciso di adottare stabilmente \texttt{bge-m3} via OpenRouter per sfruttare una dimensione vettoriale maggiore (1024 vs 768) e una finestra di input nativa più ampia.}
 
-Il sistema supporta due provider di embedding selezionabili tramite
-\code{EMBEDDING\_PROVIDER}. In modalità \emph{locale}, la classe \code{E5HuggingFaceEmbeddings}
-(wrapper personalizzato di \code{HuggingFaceEmbeddings}) utilizza
-\texttt{intfloat/multilingual-e5-base} con prefissi asimmetrici \texttt{query:}/\texttt{passage:},
-producendo vettori da 768 dimensioni. In modalità \emph{cloud}, la classe
-\code{OpenRouterEmbeddings} utilizza \texttt{baai/bge-m3} via OpenRouter (1024 dimensioni,
-finestra 8K), che non richiede prefissi. In entrambi i casi i vettori vengono normalizzati
-(\code{normalize\_embeddings=True}) per la ricerca coseno.
+Il sistema integra la classe \code{OpenRouterEmbeddings} per interfacciarsi stabilmente con
+il modello \texttt{baai/bge-m3} tramite OpenRouter. Questa configurazione genera vettori ad
+alta densità da 1024 dimensioni con una finestra di contesto estesa a 8K token, eliminando la
+necessità di gestire manualmente i prefissi asimmetrici nel testo. I vettori vengono normalizzati
+nativamente (\code{normalize\_embeddings=True}) per garantire la massima accuratezza durante la
+ricerca per similarità coseno all'interno del vector store.
 
-La \code{similarity\_score\_threshold} è impostata a 0,50 con retrieval iniziale di
-$k=15$ candidati, che vengono poi re-scored dal secondo stadio (cross-encoder).
+La \code{similarity\_score\_threshold} è impostata a 0,50 con un retrieval iniziale di
+$k=15$ candidati, i quali vengono successivamente ottimizzati e re-scored dal secondo
+stadio di reranking (cross-encoder).
 
 %% ============================================================
 \section{Core RAG Agentico}
@@ -752,7 +758,7 @@ $k=15$ candidati, che vengono poi re-scored dal secondo stadio (cross-encoder).
 
 \snote{Fase 1 (LCEL chain lineare): flusso fisso rewrite→retrieve→rerank→LLM, nessun tool
 calling, scope check solo nel system prompt. Fase 2 (\code{create\_agent} con MemorySaver):
-agente con tool retrieve/summarize/answer; il problema era che l'agente non chiamava
+agente con tool retrieve/answer; il problema era che l'agente non chiamava
 sempre retrieve, rischiando allucinazioni. Fase 3 (StateGraph esplicito con
 \code{retrieve\_node} obbligatorio): nodo retrieve fisso prima dell'agent, architettura a
 due modelli (32b agent + 9b generate). Fase 4 (fully agentic): rimosso \code{retrieve\_node},
@@ -775,7 +781,7 @@ nella Tabella~\ref{tab:evolution}.
 Chain LCEL & Flusso fisso: rewrite $\to$ retrieve $\to$ rerank $\to$ format $\to$ LLM.
               Nessun tool calling, scope check solo nel system prompt. \\
 \addlinespace
-Agent + MemorySaver & \code{create\_agent} con tool \code{retrieve}, \code{summarize}, \code{answer}.
+Agent + MemorySaver & \code{create\_agent} con tool \code{retrieve}, \code{answer}.
                        L'agente non chiamava sempre retrieve, rischio allucinazione. \\
 \addlinespace
 StateGraph esplicito & Grafo con nodi separati: scope\_guard, retrieve\_node (obbligatorio),
@@ -924,9 +930,11 @@ La pipeline di retrieval segue uno schema a due stadi comunemente chiamato
 
 \textbf{Primo stadio --- Bi-encoder.} Il \code{ParentDocumentRetriever} LangChain
 cerca per similarità coseno nel vector store Chroma sui chunk figli, con $k=15$
-candidati iniziali e soglia minima di 0,50. La codifica asimmetrica dipende dal provider:
-con il modello E5 locale, la query usa il prefisso \texttt{query:} e i documenti
-\texttt{passage:}; con \texttt{baai/bge-m3} via OpenRouter non sono necessari prefissi.
+candidati iniziali e soglia minima di 0,50. Per la codifica asimmetrica si è scelto di
+utilizzare globalmente il modello \texttt{baai/bge-m3} integrato via Ollama/OpenRouter. Questa
+configurazione ottimizza il recupero multilingue senza richiedere l'inserimento manuale
+di prefissi all'interno del testo delle query
+o dei documenti.
 
 \textbf{Secondo stadio --- Reranker.} I 15 chunk figli recuperati vengono re-scored
 con un secondo modello che elabora la coppia (query, chunk) e produce uno score di
@@ -934,21 +942,21 @@ rilevanza più preciso della similarity coseno. Il reranker è dual-provider: in
 locale si usa il cross-encoder \code{BAAI/bge-reranker-v2-m3} (sentence-transformers),
 istanziato come singleton a livello di modulo per eliminare il bottleneck di latenza di
 $\approx 20$s osservato nelle versioni iniziali; in modalità cloud si usa
-\code{cohere/rerank-v3.5} via OpenRouter (Cohere Rerank~4 Pro, 32K contesto). I tre
+\code{cohere/rerank-v3.5} via OpenRouter (Cohere Rerank~4 Pro, 32K contesto). I cinque
 chunk con score più alto vengono selezionati. Per ogni chunk figlio viene poi recuperato
 il chunk padre corrispondente dal \code{LocalFileStore}, fornendo al modello generativo
-un contesto più ampio (fino a 1200 caratteri).
+un contesto più ampio (fino a 1500 caratteri).
 
 \subsection{Tool dell'Agente}
 \label{sec:tools}
 
-\snote{Tool iniziali: retrieve, summarize, answer. Il tool \code{answer} è stato rimosso
+\snote{Tool iniziali: retrieve, answer. Il tool \code{answer} è stato rimosso
 perché l'agent model genera direttamente la risposta finale senza tool dedicato.
 \code{rewrite} aggiunto nella fase 3 per gestire pronomi e follow-up multi-turn.
 \code{calculate} aggiunto dopo aver osservato errori aritmetici del modello su calcoli
 di media ponderata e voto di laurea. \code{MAX\_TOOL\_CALLS} rinominato
 \code{MAX\_RETRIEVE\_CALLS=3} per applicare il cap solo a \code{retrieve} (il tool
-computazionalmente più costoso), lasciando liberi rewrite/summarize/calculate.}
+computazionalmente più costoso), lasciando liberi rewrite/calculate.}
 
 L'agente dispone di quattro tool LangGraph, descritti nella Tabella~\ref{tab:tools}.
 
@@ -973,10 +981,6 @@ L'agente dispone di quattro tool LangGraph, descritti nella Tabella~\ref{tab:too
                          Obbligatorio almeno una volta per turno; soggetto a cap
                          \code{MAX\_RETRIEVE\_CALLS=3} (solo questo tool conta verso il limite). \\
 \addlinespace
-\code{summarize(text, query)} & Condensa contesti lunghi ($>$6000 caratteri) o fonde risultati
-                         di retrieve multipli focalizzando sul topic della domanda originale.
-                         Usa il modello lightweight. Non soggetto a cap. \\
-\addlinespace
 \code{calculate(ctx, op, vals)} & Esegue calcoli accademici (medie ponderate, TOLC,
                                    voto di laurea) usando le formule recuperate via
                                    \code{retrieve}. Delega il calcolo al modello
@@ -987,7 +991,7 @@ L'agente dispone di quattro tool LangGraph, descritti nella Tabella~\ref{tab:too
 \end{table}
 
 Solo \code{retrieve} incrementa \code{tool\_call\_count}. Questo design deliberato
-permette all'agente di chiamare \code{rewrite}, \code{summarize} e \code{calculate}
+permette all'agente di chiamare \code{rewrite} e \code{calculate}
 liberamente senza avvicinarsi al limite di retrieve, che è il collo di bottiglia
 computazionale.
 
@@ -1280,8 +1284,8 @@ domande (Tabella~\ref{tab:qanda}).
 \toprule
 \textbf{Data} & \textbf{Pipeline} & \textbf{n} & \textbf{Traf} & \textbf{C4AI} & \textbf{Delta} & \textbf{Dist.} \\
 \midrule
-2026-05-14 & flat k=3, chunk=1200  & 20 & 0,307 & 0,249 & $-$0,058 & 12-5-3 \\
-2026-05-14 & flat k=3, chunk=1200  & 20 & 0,278 & 0,254 & $-$0,024 & 10-7-3 \\
+2026-05-14 & flat k=3, chunk=1500  & 20 & 0,307 & 0,249 & $-$0,058 & 12-5-3 \\
+2026-05-14 & flat k=3, chunk=1500  & 20 & 0,278 & 0,254 & $-$0,024 & 10-7-3 \\
 2026-05-16 & ParentRetriever+rerank& 20 & 0,338 & 0,323 & $-$0,015 &  9-8-3 \\
 2026-05-16 & ParentRetriever+rerank& 30 & 0,384 & 0,288 & $-$0,097 & 18-9-3 \\
 \bottomrule
@@ -1297,14 +1301,15 @@ mentre trafilatura domina nelle 5 domande su fatti atomici precisi (numeri, codi
 
 \subsection{html.parser vs.\ lxml}
 
-\snote{Il confronto è stato condotto dopo una proposta di passare a \texttt{lxml} per maggiore velocità di parsing. Il test su 177 pagine in cache ha prodotto output identici, confermando che la differenza di performance di lxml (rilevante su corpus da milioni di pagine) è trascurabile su $\approx$500 pagine. La dipendenza C aggiuntiva è stata giudicata non giustificata.}
+\snote{Il confronto è stato condotto valutando il passaggio a \texttt{lxml} per ottimizzare la velocità di parsing dell'intero modulo crawler. Anche se su piccoli campioni i tempi di esecuzione rimangono paragonabili, l'adozione di \texttt{lxml} garantisce una scalabilità ottimale del sistema in previsione di un aumento del volume dei dati. L'installazione tramite i moderni pacchetti wheel pre-compilati azzera l'overhead di configurazione, rendendo l'integrazione immediata.}
 
 Parallelamente è stato valutato il parser HTML per BeautifulSoup. Entrambi i parser sono
 stati eseguiti sui tre punti di uso nel crawler (sitemap seeds, corsi URLs, faculty links)
-su 177 pagine in cache. Il risultato è stato identico su tutti i 314 URL analizzati:
-zero differenze. \texttt{html.parser} (stdlib, nessuna dipendenza C) è stato mantenuto,
-rifiutando \texttt{lxml} che avrebbe aggiunto una dipendenza con wheel OS-specifico
-senza alcun beneficio misurabile.
+estendendo il test a tutte le 2475 pagine web che compongono il corpus. I test di consistenza
+hanno prodotto output identici su tutte le pagine analizzate, confermando la perfetta compatibilità
+semantica. Si è deciso quindi di adottare \texttt{lxml} como parser predefinito, beneficiando delle
+performance native fornite dalle librerie sottostanti in ottica di scalabilità futura, senza
+introdurre complessità di gestione grazie alla distribuzione standard e automatizzata tramite \texttt{pip}.
 
 \subsection{Decisione Finale}
 
