@@ -131,7 +131,11 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
         unit = data.get("unit", "")
 
         try:
-            result = float(simple_eval(expression, names=variables))
+            result = float(simple_eval(
+                expression,
+                names=variables,
+                functions={"round": round, "min": min, "max": max, "abs": abs},
+            ))
             result_str = str(round(result, 2))
             unit_str = f" {unit}" if unit else ""
             logger.info(f"calculate | expr={expression} vars={variables} result={result_str}")
