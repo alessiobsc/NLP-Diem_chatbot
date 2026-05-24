@@ -7,21 +7,15 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from src.agent.brain import DiemBrain
-from src.encoders.embedding_init import build_embedding_model
+from src.rag_hybrid import QdrantRAG
 from config import (
-    CHROMA_DIR,
-    CHROMA_DIR_NAME,
-    COLLECTION_NAME,
-    EMBEDDING_DIMENSION,
+    QDRANT_HOST,
+    QDRANT_PORT,
+    OPENROUTER_API_KEY
 )
-from cache import TurnCache, serialise_history
-
-# Loaded once at module import time; shared by load_brain and ragas_runner.
-embedding_model = build_embedding_model()
-
+from evaluation.cache import TurnCache, serialise_history
 
 def setup_logging(run_dir: Path) -> logging.Logger:
     """Configure a dedicated logger that writes both to ``run_dir/run.log``
@@ -48,31 +42,23 @@ def setup_logging(run_dir: Path) -> logging.Logger:
 
 
 def load_brain(logger: logging.Logger) -> DiemBrain:
-    """Open the persisted Chroma index and instantiate the production
-    chatbot exactly as the live app would. Fails fast if the index is
-    missing so the user is pointed at the ingestion step.
+    """Open the persisted Qdrant index and instantiate the production
+    chatbot exactly as the live app would.
     """
-    db_file = CHROMA_DIR / "chroma.sqlite3"
-    if not db_file.exists():
-        raise FileNotFoundError(
-            f"No Chroma index at {CHROMA_DIR}. "
-            "Run `python main_ingestion.py --full` first."
-        )
-    vectorstore = Chroma(
-        collection_name=COLLECTION_NAME,
-        embedding_function=embedding_model,
-        persist_directory=CHROMA_DIR_NAME,
-        collection_metadata={"hnsw:space": "cosine", "dimension": EMBEDDING_DIMENSION},
-    )
     try:
-        # Reaching into the private collection is acceptable here: it is
-        # purely informational logging and Chroma does not expose a public
-        # `len()`.
-        n = vectorstore._collection.count()
-        logger.info(f"Loaded Chroma index with {n} child chunks")
-    except Exception:
-        logger.info("Loaded Chroma index (count unavailable)")
-    return DiemBrain(vectorstore)
+        hybrid_rag = QdrantRAG(
+            qdrant_host=QDRANT_HOST,
+            qdrant_port=QDRANT_PORT,
+            openrouter_api_key=OPENROUTER_API_KEY
+        )
+        logger.info(f"Connected to Qdrant at {QDRANT_HOST}:{QDRANT_PORT}")
+        # Could potentially query the collection count here
+    except Exception as e:
+        raise ConnectionError(
+            f"Could not connect to Qdrant at {QDRANT_HOST}:{QDRANT_PORT}. "
+            f"Ensure Qdrant is running and populated. Error: {e}"
+        )
+    return DiemBrain(hybrid_rag)
 
 
 def load_golden_set(path: Path) -> dict[str, Any]:

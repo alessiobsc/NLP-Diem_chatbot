@@ -376,7 +376,7 @@ def apply_html_metadata_and_filter(raw_html_docs: list) -> list:
     return kept
 
 
-def run_full_pipeline(embedding_model) -> None:
+def run_full_pipeline(in_memory: bool = True) -> None:
     raw_html_docs, pdf_docs = crawl_phase()
 
     logger.info(f"Applying HTML extractor + metadata gate to {len(raw_html_docs)} HTML documents...")
@@ -428,7 +428,7 @@ def run_full_pipeline(embedding_model) -> None:
     all_docs = all_docs + static_facts
 
     logger.info(f"Total documents ready for indexing: {len(all_docs)}")
-    index_documents(all_docs, embedding_model)
+    index_documents(all_docs, embedding_model=None, in_memory=in_memory)
 
 
 def main() -> None:
@@ -447,6 +447,12 @@ def main() -> None:
         action="store_true",
         help="Run the complete pipeline: crawl, filter, enrich, embed, index.",
     )
+    parser.add_argument(
+        "--in-memory",
+        action="store_true",
+        default=False,
+        help="Use an in-memory Qdrant instance. Without this, runs against the configured local/remote DB."
+    )
     args = parser.parse_args()
 
     if args.crawl_only:
@@ -464,10 +470,7 @@ def main() -> None:
         return
 
     # --full
-    from src.encoders.embedding_init import build_embedding_model
-
-    embedding_model = build_embedding_model()
-    run_full_pipeline(embedding_model)
+    run_full_pipeline(in_memory=args.in_memory)
 
 
 if __name__ == "__main__":

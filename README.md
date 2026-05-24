@@ -48,18 +48,18 @@ input_guard → scope_guard → reset_state → agent ↔ tools → output_guard
 | Tool | Model | Purpose |
 |------|-------|---------|
 | `rewrite` | LLaMA 3.1 8B | Resolves pronouns, injects current year into standalone query |
-| `retrieve` | — | Bi-encoder + cross-encoder retrieval from Chroma |
+| `retrieve` | — | Hybrid retrieval (Dense + Sparse + ColBERT) from Qdrant |
 | `summarize` | LLaMA 3.1 8B | Condenses long retrieved context |
 | `calculate` | — | Safe arithmetic evaluation for numeric questions |
 
 ### Retrieval Pipeline
 
 ```
-Query → E5 bi-encoder (k=20) → Chroma child chunks
-      → cross-encoder reranker → top-K parents → LLM
+Query → BGE-M3 (Dense, Sparse, ColBERT) → Qdrant (Reciprocal Rank Fusion) → LLM
 ```
 
-Parent-child chunking: parents (2000 / 200 overlap) stored in `LocalFileStore`; children (400 / 50 overlap) embedded and indexed in Chroma with context header prepended.
+Chunking: children (300 / 80 overlap) embedded and indexed in Qdrant with context header prepended.
+The system uses Qdrant's Named Vectors and Multi-Vectors to store all representations in a single PointStruct.
 
 ---
 
@@ -72,8 +72,8 @@ Parent-child chunking: parents (2000 / 200 overlap) stored in `LocalFileStore`; 
 | `corsi.unisa.it` (DIEM degree programs) | 296 |
 | **PDF documents** | 109 sources |
 
-**Total:** 4,155 documents · 5,111 parent chunks · 23,563 child chunks  
-**Collection:** `diem_collect_HeaderContext_Nuova_Versione` · Cutoff: 2020
+**Total:** 4,155 documents · 23,563 chunks  
+**Collection:** `hybrid_docs` · Cutoff: 2020
 
 ---
 
@@ -84,9 +84,8 @@ Parent-child chunking: parents (2000 / 200 overlap) stored in `LocalFileStore`; 
 | Agent LLM | `openai/gpt-oss-120b` via OpenRouter |
 | Lightweight LLM | `meta-llama/llama-3.1-8b-instruct` via OpenRouter |
 | Enrichment LLM (ingestion) | `llama3.2:1b` via Ollama (fallback: heuristic) |
-| Embedding | `intfloat/multilingual-e5-base` (local, 384 dim) |
-| Cross-encoder | `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` (local) |
-| Vector store | Chroma (cosine HNSW) |
+| Embedding | `BAAI/bge-m3` (local, Dense 1024, Sparse, ColBERT) |
+| Vector store | Qdrant (Hybrid Search with RRF) |
 | Agent framework | LangGraph + LangChain |
 | UI | Gradio 6 `ChatInterface` |
 | Evaluation | Ragas + custom metrics |
@@ -103,6 +102,9 @@ venv\Scripts\activate        # Windows
 
 # 2. Install dependencies
 pip install -r requirements.txt
+
+# 3. Start Qdrant (Docker recommended)
+docker run -p 6333:6333 qdrant/qdrant
 ```
 
 ### Environment variables (`.env`)
@@ -114,6 +116,10 @@ LLM_PROVIDER=openrouter
 OPENROUTER_API_KEY=your_openrouter_key
 OPENROUTER_AGENT_MODEL=openai/gpt-oss-120b
 OPENROUTER_LIGHTWEIGHT_MODEL=meta-llama/llama-3.1-8b-instruct
+
+# Qdrant Database Settings
+QDRANT_HOST=localhost
+QDRANT_PORT=6333
 
 # Optional — LangSmith tracing
 LANGCHAIN_TRACING_V2=true
@@ -143,7 +149,7 @@ venv/Scripts/python -u main_ingestion.py --full
 ### Run the chatbot
 
 ```bash
-# Gradio web UI (requires chroma_diem/ to exist)
+# Gradio web UI
 venv/Scripts/python -u app.py
 
 # Interactive CLI test
@@ -185,17 +191,18 @@ venv/Scripts/python evaluation/tester.py --lang en
 │   │   ├── init_models.py          # build_agent_model(), build_lightweight_model()
 │   │   └── utils.py                # extract_text, format_context, rewrite_query
 │   │
+│   ├── rag_hybrid.py               # Hybrid RAG logic with Qdrant and BGE-M3
 │   ├── ingestion/
 │   │   ├── crawler.py              # Crawling, link extraction, faculty validation
 │   │   ├── crawl_state.py          # Crawl state management
 │   │   ├── parser.py               # HTML extractor, temporal filter, PDF loader
 │   │   ├── enrichment.py           # Context headers via Ollama (fallback: heuristic)
-│   │   └── database.py             # Parent-child split, embedding, Chroma index
+│   │   └── database.py             # Splitting and indexing in Qdrant
 │   │
 │   ├── encoders/
-│   │   ├── embedding_models.py     # E5 HuggingFace embedding wrapper
-│   │   ├── embedding_init.py       # Shared embedding model instance
-│   │   └── reranker.py             # Cross-encoder singleton
+│   │   ├── embedding_models.py     # Legacy embedding wrappers
+│   │   ├── embedding_init.py       # Legacy embedding initialization
+│   │   └── reranker.py             # Legacy reranker singleton
 │   │
 │   ├── utils/
 │   │   └── logger.py               # Shared rotating file + console logger
@@ -216,13 +223,12 @@ venv/Scripts/python evaluation/tester.py --lang en
     ├── test_chatbot_auto.py        # Automated chatbot test
     ├── test_retriever.py           # REPL retriever inspector
     ├── test_chunks.py              # Chunk statistics viewer
-    └── check_vector_db.py          # Verify context header propagation in Chroma
+    └── check_vector_db.py          # Verify context header propagation in Qdrant
 ```
 
 **Generated at runtime (gitignored):**
 
 ```
-chroma_diem/          # Chroma vector store + parent LocalFileStore
 logs/                 # Rotating application logs
 evaluation/results/   # Per-run evaluation artifacts
 evaluation/cache/     # Chatbot response cache

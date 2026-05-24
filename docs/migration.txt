@@ -113,7 +113,7 @@ Il run definitivo usa:
     i casi dove C4AI dovrebbe avvantaggiarsi)
   - Pipeline production: ParentDocumentRetriever (parent=2000, child=400,
     overlap=50), bi-encoder k=20, cross-encoder/mmarco-mMiniLMv2-L12-H384-v1
-  - Embedding: intfloat/multilingual-e5-base
+  - Embedding: BAAI/bge-m3
 
 GOLDEN SET ESTESO — LE 10 NUOVE DOMANDE
   Gruppo A — pagine JS-heavy (ipotesi: C4AI avvantaggiato):

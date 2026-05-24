@@ -149,7 +149,7 @@ NOTE OPERATIVE
 
   - La cache NON e invalidata automaticamente dai cambiamenti a:
       * SYSTEM_PROMPT in brain.py
-      * indice Chroma (re-ingestion)
+      * indice Qdrant (re-ingestion)
       * parametri di retrieval in config.py
     Dopo questi cambi: usare --cache refresh oppure cancellare
     evaluation/cache/.

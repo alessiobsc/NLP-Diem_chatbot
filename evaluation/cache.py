@@ -30,7 +30,7 @@ Design choices
                     cache for the current configuration.
 
 Invalidate manually (delete ``evaluation/cache/``) when the underlying
-Chroma index or the ``DiemBrain`` system prompt change, because those
+Qdrant index or the ``DiemBrain`` system prompt change, because those
 inputs are NOT tracked in the cache key.
 """
 from __future__ import annotations

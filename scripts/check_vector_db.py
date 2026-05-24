@@ -1,6 +1,6 @@
 """
-Check child chunks stored in Chroma: context header propagation, domain breakdown,
-and trafilatura content quality.
+Check chunks stored in Qdrant: context header propagation, domain breakdown,
+and content quality.
 """
 
 import io
@@ -14,10 +14,9 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-from langchain_chroma import Chroma
-from config import CHROMA_DIR, COLLECTION_NAME, EMBEDDING_DIMENSION
-from src.encoders.embedding_init import build_embedding_model
 
+from qdrant_client import QdrantClient
+from config import QDRANT_STORAGE_DIR, COLLECTION_NAME
 
 def domain_of(url: str) -> str:
     try:
@@ -25,55 +24,56 @@ def domain_of(url: str) -> str:
     except Exception:
         return "unknown"
 
+BATCH_SIZE = 1000
 
-BATCH_SIZE = 2000
-
-
-def fetch_child_chunks(vectorstore: Chroma) -> tuple[list[str], list[dict]]:
-    """Paginated fetch to avoid SQLite 'too many SQL variables' on large collections."""
+def fetch_all_chunks(client: QdrantClient, collection_name: str) -> tuple[list[str], list[dict]]:
+    """Paginated fetch to get all documents from a Qdrant collection."""
     docs: list[str] = []
     metas: list[dict] = []
-    offset = 0
+    next_offset = None
+
+    print("Fetching all chunks from Qdrant...")
     while True:
-        batch = vectorstore.get(limit=BATCH_SIZE, offset=offset)
-        batch_docs = batch.get("documents") or []
-        batch_metas = batch.get("metadatas") or []
-        if not batch_docs:
+        points, next_offset = client.scroll(
+            collection_name=collection_name,
+            limit=BATCH_SIZE,
+            offset=next_offset,
+            with_payload=True,
+            with_vectors=False
+        )
+
+        for point in points:
+            payload = point.payload or {}
+            docs.append(payload.get("content", ""))
+            metas.append(payload)
+
+        if not next_offset:
             break
-        docs.extend(batch_docs)
-        metas.extend(batch_metas)
-        offset += len(batch_docs)
-        if len(batch_docs) < BATCH_SIZE:
-            break
+
     if not docs:
-        print("Nessun documento trovato nel vector store Chroma.")
+        print("No documents found in the Qdrant collection.")
     return docs, metas
 
 
 def main() -> None:
-    print("=== DIEM Chroma Child Chunk Inspection ===")
+    print("=== DIEM Qdrant Chunk Inspection ===")
 
-    if not CHROMA_DIR.exists():
-        print(f"ERROR: {CHROMA_DIR} not found. Run the ingestion pipeline first.")
+    try:
+        # This script is for inspecting a persisted DB, so we use the path
+        client = QdrantClient(path=str(QDRANT_STORAGE_DIR))
+        print(f"Connected to Qdrant at {QDRANT_STORAGE_DIR}")
+        print(f"Inspecting collection: '{COLLECTION_NAME}'")
+    except Exception as e:
+        print(f"ERROR: Could not connect to Qdrant. Is the database populated? ({e})")
         return
 
-    print(f"Chroma dir: {CHROMA_DIR}")
-    print("Loading vectorstore...")
-
-    vectorstore = Chroma(
-        collection_name=COLLECTION_NAME,
-        embedding_function=build_embedding_model(),
-        persist_directory=str(CHROMA_DIR),
-        collection_metadata={"hnsw:space": "cosine", "dimension": EMBEDDING_DIMENSION},
-    )
-
-    docs, metas = fetch_child_chunks(vectorstore)
+    docs, metas = fetch_all_chunks(client, COLLECTION_NAME)
     total_docs = len(docs)
 
     if total_docs == 0:
         return
 
-    print(f"\nFound {total_docs} child chunks in Chroma.")
+    print(f"\nFound {total_docs} chunks in Qdrant.")
 
     # ── Context header stats ──────────────────────────────────────────────────
     chunks_with_header_in_metadata = 0
@@ -129,7 +129,7 @@ def main() -> None:
         print(f"  Header propagation rate       : {rate:.1f}%")
 
     # ── Detailed samples (2 per domain) ──────────────────────────────────────
-    print("\n--- Content samples (2 per domain, trafilatura output) ---")
+    print("\n--- Content samples (2 per domain) ---")
     shown: Counter = Counter()
     MAX_PER_DOMAIN = 2
     SAMPLE_LEN = 400

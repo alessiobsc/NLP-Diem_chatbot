@@ -12,7 +12,6 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from config import CROSS_ENCODER_K
 from src.agent.state import DiemState
 from src.agent.utils import extract_text, format_context
-from src.encoders.reranker import rerank
 from src.middleware import _SCOPE_REJECTION, _OFFENSIVE_FALLBACK, redact_pii
 from src.prompts import AGENT_SYSTEM_PROMPT, REJECTION_TAGS
 from src.utils.logger import get_logger
@@ -191,11 +190,14 @@ class DiemNodes:
             "",
         )
         logger.warning(f"forced_retrieve | agent skipped tools, forcing retrieve | query='{question[:80]}'")
-        docs = self._retriever.invoke(question)
-        reranked = rerank(question, docs, top_n=CROSS_ENCODER_K) if docs else []
-        self._last_docs = reranked
-        context = format_context({"docs": reranked, "question": question, "history": []})["context"]
-        logger.info(f"forced_retrieve | reranked={len(reranked)} | context_len={len(context)}")
+        
+        # Directly use the QdrantRAG instance
+        docs = self._qdrant_rag.search_and_retrieve_parents(question, limit=CROSS_ENCODER_K)
+        
+        self._last_docs = docs
+        context = format_context({"docs": docs, "question": question, "history": []})["context"]
+        logger.info(f"forced_retrieve | retrieved={len(docs)} | context_len={len(context)}")
+        
         tc_id = str(uuid.uuid4())
         ai_msg = AIMessage(
             content="",
@@ -206,7 +208,7 @@ class DiemNodes:
             "messages": [ai_msg, tool_msg],
             "tool_call_count": 1,
             "retrieved_context": context,
-            "last_docs": reranked,
+            "last_docs": docs,
         }
 
     def _node_force_answer(self, state: DiemState) -> dict:

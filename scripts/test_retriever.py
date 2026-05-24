@@ -1,65 +1,35 @@
 """
-Script to test the retrieval of documents from Chroma DB.
-Allows the user to input a query and a score threshold, displaying the retrieved documents.
+Script to test the retrieval of documents from Qdrant using QdrantRAG.
+Allows the user to input a query and see the retrieved parent documents.
 """
 import sys
 from pathlib import Path
-
-from app import embedding_model
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from langchain_chroma import Chroma
-from langchain_classic.retrievers import ParentDocumentRetriever
-from langchain_classic.storage import LocalFileStore, create_kv_docstore
-from langchain_classic.retrievers.multi_vector import SearchType
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from config import CHROMA_DIR_NAME, COLLECTION_NAME, PARENT_STORE_DIR, CHILD_CHUNK_SIZE, CHILD_CHUNK_OVERLAP, EMBEDDING_DIMENSION
+from config import QDRANT_STORAGE_DIR
+from src.rag_hybrid import QdrantRAG
 
-
-def get_retriever(k: int = 5, score_threshold: float = 0.7) -> ParentDocumentRetriever:
+def get_qdrant_rag() -> QdrantRAG:
     """
-    Initializes and returns the ParentDocumentRetriever.
-    
-    Args:
-        k (int): Number of documents to retrieve.
-        score_threshold (float): Minimum similarity score threshold.
-        
-    Returns:
-        ParentDocumentRetriever: The configured retriever.
+    Initializes and returns the QdrantRAG system.
     """
-    vectorstore = Chroma(
-        collection_name=COLLECTION_NAME,
-        embedding_function=embedding_model,
-        persist_directory=CHROMA_DIR_NAME,
-        collection_metadata={"hnsw:space": "cosine", "dimension": EMBEDDING_DIMENSION},
-    )
-    
-    parent_doc_store = create_kv_docstore(LocalFileStore(str(PARENT_STORE_DIR)))
-    child_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=CHILD_CHUNK_SIZE,
-        chunk_overlap=CHILD_CHUNK_OVERLAP
-    )
-    
-    retriever = ParentDocumentRetriever(
-        vectorstore=vectorstore,
-        docstore=parent_doc_store,
-        child_splitter=child_splitter,
-        search_type=SearchType.similarity_score_threshold,
-        search_kwargs={
-            "k": k,
-            "score_threshold": score_threshold
-        },
-    )
-    return retriever
+    return QdrantRAG(in_memory=False)
 
 
 def main() -> None:
     """Main execution block for the interactive retrieval test."""
-    print("=== DIEM Chatbot - Document Retrieval Test ===")
+    print("=== DIEM Chatbot - Dense Parent-Child Retrieval Test ===")
     
+    try:
+        rag = get_qdrant_rag()
+        print(f"Connected to Qdrant at {QDRANT_STORAGE_DIR}")
+    except Exception as e:
+        print(f"ERROR: Could not initialize QdrantRAG. ({e})")
+        return
+
     while True:
         try:
             query = input("\nInserisci la query di ricerca (o 'q' per uscire): ").strip()
@@ -68,40 +38,30 @@ def main() -> None:
                 
             if not query:
                 continue
-                
-            threshold_input = input("Inserisci la soglia di similarità [default 0.7]: ").strip()
-            score_threshold = float(threshold_input) if threshold_input else 0.7
             
             k_input = input("Inserisci il numero massimo di risultati (k) [default 5]: ").strip()
             k = int(k_input) if k_input else 5
             
-            print(f"\nRicerca in corso per: '{query}' (Soglia: {score_threshold}, k: {k})...")
+            print(f"\nRicerca in corso per: '{query}' (k: {k})...")
             
-            retriever = get_retriever(k=k, score_threshold=score_threshold)
+            parent_docs = rag.search_and_retrieve_parents(query, limit=k)
             
-            # Use vectorstore similarity_search_with_score directly to get scores
-            vectorstore = retriever.vectorstore
-            # Embed the query to use with similarity search
-            results = vectorstore.similarity_search_with_score(
-                query, 
-                k=k*3 # search more child chunks to find unique parents
-            )
-
-            # A simpler way to just use the retriever and show the resulting documents
-            docs = retriever.invoke(query)
-            
-            if not docs:
+            if not parent_docs:
                 print("Nessun documento trovato che soddisfi i criteri.")
                 continue
                 
-            print(f"\nTrovati {len(docs)} documenti.")
+            print(f"\nTrovati {len(parent_docs)} documenti parent.")
             print("-" * 50)
             
-            for i, doc in enumerate(docs, 1):
-                print(f"\n--- Documento {i} ---")
-                print(f"URL: {doc.metadata.get('source', 'Sconosciuto')}")
+            for i, doc in enumerate(parent_docs, 1):
+                source = doc.metadata.get('source', 'Sconosciuto')
+                header = doc.metadata.get('context_header', '')
+
+                print(f"\n--- Documento Parent {i} ---")
+                print(f"URL: {source}")
+                if header:
+                    print(f"Header: {header[:100]}...")
                 print(f"Lunghezza contenuto: {len(doc.page_content)} caratteri")
-                print(f"Titolo/Metadati: {doc.metadata}")
                 print("\nContenuto (primi 500 caratteri):")
                 print(doc.page_content[:500] + "...")
                 print("-" * 50)

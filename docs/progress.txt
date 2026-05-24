@@ -1,16 +1,3 @@
-================================================================================
-DIEM CHATBOT - PROGRESS LOG
-================================================================================
-Documento di tracking dell'avanzamento del progetto. Aggiornare dopo ogni
-modifica rilevante: aggiungere una nuova voce in coda alla sezione
-"CRONOLOGIA AGGIORNAMENTI" con data ISO, autore (facoltativo) e riassunto
-sintetico delle modifiche / decisioni / risultati.
-
-================================================================================
-STATO ATTUALE (snapshot al 2026-05-12)
-================================================================================
-
-----------------------------------------------------------------------------
 ARCHITETTURA - COMPLETATA
 ----------------------------------------------------------------------------
 [x] Configurazione centralizzata (config.py, Singleton via costanti).
@@ -25,34 +12,34 @@ ARCHITETTURA - COMPLETATA
         con corsia preferenziale per pagine time-sensitive.
     [x] Generazione context header via Ollama (llama3.2:3b) con cache,
         fallback euristico se Ollama non risponde, normalizzazione e clip.
-    [x] Strategia Parent-Child indexing (parent 2000/200, child 400/50)
+    [x] Strategia Parent-Child indexing (parent 1200/150, child 300/80)
         con ContextHeaderTextSplitter custom che prepend dell'header.
-    [x] Batching adattivo in indicizzazione (max 4000 child per batch).
-    [x] Persistenza Chroma + LocalFileStore per i parent.
+    [x] Batching adattivo in indicizzazione (max 100 child per batch).
+    [x] Persistenza Qdrant per i child + LocalFileStore per i parent.
     [x] Dump JSON dello stato post-filtri (crawled_urls.json,
         crawled_pdfs.json).
 
-[x] Core RAG (src/brain.py):
-    [x] E5HuggingFaceEmbeddings (prefissi passage:/query:) come embedding
-        condiviso ingestion/runtime.
-    [x] Cross-encoder reranker (mMiniLMv2) con scoring + re-sort.
-    [x] ParentDocumentRetriever con similarity_score_threshold (k=20,
-        thr=0.7) -> rerank top-3.
-    [x] Chain LangChain: rewrite condizionale -> retrieve -> rerank ->
-        format context -> LLM.
-    [x] Storia di conversazione per sessione (InMemoryChatMessageHistory).
+[x] Core RAG (src/agent/brain.py, src/rag_hybrid.py):
+    [x] Sostituito Chroma con Qdrant come vector database principale.
+    [x] Sostituita la dipendenza FlagEmbedding con HuggingFaceEmbeddings standard.
+    [x] Embedding densi tramite modello BAAI/bge-m3.
+    [x] Cross-encoder reranker (mMiniLMv2) supportato via configurazione opzionale.
+    [x] Chain LangGraph: agent ↔ tools (retrieve, rewrite, summarize, calculate).
+    [x] Tool `retrieve` configurato per cercare su Qdrant (child) e recuperare i testi parenti dal LocalFileStore.
+    [x] Storia di conversazione per sessione (MemorySaver).
     [x] API sincrona (`chat`) e streaming generator (`chat_stream`).
     [x] Citazione fonti dedotte dai metadata.
 
 [x] UI Gradio (app.py):
-    [x] Caricamento lazy del Chroma index (rebuild se mancante o --reindex).
+    [x] Connessione lazy a Qdrant (rebuild se --reindex).
     [x] gr.ChatInterface con esempi prefillati IT/EN.
     [x] Streaming token-per-token via chat_stream.
 
 [x] Tool di debug (scripts/):
-    [x] check_vector_db.py (validazione propagazione context header).
-    [x] test_chunks.py (ispezione child/parent chunks).
-    [x] test_retriever.py (REPL interattiva sul retriever bi-encoder).
+    [x] check_vector_db.py (validazione connessione e dati in Qdrant).
+    [x] test_chunks.py (ispezione dettagliata chunk estratti in Qdrant).
+    [x] test_retriever.py (REPL interattiva per ricerca tramite QdrantRAG).
+
 
 ----------------------------------------------------------------------------
 EVALUATION FRAMEWORK - COMPLETATO
@@ -82,7 +69,6 @@ ULTIMA RUN DI EVALUATION (smoke, limit=3, lang=it)
 ----------------------------------------------------------------------------
 Chat model:      qwen2.5:7b      (temp 0.1)
 Judge model:     llama3.1:8b-instruct-q4_K_M
-Embedding:       intfloat/multilingual-e5-small
 
 Metriche aggregate (3 questions/categoria, 12 totali in Ragas):
   ResponseRelevancy:           0.637  (11/12 valid)
@@ -341,7 +327,7 @@ CRONOLOGIA AGGIORNAMENTI
 
   BUG FIX
   -------
-  - MAX_TOOL_CALLS → MAX_RETRIEVE_CALLS=3: solo retrieve conta verso il cap
+  - MAX_TOOL_CALLS → MAX_RETRIEVE_CALLS=3: solo retrieve conta verso cap
     (rewrite/summarize/calculate non consumano il limite)
   - forced_retrieve node: safety net graph-level quando agent genera output
     vuoto senza aver chiamato retrieve (tool_call_count==0, retrieved_context=="")
@@ -425,7 +411,7 @@ CRONOLOGIA AGGIORNAMENTI
   - il contextual header viene generato sui parent chunk, non più una sola volta a livello di documento intero;
   - l’header viene salvato nei metadata del parent document;
   - il page_content dei parent rimane pulito, senza “Context: ...”;
-  - l’header viene aggiunto solo ai child chunk indicizzati in Chroma;
+  - l’header viene aggiunto solo ai child chunk indicizzati;
   - il contesto finale passato al modello viene ripulito dagli header artificiali.
 
 - Aggiunto filtro per contenuti PDF raw/non testuali:
@@ -556,8 +542,9 @@ CRONOLOGIA AGGIORNAMENTI
     recupera `Aula A5` + `APALCOMPTE035`.
 
 - Decisione operativa:
-  prima della prossima ingestion full, partire da indice Chroma pulito per evitare
+  prima della prossima ingestion full, partire da indice pulito per evitare
   mix tra vecchi chunk non strutturati e nuovi chunk arricchiti.
+
 2026-05-19 - Qualità contenuto KB: analisi, filtri, script di ispezione e audit
 
   MERGE CONFLICT RISOLTO (src/ingestion/crawler.py)
@@ -605,8 +592,7 @@ CRONOLOGIA AGGIORNAMENTI
 
   STRATEGIA EMBEDDING/RERANKER: BGE-M3 + Cohere Rerank 4 Pro
   -----------------------------------------------------------
-  Decisione architetturale: upgrade da multilingual-e5-base (locale, 384
-  dim) a BGE-M3 (OpenRouter, baai/bge-m3, 1024 dim, 8K context window,
+  Decisione architetturale: upgrade da BAAI/bge-m3 (OpenRouter, baai/bge-m3, 1024 dim, 8K context window,
   $0.01/1M tokens) per migliorare qualità retrieval multilingue IT/EN.
   Reranker: Cohere Rerank 4 Pro (cohere/rerank-v3.5 su OpenRouter,
   32K context, $0.0025/search) — SOTA multilingual, supera il cross-encoder
@@ -614,11 +600,11 @@ CRONOLOGIA AGGIORNAMENTI
   Config: EMBEDDING_PROVIDER=openrouter nel .env abilita entrambi i modelli.
   OPENROUTER_EMBEDDING_MODEL=baai/bge-m3
   OPENROUTER_RERANKER_MODEL=cohere/rerank-v3.5
-  Richiede re-index completo (EMBEDDING_DIMENSION passa da 384 a 1024).
+  Richiede re-index completo (EMBEDDING_DIMENSION passa a 1024).
 
   NUOVO SCRIPT: scripts/audit_chunks.py
   --------------------------------------
-  Script per auditare TUTTI i child chunks del Chroma vector store dopo
+  Script per auditare TUTTI i child chunks del vector store dopo
   un re-index, verificando la qualità del testo indicizzato.
   Controlli per chunk:
     - Caratteri U+FFFD (replacement char da corruzioni encoding)
@@ -680,7 +666,7 @@ CRONOLOGIA AGGIORNAMENTI
   classify_context_header aggiornato per il blocco corsi.unisa.it:
   - Filtro _GENERIC_LABELS: titoli di pagina generici ("regolamento", "piano degli
     studi") non vengono usati come subtopic del corso.
-  - Fallback URL path: se title è assente/generico, primo segmento path non-numerico
+  - Fallback URL path: se title è assente/generico, primo segmento path non-non-numerico
     e non in blacklist (con snake_case→Title Case).
   - Base label: "Regolamento corso di studio" se "regolamento" in path,
     "Pagina corso di studio" altrimenti.
@@ -858,7 +844,7 @@ CRONOLOGIA AGGIORNAMENTI
   --------------------------------------------
   fetch_easycourse_lectures() usa date.today() — ogni --full aggiorna
   automaticamente l'orario alla settimana corrente. La source URL e'
-  stabile per CDL, quindi Chroma sovrascrive i doc obsoleti. Non richiede
+  stabile per CDL, quindi Qdrant sovrascrive i doc obsoleti. Non richiede
   merge da origin/angel (CrawlStateManager) per funzionare.
 
 2026-05-21 - Filtro temporale riprogettato + fix estrazione HTML accordion
@@ -1058,7 +1044,7 @@ CRONOLOGIA AGGIORNAMENTI
   Motivazione: chunk più piccoli e coerenti semanticamente, meno rumore nel
   contesto restituito all'agent. Overlap child aumentato (50→80) per migliore
   continuità tra chunk adiacenti.
-  Richiede re-index completo → nuova collection chroma_diem_v2.1.
+  Richiede re-index completo.
 
   QUALITA' CONTEXT HEADERS (analisi in-run)
   ------------------------------------------
@@ -1163,9 +1149,7 @@ CRONOLOGIA AGGIORNAMENTI
   PRELOAD RERANKER LOCALE (app.py)
   ---------------------------------
   Se RERANKER_PROVIDER=local, _get_local_reranker() viene chiamato a
-  startup subito dopo build_embedding_model(). Evita il download/carico
-  del CrossEncoder (~20s) sulla prima query dell'utente.
-  Il singleton in reranker.py garantisce riuso senza reload.
+  startup.
 
   FIX MULTI-TURN CONTAMINATION — tool window (src/agent/nodes.py)
   ----------------------------------------------------------------
@@ -1219,3 +1203,12 @@ CRONOLOGIA AGGIORNAMENTI
   FILE MODIFICATI
   ---------------
   app.py, src/agent/nodes.py, src/agent/tools.py, src/prompts.py
+
+
+2026-05-22 - Refactoring Sistema RAG Ibrido con Qdrant e BGE-M3
+  - Sostituito ChromaDB con Qdrant come vector store principale.
+  - Creato nuovo modulo `src/rag_hybrid.py` per gestire l'indicizzazione e il retrieval.
+  - Sostituita la libreria di embedding con `HuggingFaceEmbeddings` per usare il modello `BAAI/bge-m3`. La ricerca ora è puramente densa.
+  - Aggiornato `src/ingestion/database.py` per usare `QdrantRAG` invece di `Chroma`. Rimosso `ParentDocumentRetriever` ma mantenuta la logica Parent-Child (salvataggio su file store + indicizzazione child).
+  - Aggiornati gli script in `scripts/` (check_vector_db, test_chunks, test_retriever) per interrogare Qdrant.
+  - Aggiornato `README.md` e `config.py` per riflettere le modifiche. Rimossi riferimenti a E5.

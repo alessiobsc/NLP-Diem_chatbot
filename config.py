@@ -24,11 +24,8 @@ load_dotenv()
 # =============================================================================
 # Define the root of the project to build absolute paths safely
 PROJECT_ROOT: Path = Path(__file__).resolve().parent
-
-# ChromaDB Storage paths
-CHROMA_DIR_NAME: str = os.getenv("CHROMA_DIR_NAME", "chroma_diem")
-CHROMA_DIR: Path = PROJECT_ROOT / CHROMA_DIR_NAME
-PARENT_STORE_DIR: Path = CHROMA_DIR / "parent_store"
+PARENT_STORE_DIR: Path = PROJECT_ROOT / "parent_store"
+QDRANT_STORAGE_DIR: Path = PROJECT_ROOT / "qdrant_db"
 
 
 # =============================================================================
@@ -73,7 +70,7 @@ OLLAMA_CHAT_MODEL: str = os.getenv("OLLAMA_CHAT_MODEL", "qwen2.5:7b")
 LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.1"))
 
 # Local Embedding & Reranking Settings (used when EMBEDDING_PROVIDER=local)
-LOCAL_EMBEDDING_MODEL: str = os.getenv("LOCAL_EMBEDDING_MODEL", "intfloat/multilingual-e5-base")
+LOCAL_EMBEDDING_MODEL: str = os.getenv("LOCAL_EMBEDDING_MODEL", "BAAI/bge-m3")
 LOCAL_RERANKER_MODEL: str = os.getenv("LOCAL_RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
 
 
@@ -96,8 +93,12 @@ OPENROUTER_RERANKER_MODEL: str = os.getenv("OPENROUTER_RERANKER_MODEL", "cohere/
 # =============================================================================
 # RAG & VECTOR DATABASE CONFIGURATION
 # =============================================================================
-COLLECTION_NAME: str = "diem_collect_HeaderContext_Nuova_Versione"
+COLLECTION_NAME: str = "hybrid_docs"
 DEFAULT_SESSION_ID: str = "diem-session"
+
+# Qdrant Database Settings (Local path configuration)
+QDRANT_HOST: str = os.getenv("QDRANT_HOST", "localhost")
+QDRANT_PORT: int = int(os.getenv("QDRANT_PORT", "6333"))
 
 # Retrieval Settings
 # BI_ENCODER_K: number of documents retrieved in the first stage (fast retrieval)
@@ -107,13 +108,9 @@ CROSS_ENCODER_K: int = int(os.getenv("CROSS_ENCODER_K", "5"))
 
 RETRIEVER_SCORE_THRESHOLD: float = float(os.getenv("RETRIEVER_SCORE_THRESHOLD", "0.5"))
 
-# Document Splitting Settings (Parent-Child Strategy)
-# Parent Document Settings (Broad context)
-# TODO (Software Architect): Consider making chunk sizes configurable via environment variables.
+# Document Splitting Settings
 PARENT_CHUNK_SIZE: int = 1200
 PARENT_CHUNK_OVERLAP: int = 150
-
-# Child Document Settings (Precise retrieval)
 CHILD_CHUNK_SIZE: int = 300
 CHILD_CHUNK_OVERLAP: int = 80
 

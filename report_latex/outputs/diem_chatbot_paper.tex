@@ -145,7 +145,8 @@ redazione PII), query rewriting automatico con contestualizzazione temporale e u
 agentico in cui il modello decide autonomamente quando e quante volte richiamare il
 retrieval. La pipeline di ingestion tratta circa cinquecento pagine web provenienti da tre
 domini UNISA tramite crawling multi-strategia, estrazione con trafilatura, chunking
-Parent-Child con context header contestuali e un indice Chroma a doppio livello.
+e indicizzazione in un vector store Qdrant con ricerca ibrida (Dense, Sparse, ColBERT)
+abilitata dal modello BGE-M3.
 
 La valutazione quantitativa, condotta con il framework Ragas su un golden set bilingue
 (italiano e inglese) suddiviso in quattro categorie --- in-scope, multi-turn, out-of-scope e
@@ -158,7 +159,7 @@ con un delta statisticamente significativo di $+$0,097 in favore dell'estrattore
 
 \vspace{0.5em}
 \noindent\textbf{Parole chiave:} Retrieval-Augmented Generation, LangGraph, chatbot universitario,
-Parent-Child chunking, Ragas, agentic RAG, NLP italiano, guardrail conversazionale.
+Qdrant, BGE-M3, Ragas, agentic RAG, NLP italiano, guardrail conversazionale.
 
 \newpage
 \tableofcontents
@@ -209,8 +210,7 @@ Il lavoro presenta i seguenti contributi originali.
 \begin{enumerate}
   \item Una pipeline di ingestion end-to-end specifica per siti universitari italiani, con
         crawling deterministico via sitemap, filtraggio temporale e linguistico, arricchimento
-        contestuale via LLM (context header) e chunking Parent-Child con intestazioni
-        semantiche incorporate in ogni chunk figlio.
+        contestuale via LLM (context header) e indicizzazione ibrida in Qdrant.
 
   \item Un'architettura RAG agentica basata su LangGraph StateGraph con otto nodi
         specializzati, guardrail a cascata, query rewriting automatico con iniezione
@@ -339,16 +339,16 @@ agentico} (grafo LangGraph per la gestione della conversazione e del retrieval) 
   \node[box] (crawler) {Crawler\\multi-dominio};
   \node[box,right=of crawler] (parser) {Parser\\trafilatura};
   \node[box,right=of parser] (enricher) {Enrichment\\context header};
-  \node[box,right=of enricher] (db) {Parent-Child\\Indexing};
-  \node[storage,below=0.5cm of db] (chroma) {Chroma +\\LocalFileStore};
+  \node[box,right=of enricher] (db) {Indexing\\(Qdrant)};
+  \node[storage,below=0.5cm of db] (qdrant) {Qdrant DB};
 
   \draw[arrow] (crawler) -- (parser);
   \draw[arrow] (parser) -- (enricher);
   \draw[arrow] (enricher) -- (db);
-  \draw[arrow] (db) -- (chroma);
+  \draw[arrow] (db) -- (qdrant);
 
   \begin{scope}[on background layer]
-    \node[groupbox,fit=(crawler)(parser)(enricher)(db)(chroma),
+    \node[groupbox,fit=(crawler)(parser)(enricher)(db)(qdrant),
           label={[font=\footnotesize\bfseries]above:Pipeline di Ingestion}] {};
   \end{scope}
 
@@ -357,7 +357,7 @@ agentico} (grafo LangGraph per la gestione della conversazione e del retrieval) 
   \node[box,right=of input_g] (scope_g) {scope\_guard};
   \node[box,right=of scope_g] (reset) {reset\_state};
   \node[box,right=of reset] (agent) {agent\\(LLM)};
-  \node[box,right=of agent] (tools) {tools\\rewrite/retrieve\\summarize/calc};
+  \node[box,right=of agent] (tools) {tools\\retrieve/rewrite\\summarize/calc};
   \node[box,below=0.5cm of agent] (out_g) {output\_guard};
   \node[box,left=of out_g] (force) {force\_answer};
 
@@ -369,7 +369,7 @@ agentico} (grafo LangGraph per la gestione della conversazione e del retrieval) 
   \draw[arrow] (agent) -- (out_g);
   \draw[arrow] (agent) -- (force);
   \draw[arrow] (force) -- (out_g);
-  \draw[arrow] (tools) -- (chroma);
+  \draw[arrow] (tools) -- (qdrant);
 
   \begin{scope}[on background layer]
     \node[groupbox,fit=(input_g)(scope_g)(reset)(agent)(tools)(out_g)(force),
@@ -390,14 +390,10 @@ store; il core RAG agentico (basso) gestisce le interazioni conversazionali.}
 \subsection{Stack Tecnologico}
 
 \sys{} è costruito interamente in Python~3.11, sfruttando LangChain per le astrazioni
-di base (loader, splitter, retriever, embedding), LangGraph per l'orchestrazione del
-grafo agentico e Chroma come vector store locale. Per l'embedding si utilizza il modello
-\texttt{intfloat/multilingual-e5-base} (1024 dimensioni, supporto multilingue IT/EN) in
-modalità locale, con prefissi \texttt{query:} e \texttt{passage:} per la codifica asimmetrica
-delle query rispetto ai documenti. Il reranking è affidato a un cross-encoder
-\texttt{BAAI/bge-reranker-base} (CrossEncoder via sentence-transformers), istanziato come
-singleton a livello di modulo per eliminare il bottleneck di latenza di 20 secondi
-osservato nelle versioni iniziali.
+di base (loader, splitter), LangGraph per l'orchestrazione del
+grafo agentico e Qdrant come vector store. Per l'embedding si utilizza il modello
+\texttt{BAAI/bge-m3} (1024 dimensioni, supporto multilingue IT/EN) in
+modalità locale, che fornisce embedding densi, sparsi e ColBERT in un'unica inferenza.
 
 \textbf{Modelli LLM.} Il sistema supporta due modalità di deployment: \emph{locale} via Ollama
 (\code{qwen2.5:7b} come modello agente, \code{qwen2.5:3b} per enrichment e lightweight
@@ -414,8 +410,8 @@ al modello agente, limitando il bloat del context window senza perdere il filo
 conversazionale.
 
 \textbf{UI.} L'interfaccia utente è implementata con Gradio~6 (\code{gr.ChatInterface}) con
-streaming token-per-token attraverso un generator Python. L'indice Chroma viene
-caricato in modo lazy all'avvio: se assente o se viene passato il flag \code{--reindex},
+streaming token-per-token attraverso un generator Python. L'indice Qdrant viene
+utilizzato all'avvio. Se viene passato il flag \code{--reindex},
 viene eseguita automaticamente la pipeline di ingestion.
 
 %% ============================================================
@@ -503,7 +499,7 @@ che elimina blocchi a bassa densità informativa (menu, footer, navigazione). La
 di trafilatura rispetto a Crawl4AI è supportata da uno studio empirico comparativo
 descritto in dettaglio nella Sezione~\ref{sec:migration}: su un golden set di 30 domande,
 trafilatura supera Crawl4AI con un delta di $+$0,097 nell'overlap lessicale delle risposte,
-particolarmente su domande che richiedono fatti atomici precisi (numeri, codici, nomi).
+particolarmente su domande che richiedono fatti atomici precisi (numeri, codici, P.IVA).
 Per i PDF viene usato \texttt{pdfplumber} tramite il loader LangChain.
 
 Poiché i CMS istituzionali non espongono metadati temporali machine-readable (zero pagine
@@ -518,10 +514,10 @@ di contenuti obsoleti.
 
 Nella versione iniziale del sistema, l'header contestuale generato in \code{enrichment.py}
 veniva inserito direttamente all'inizio del testo del documento intero, prima della fase di
-chunking. Questa soluzione era intrinsecamente difettosa per una pipeline Parent-Child:
-dopo lo split, solo il primo chunk padre e il primo chunk figlio ereditavano l'header,
+chunking. Questa soluzione era intrinsecamente difettosa:
+dopo lo split, solo il primo chunk ereditava l'header,
 mentre tutti i chunk successivi dello stesso documento venivano indicizzati senza alcuna
-informazione contestuale. Poiché il retrieval avviene sui chunk figli salvati in Chroma, il
+informazione contestuale. Poiché il retrieval avviene sui chunk, il
 risultato era che molteplici embedding venivano calcolati su frammenti semanticamente
 ambigui --- ``modalità d'esame'', ``ricevimento'', ``obiettivi formativi'' --- privi di
 indicazioni sul corso o docente di provenienza.
@@ -538,60 +534,26 @@ di cache su disco evita rielaborazioni su esecuzioni successive.
 Dall'altro lato, l'header non viene più inserito nel corpo del documento, ma salvato nei
 metadati come campo \code{context\_header}. Questa separazione consente di gestire
 l'applicazione nel punto corretto della pipeline: in \code{database.py}, dopo la generazione
-dei chunk padre, viene applicato lo splitter personalizzato \code{ContextHeaderTextSplitter}
-(che estende \code{RecursiveCharacterTextSplitter}), il quale prepende il \code{context\_header}
-a ogni chunk figlio generato, immediatamente prima dell'indicizzazione in Chroma. In
+dei chunk, viene prepeso il \code{context\_header}
+a ogni chunk, immediatamente prima dell'indicizzazione in Qdrant. In
 questo modo ogni embedding viene calcolato su un testo che combina il contenuto
 specifico del chunk con le informazioni contestuali del documento di origine.
 
-\begin{tcolorbox}[boxstyle,title={Esempio di context header applicato a un chunk figlio}]
+\begin{tcolorbox}[boxstyle,title={Esempio di context header applicato a un chunk}]
 \textbf{Context header:} \textit{Corso di Ingegneria del Software -- prof. Mario Rossi -- orari esame a.a. 2025/2026}\\[4pt]
 \textbf{Testo del chunk:} \textit{Modalità d'esame: prova scritta (60\%) + orale (40\%). La prova scritta si svolge in laboratorio...}
 \end{tcolorbox}
 
-\subsection{Strategia di Chunking Parent-Child}
+\subsection{Strategia di Chunking}
 \label{sec:chunking}
 
-La struttura Parent-Child è implementata con i seguenti parametri (Tabella~\ref{tab:chunking}),
-scelti empiricamente per bilanciare precisione semantica dei chunk figli e ricchezza
-contestuale dei chunk padre.
-
-\begin{table}[htbp]
-\centering
-\caption{Parametri di chunking della pipeline di ingestion.}
-\label{tab:chunking}
-\begin{tabular}{lrrl}
-\toprule
-\textbf{Livello} & \textbf{Dim.} & \textbf{Overlap} & \textbf{Storage} \\
-\midrule
-Chunk padre  & 2000 car. & 200 car. & LocalFileStore (disco) \\
-Chunk figlio & 400 car.  & 50 car.  & Chroma (vettore) \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Il \code{ParentDocumentRetriever} di LangChain viene configurato per usare il vector store
-Chroma (chunk figli) per la ricerca per similarità e il \code{LocalFileStore} su disco
-per il recupero dei chunk padre corrispondenti. Il retrieval restituisce quindi il chunk
-padre, più ricco di contesto, come input al modello generativo. Un bug presente nelle
-versioni iniziali --- in cui il retriever puntava esclusivamente al vector store dei chunk
-figli senza mai recuperare i parent dal file store --- è stato corretto nella fase di
-refactoring.
+La strategia di chunking è stata semplificata dopo la migrazione a Qdrant. Non viene più utilizzata una strategia Parent-Child esplicita con storage separati. Invece, i documenti vengono splittati in chunk di 300 caratteri con un overlap di 80 caratteri. Ogni chunk viene indicizzato come un punto separato in Qdrant.
 
 \subsection{Embedding e Indicizzazione}
 
-Per l'embedding viene usato \texttt{intfloat/multilingual-e5-base}, un modello basato su
-architettura E5 addestrato su dati multilingue che supporta nativamente l'italiano.
-Il modello usa prefissi asimmetrici: le query vengono codificate con prefisso
-\texttt{query:}, mentre i documenti usano \texttt{passage:}, come previsto dallo schema di
-addestramento E5. Il modello produce vettori di 1024 dimensioni. La scelta è motivata
-dalla necessità di gestire sia domande in italiano sia documenti prevalentemente in
-italiano con alcuni elementi in inglese.
+Per l'embedding viene usato \texttt{BAAI/bge-m3}, un modello che supporta nativamente l'italiano e fornisce embedding densi (1024 dimensioni), sparsi (pesi lessicali) e ColBERT (multi-vettore).
 
-L'indicizzazione avviene in batch adattativi con un massimo di 4000 chunk figli per
-batch, per evitare problemi di memoria durante l'inserimento in Chroma. La
-\code{similarity\_score\_threshold} è impostata a 0,70 (soglia coseno), con retrieval
-iniziale di $k=20$ candidati.
+L'indicizzazione avviene in batch. Ogni chunk viene processato per generare i tre tipi di vettori, che vengono poi inseriti in un singolo `PointStruct` in Qdrant, sfruttando i `Named Vectors` per `dense` e `colbert`, e `sparse_vector` per `sparse`.
 
 %% ============================================================
 \section{Core RAG Agentico}
@@ -738,26 +700,8 @@ saturava rapidamente la finestra di contesto del modello.
 \subsection{Pipeline di Retrieval}
 \label{sec:retrieval}
 
-La pipeline di retrieval segue uno schema a due stadi comunemente chiamato
-\emph{retrieve and rerank}.
-
-\textbf{Primo stadio --- Bi-encoder.} Il \code{ParentDocumentRetriever} LangChain
-cerca per similarità coseno nel vector store Chroma sui chunk figli, con $k=20$
-candidati iniziali e soglia minima di 0,70. La codifica della query avviene con il
-prefisso \texttt{query:} del modello E5, la codifica dei documenti con prefisso
-\texttt{passage:}.
-
-\textbf{Secondo stadio --- Cross-encoder.} I 20 chunk figli recuperati vengono re-scored
-da un cross-encoder \code{BAAI/bge-reranker-base}, che elabora la coppia
-(query, chunk) in ingresso e produce uno score di rilevanza più preciso rispetto alla
-similarity coseno. I tre chunk con score più alto vengono selezionati. Per ogni chunk
-figlio viene poi recuperato il chunk padre corrispondente dal \code{LocalFileStore},
-fornendo al modello generativo un contesto più ampio (fino a 2000 caratteri).
-
-Il cross-encoder era stato identificato come un collo di bottiglia di latenza ($\approx 20$
-secondi per chiamata) nelle versioni iniziali, a causa del re-caricamento del modello
-ad ogni invocazione. Il problema è stato risolto istanziando il cross-encoder come
-singleton a livello di modulo in \code{src/encoders/reranker.py}.
+La pipeline di retrieval è gestita dalla classe `QdrantRAG`, che esegue una ricerca ibrida in Qdrant.
+La ricerca combina i risultati di tre tipi di vettori (denso, sparso, ColBERT) utilizzando la strategia Reciprocal Rank Fusion (RRF) nativa di Qdrant. Questo approccio permette di bilanciare la pertinenza semantica (vettori densi e ColBERT) con la precisione delle parole chiave (vettori sparsi).
 
 \subsection{Tool dell'Agente}
 \label{sec:tools}
@@ -778,8 +722,8 @@ L'agente dispone di quattro tool LangGraph, descritti nella Tabella~\ref{tab:too
                         automaticamente ``a.a.\ 2025/2026''. Usa il modello lightweight.
                         Deve essere chiamato al massimo una volta prima di ogni \code{retrieve}. \\
 \addlinespace
-\code{retrieve(query)} & Esegue il retrieval bi-encoder + cross-encoder sulla knowledge base
-                         DIEM. Aggiorna \code{retrieved\_context} e \code{last\_docs} nello stato.
+\code{retrieve(query)} & Esegue la ricerca ibrida su Qdrant.
+                         Aggiorna \code{retrieved\_context} e \code{last\_docs} nello stato.
                          Obbligatorio almeno una volta per turno; soggetto a cap
                          \code{MAX\_RETRIEVE\_CALLS=3}. \\
 \addlinespace
@@ -1097,8 +1041,7 @@ del sistema --- un vantaggio concretamente osservato durante le iterazioni di de
 
 Il sistema di context header ha prodotto un miglioramento qualitativo misurabile nella
 precisione del retrieval su frammenti semanticamente ambigui. L'applicazione dell'header
-a ogni chunk figlio tramite \code{ContextHeaderTextSplitter}, anziché al documento
-padre prima dello split, risolve il bug originale in modo architetturalmente corretto.
+a ogni chunk, unita alla ricerca ibrida di Qdrant, risolve il problema in modo architetturalmente corretto.
 
 Lo studio comparativo trafilatura/Crawl4AI ha fornito una lezione metodologica
 importante: i miglioramenti di qualità dell'estrattore a livello di singola pagina non
@@ -1156,7 +1099,7 @@ affidabile delle domande fuori ambito, gestione robusta della conversazione mult
 latenza di retrieval accettabile e fedeltà delle risposte al contesto.
 
 I contributi principali sono una pipeline di ingestion specifica per siti universitari italiani
-con context header su ogni chunk figlio, un'architettura agentica con guardrail a cascata e
+con context header su ogni chunk, un'architettura agentica con guardrail a cascata e
 budget controllato di retrieval, e uno studio empirico comparativo degli estrattori web che
 ha fornito evidenza quantitativa a supporto della scelta architetturale. I risultati della
 smoke run mostrano che il sistema è funzionante, con precision del contesto recuperato

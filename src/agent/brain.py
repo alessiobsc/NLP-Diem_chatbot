@@ -1,40 +1,27 @@
 """
 Core AI Brain module for the DIEM Chatbot.
-
-Module-level symbols (rerank, format_context) are kept so ingestion scripts
-and tester.py continue to import without modification.
 """
 from typing import Any, Dict, List
 
-from langchain_chroma import Chroma
-from langchain_classic.retrievers import ParentDocumentRetriever
-from langchain_classic.storage import LocalFileStore, create_kv_docstore
-from langchain_classic.retrievers.multi_vector import SearchType
 from langchain_core.documents import Document
 from langchain_core.messages import (
     BaseMessage, HumanMessage, AIMessage, AIMessageChunk, ToolMessage,
 )
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
+
 from config import (
-    PARENT_STORE_DIR,
-    CHILD_CHUNK_SIZE,
-    CHILD_CHUNK_OVERLAP,
-    BI_ENCODER_K,
-    RETRIEVER_SCORE_THRESHOLD,
     DEFAULT_SESSION_ID,
-    MAX_RETRIEVE_CALLS,
+    MAX_RETRIEVE_CALLS
 )
 from src.agent.state import DiemState
 from src.agent.nodes import DiemNodes
-from src.agent.utils import extract_text, format_context, rewrite_query
 from src.agent.init_models import build_agent_model, build_lightweight_model
 from src.agent.tools import build_tools
-from src.encoders.reranker import rerank
 from src.middleware import ScopeGuardrail, OffensiveContentGuardrail
-from src.prompts import AGENT_SYSTEM_PROMPT, REJECTION_TAGS
+from src.prompts import REJECTION_TAGS
+from src.rag_hybrid import QdrantRAG
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -89,41 +76,21 @@ def _route_agent(state: DiemState) -> str:
 class DiemBrain(DiemNodes):
     """Agentic RAG system for DIEM using an explicit LangGraph StateGraph."""
 
-    def __init__(self, vectorstore: Chroma) -> None:
+    def __init__(self, qdrant_rag: QdrantRAG) -> None:
         self._last_docs: List[Document] = []
 
         self._agent_model = build_agent_model()
         self._lightweight_model = build_lightweight_model()
-        self._retriever = self._build_retriever(vectorstore)
+        self._qdrant_rag = qdrant_rag
 
-        self._tools = build_tools(self._retriever, self._lightweight_model, self)
-
-        # Bind tools to agent model so it can emit tool_calls in its AIMessage output
+        self._tools = build_tools(self._qdrant_rag, self._lightweight_model, self)
         self._agent_model_with_tools = self._agent_model.bind_tools(self._tools)
 
         self._scope_guardrail = ScopeGuardrail(self._lightweight_model)
         self._offensive_guardrail = OffensiveContentGuardrail()
 
         self._graph = self._build_graph(self._tools, checkpointer=MemorySaver())
-        logger.info("DiemBrain (explicit StateGraph) initialization complete")
-
-    # ── Retriever ─────────────────────────────────────────────────────────────
-
-    def _build_retriever(self, vectorstore: Chroma) -> ParentDocumentRetriever:
-        parent_doc_store = create_kv_docstore(LocalFileStore(str(PARENT_STORE_DIR)))
-        child_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=CHILD_CHUNK_SIZE,
-            chunk_overlap=CHILD_CHUNK_OVERLAP,
-        )
-        return ParentDocumentRetriever(
-            vectorstore=vectorstore,
-            docstore=parent_doc_store,
-            child_splitter=child_splitter,
-            search_type=SearchType.similarity_score_threshold,
-            search_kwargs={"k": BI_ENCODER_K, "score_threshold": RETRIEVER_SCORE_THRESHOLD},
-        )
-
-    # ── Graph construction ────────────────────────────────────────────────────
+        logger.info("DiemBrain (Qdrant RAG) initialization complete")
 
     def _make_tools_node(self, tools: list):
         """Wrap ToolNode to also update tool_call_count and retrieved_context in state.

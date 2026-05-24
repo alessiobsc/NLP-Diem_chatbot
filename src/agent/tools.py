@@ -14,14 +14,11 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedState
 
-from config import CROSS_ENCODER_K
 from src.utils.logger import get_logger
-
 
 logger = get_logger(__name__)
 
-
-def build_tools(retriever, generation_model, brain_ref) -> list:
+def build_tools(hybrid_rag, generation_model, brain_ref) -> list:
     """Build the 4 RAG tools. brain_ref._last_docs is updated by retrieve()."""
 
     @tool
@@ -35,7 +32,7 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
           specify an academic year → the rewrite appends 'anno accademico 2025/2026'
         Returns the rewritten query as a string. After calling this tool you MUST immediately
         call retrieve() with the returned string as the query — do not modify it, do not generate an answer first."""
-        from src.agent.brain import extract_text
+        from src.agent.utils import extract_text
         from src.prompts import REWRITE_PROMPT, REJECTION_TAGS
         from src.middleware import _SCOPE_REJECTION, _OFFENSIVE_FALLBACK
 
@@ -76,15 +73,15 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
         If the returned context is empty or off-topic, retry with a rephrased or broader query
         (never retry with the identical query string).
         Returns formatted document excerpts as a string."""
-        from src.agent.brain import rerank, format_context
+        from src.agent.utils import format_context
 
-        docs = retriever.invoke(query)
-        reranked = rerank(query, docs, top_n=CROSS_ENCODER_K) if docs else []
-        # brain_ref._last_docs lets DiemBrain access the latest docs after graph completes
-        brain_ref._last_docs = reranked
-        context = format_context({"docs": reranked, "question": query, "history": []})["context"]
+        # Use QdrantRAG to perform the search and retrieve parent documents
+        parent_docs = hybrid_rag.search_and_retrieve_parents(query, limit=10)
+        
+        brain_ref._last_docs = parent_docs
+        context = format_context({"docs": parent_docs, "question": query, "history": []})["context"]
         logger.info(
-            f"retrieve | query='{query[:80]}' | bi-encoder={len(docs)} | reranked={len(reranked)} "
+            f"retrieve | query='{query[:80]}' | parent_docs_retrieved={len(parent_docs)} "
             f"| context_len={len(context)}"
         )
         return context

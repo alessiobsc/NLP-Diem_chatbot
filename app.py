@@ -1,13 +1,10 @@
-import os
 import sys
-from config import CHROMA_DIR_NAME, COLLECTION_NAME, DEFAULT_SESSION_ID, EMBEDDING_DIMENSION
+from config import DEFAULT_SESSION_ID
 from dotenv import load_dotenv
-from langchain_chroma import Chroma
 import gradio as gr
 
 from src.agent.brain import DiemBrain, STREAM_DEGENERATE_SIGNAL
-from src.encoders.embedding_init import build_embedding_model
-from src.encoders.reranker import _get_local_reranker
+from src.rag_hybrid import QdrantRAG
 from src.utils.logger import get_logger
 
 load_dotenv()
@@ -15,56 +12,32 @@ load_dotenv()
 logger = get_logger(__name__)
 
 
-# Global embedding model instance
-embedding_model = build_embedding_model()
-
-# Preload local reranker at startup to avoid cold download on first query
-from config import RERANKER_PROVIDER
-if RERANKER_PROVIDER == "local":
-    logger.info("Preloading local reranker model...")
-    _get_local_reranker()
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Configuration
 # ─────────────────────────────────────────────────────────────────────────────
-# TODO (Code Refactorer): Use argparse instead of checking sys.argv directly for better CLI handling.
 FORCE_REINDEX = "--reindex" in sys.argv
+# Use in-memory Qdrant by default, unless --reindex is passed which implies persistence
+USE_IN_MEMORY_DB = not FORCE_REINDEX
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Vector store: load existing or build from scratch
 # ─────────────────────────────────────────────────────────────────────────────
-db_file = os.path.join(CHROMA_DIR_NAME, "chroma.sqlite3")
+# Initialize QdrantRAG
+qdrant_rag = QdrantRAG(in_memory=USE_IN_MEMORY_DB)
 
-if FORCE_REINDEX or not os.path.exists(db_file):
-    logger.info("Building Chroma index from scratch or forced reindex...")
+if FORCE_REINDEX:
+    logger.info("Building Qdrant index from scratch (forced reindex)...")
     from main_ingestion import run_full_pipeline
-    run_full_pipeline(embedding_model)
-    vectorstore = Chroma(
-        collection_name=COLLECTION_NAME,
-        embedding_function=embedding_model,
-        persist_directory=CHROMA_DIR_NAME,
-        collection_metadata={"hnsw:space": "cosine", "dimension": EMBEDDING_DIMENSION}
-    )
+    run_full_pipeline(in_memory=False)
 else:
-    logger.info("Loading existing Chroma index...")
-    vectorstore = Chroma(
-        collection_name=COLLECTION_NAME,
-        embedding_function=embedding_model,
-        persist_directory=CHROMA_DIR_NAME,
-        collection_metadata={"hnsw:space": "cosine", "dimension": EMBEDDING_DIMENSION}
-    )
-    try:
-        # TODO (Code Refactorer): Avoid accessing private attribute `_collection` of Chroma. Provide a public method if possible.
-        logger.info(f"  -> {vectorstore._collection.count()} chunks in index")
-    except Exception as e:
-        logger.warning(f"  -> Could not count chunks in index: {e}")
-        logger.info("  -> Index loaded")
+    logger.info("Using in-memory Qdrant instance.")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Brain
 # ─────────────────────────────────────────────────────────────────────────────
 logger.info("Initializing DiemBrain from app.py")
-brain = DiemBrain(vectorstore)
+brain = DiemBrain(qdrant_rag)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Gradio UI

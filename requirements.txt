@@ -7,8 +7,7 @@ langchain-ollama==1.1.0
 langchain-text-splitters==1.1.2
 
 # --- Vector Database ---
-chromadb==1.5.8
-langchain-chroma==1.1.0
+qdrant-client==1.9.2
 
 # --- UI ---
 gradio==6.14.0

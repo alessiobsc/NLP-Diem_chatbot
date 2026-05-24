@@ -2,7 +2,6 @@
 .venv/
 venv/
 __pycache__/
-chroma_diem*/
 *.pyc
 crawled_urls*.json
 crawled_pdfs*.json
@@ -11,7 +10,6 @@ evaluation/results/
 evaluation/crawler_comparison/
 logs/
 .DS_Store
-chroma_diem.backup_header_bad/
 evaluation/results/*
 !evaluation/results/.gitkeep
 tests/*
