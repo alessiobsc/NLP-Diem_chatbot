@@ -390,6 +390,23 @@ def classify_context_header(text: str, url: str, metadata: dict | None = None) -
             return f"{base} - {course_name}"
         return f"{base} - {detail}" if detail else base
 
+    if host == "www.diem.unisa.it" and "/dipartimento/strutture" in path:
+        group_name = title.split("|", 1)[-1].strip() if "|" in title else ""
+        if not group_name:
+            m = re.search(r"Dipartimento\s*\|\s*(.+?)(?:\n|Componenti|Mission|$)", text[:500])
+            if m:
+                group_name = m.group(1).strip()
+        if group_name:
+            name_lower = group_name.lower()
+            if "centro" in name_lower:
+                category = "centro DIEM"
+            elif "aula" in name_lower:
+                category = "aula DIEM"
+            else:
+                category = "laboratorio DIEM"
+            return f"{category} - {group_name}"
+        return "strutture DIEM"
+
     # URL path checks before broad text checks — prevents "laborator in text" false positives
     if "/international/" in path or "/erasmus" in path:
         return "Accordi internazionali DIEM"
