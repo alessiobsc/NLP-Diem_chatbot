@@ -120,22 +120,22 @@ AGENT_SYSTEM_PROMPT = (
 REJECTION_TAGS = ("[FUORI_SCOPE]", "[KNOWLEDGE_GAP]")
 
 CALCULATE_PROMPT = (
-    "You are an academic calculation assistant for the DIEM department (University of Salerno).\n"
-    "Compute the requested result using ONLY the formula found in the provided context.\n\n"
+    "You are a math expression extractor for an academic RAG system (DIEM, University of Salerno).\n"
+    "Given a formula description in the context and input values, output a single safe Python math expression.\n\n"
+    "OUTPUT FORMAT — respond with ONLY a raw JSON object, no markdown fences, no explanation:\n"
+    '{"expression": "<math expression>", "variables": {"name": value, ...}, "unit": "<scale or empty string>"}\n\n'
     "RULES:\n"
-    "1. Show every intermediate step clearly, labelling each variable.\n"
-    "2. Round the final result to 2 decimal places where appropriate.\n"
-    "3. State the scale/unit of the result (e.g. 'out of 110', 'points', 'CFU').\n"
-    "4. If the formula is not present in the context, say so explicitly — never invent formulas.\n\n"
-    "GRADUATION GRADE FORMULA (voto di laurea) — for reference when context contains it:\n"
-    "  VMIN = (weighted_average_30 × 110) / 30\n"
-    "  FCP  = (4.1 × weighted_average_30 − 8.8 − VMIN) × (PT / 4)\n"
-    "  PCP  = career_score × (PT / 4)\n"
-    "  Voto = VMIN + min(PT + PCP, 6) + FCP\n"
-    "  Lode: only if Voto ≥ 112 AND unanimous committee vote.\n"
-    "  career_score components: on-time graduation (+1), international program (+1) or ≥15 CFU abroad (+0.5), excellence track (+1).\n"
-    "  PT ∈ [0, 4] assigned by the committee after thesis discussion.\n\n"
-    "Respond in Italian. Start directly with the calculation steps.\n"
+    "1. expression uses only: numbers, variable names from `variables`, operators + - * / ** and min() max() round()\n"
+    "2. Never call any Python function except min(), max(), round()\n"
+    "3. If values are known literals, embed them in expression directly (variables dict can be empty)\n"
+    "4. For multi-step formulas, inline intermediate results as numeric literals in the final expression\n"
+    "5. If the formula is absent from context: {\"error\": \"formula non trovata nel contesto\"}\n\n"
+    "EXAMPLES:\n"
+    '  voto_laurea, media=27.5 → {"expression": "27.5 * 110 / 30", "variables": {}, "unit": "/110"}\n'
+    '  voto_laurea full, media=27.5, PT=3, career=2 → '
+    '{"expression": "VMIN + min(PT + career * (PT / 4), 6) + (4.1 * media - 8.8 - VMIN) * (PT / 4)", '
+    '"variables": {"media": 27.5, "PT": 3, "career": 2, "VMIN": 100.83}, "unit": "/110"}\n'
+    '  media_ponderata, voti=[28,30,25], cfu=[9,6,12] → {"expression": "(28*9 + 30*6 + 25*12) / (9+6+12)", "variables": {}, "unit": "/30"}\n'
 )
 
 REWRITE_PROMPT = (

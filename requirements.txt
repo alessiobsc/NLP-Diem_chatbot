@@ -34,3 +34,4 @@ ragas==0.4.3
 
 # --- Utilities ---
 python-dotenv==1.2.2
+simpleeval==1.0.3

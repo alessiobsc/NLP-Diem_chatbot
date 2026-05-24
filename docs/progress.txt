@@ -292,8 +292,16 @@ CRONOLOGIA AGGIORNAMENTI
   - Rimosso _node_retrieve (48 righe + import uuid) — era il nodo che
     eseguiva retrieval obbligatorio e iniettava fake AIMessage+ToolMessage
     nel message history per simulare una tool call pregresso.
-  - Aggiunto _node_reset_state (3 righe) — azzera tool_call_count=0,
-    retrieved_context="", last_docs=[] all'inizio di ogni turn.
+  - Aggiunto _node_reset_state — azzera tool_call_count=0, retrieved_context="",
+    last_docs=[] all'inizio di ogni turn. Motivazione critica: senza questo reset,
+    i valori accumulati nel turno precedente (es. tool_call_count=1 dopo una retrieve)
+    persistevano nel DiemState del turno successivo. Conseguenza: il dynamic hint
+    "call retrieve() before answering" NON veniva iniettato perché la condizione
+    tool_call_count==0 era già falsa; l'agent vedeva retrieved_context non vuoto
+    e pensava di avere già il contesto — rispondeva direttamente dal retrieved_context
+    del turno precedente senza fare una nuova retrieve. reset_state garantisce che
+    ogni turn parta da zero: l'agent non può essere "contaminato" dallo stato del
+    turn precedente e non può propagare errori di retrieval attraverso i turni.
   - _route_scope ora punta a "reset_state" invece di "retrieve_node".
   - _node_agent: hint dinamico iniettato nel system prompt quando
     tool_call_count==0 e retrieved_context=="" — forza il modello a

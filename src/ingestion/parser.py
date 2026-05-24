@@ -423,6 +423,8 @@ def _extract_panel_sections(root: Tag) -> list[dict]:
 
         body = _panel_body(panel)
         rows = _extract_panel_body_lines(body)
+        # Strip rows that duplicate the title (happens when _panel_body falls back to the full panel)
+        rows = [r for r in rows if r.lower() != normalized_title]
         if not rows:
             continue
 
