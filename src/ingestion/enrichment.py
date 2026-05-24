@@ -45,12 +45,25 @@ def _use_heuristic_for_url(url: str) -> bool:
     if netloc == "www.diem.unisa.it" and path.rstrip("/") == "/dipartimento/personale":
         return True
 
+    if netloc == "www.diem.unisa.it" and "/dipartimento/strutture" in path:
+        qs = parse_qs(parsed.query)
+        return bool(qs.get("id"))  # specific lab/center page only; listing page → LLM
+
+    if netloc == "www.diem.unisa.it" and "/dipartimento/organi-collegiali" in path:
+        return True
+
     if netloc in _HEURISTIC_ONLY_DOMAINS:
         return True
 
     # corsi.unisa.it HTML pages: metadata title reliably contains course name → heuristic.
-    # PDFs stored under /uploads/ have no course name in URL or title → LLM.
+    # Regolamento PDFs with a known course code → heuristic (deterministic, chunk-stable).
+    # Other /uploads/ PDFs have no course name in URL or title → LLM.
     if netloc == "corsi.unisa.it":
+        if "__regolamenti-cds" in path and "/uploads/" in path:
+            from src.ingestion.header_heuristic import REGOLAMENTO_COURSE_CODES
+            import re as _re
+            filename_code = _re.sub(r"\.\w+$", "", parsed.path.rstrip("/").split("/")[-1]).upper()
+            return filename_code in REGOLAMENTO_COURSE_CODES
         return "/uploads/" not in path
 
     qs = parse_qs(parsed.query)

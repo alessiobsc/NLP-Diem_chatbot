@@ -77,6 +77,24 @@ GENERIC_LOCAL_THEMES = {
 
 _NON_COURSE_SEGS = frozenset({"uploads", "rescue", "public", "assets", "static", "home", "index", "pdf"})
 
+# Deterministic mapping for DIEM/UNISA regolamento PDF codes → course name.
+# Ensures all chunks of the same PDF get an identical, specific header.
+REGOLAMENTO_COURSE_CODES: dict[str, str] = {
+    # Triennali
+    "IE127": "Ingegneria Informatica",
+    "IE128": "Ingegneria dell'Informazione per la Medicina Digitale",
+    # Magistrali
+    "IE227": "Ingegneria Informatica Magistrale",
+    "IE232": "Information Engineering for Digital Medicine",
+    "IE233": "Electrical Engineering for Digital Energy",
+    # Dottorato
+    "88605": "Dottorato in Ingegneria dell'Informazione",
+    # Vecchi codici numerici (ancora presenti in PDF storici)
+    "06127": "Ingegneria Informatica",
+    "06227": "Ingegneria Informatica Magistrale",
+    "06232": "Ingegneria per la Medicina Digitale",
+}
+
 
 # ---------------------------------------------------------------------------
 # Year tag
@@ -344,6 +362,9 @@ def classify_context_header(text: str, url: str, metadata: dict | None = None) -
     # URL-only — "regolamento in combined" too broad (bandi cite regolamento in body text)
     if "__regolamenti-cds" in path:
         base = "Regolamento corso di studio"
+        filename_code = re.sub(r"\.\w+$", "", parsed.path.rstrip("/").split("/")[-1]).upper()
+        if filename_code in REGOLAMENTO_COURSE_CODES:
+            return f"{base} - {REGOLAMENTO_COURSE_CODES[filename_code]}"
         course_name = _course_slug_from_path(path, "__regolamenti-cds") if "corsi.unisa.it" in host else ""
         if course_name:
             return f"{base} - {course_name}"
@@ -408,6 +429,8 @@ def classify_context_header(text: str, url: str, metadata: dict | None = None) -
         return "strutture DIEM"
 
     # URL path checks before broad text checks — prevents "laborator in text" false positives
+    if "/dipartimento/organi-collegiali" in path:
+        return "organi collegiali DIEM"
     if "/international/" in path or "/erasmus" in path:
         return "Accordi internazionali DIEM"
     if "/aree-di-ricerca" in path:

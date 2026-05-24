@@ -1366,3 +1366,85 @@ CRONOLOGIA AGGIORNAMENTI
   SUMMARIZE_HISTORY_PROMPT rimosso da prompts.py.
   Script residui: scripts/test_summarize_history.py, scripts/test_chatbot_from_turn9.py
   (mantenuti come reference per eventuali futuri esperimenti).
+
+2026-05-24 - Debug retrieval, fix prompt rewrite, header strutture, chunk sizes configurabili
+
+  SCRIPT DI DEBUG RETRIEVAL (scripts/debug_retrieval.py)
+  -------------------------------------------------------
+  Nuovo script per diagnosticare perché un documento non viene trovato dalla retrieve.
+  Mostra 4 stage della pipeline:
+    Stage 1 — raw Chroma similarity (top N, nessun threshold)
+    Stage 2 — dopo score_threshold filter
+    Stage 3 — dopo bi-encoder k cap
+    Stage 3b — parent docs risolti via ParentDocumentRetriever
+    Stage 4 — ranking finale cross-encoder con relevance_score
+  Opzioni: --keyword WORD (highlight + summary), --raw-k N, --bi-k N, --cross-k N, --threshold F.
+  Il summary indica esattamente a quale stage cade il documento cercato.
+
+  SCRIPT CHECK URL IN KB (scripts/check_url_in_kb.py)
+  ----------------------------------------------------
+  Script per verificare se una URL (o pattern URL) è indicizzata in Chroma.
+  Scansiona tutti i chunk e filtra per source in Python (evita problemi con
+  operatori Chroma e $ in PowerShell). Mostra source, context_header, preview testo.
+
+  FIX REWRITE_PROMPT — regola 6 (src/prompts.py)
+  -----------------------------------------------
+  Problema: chiedendo "orari di ricevimento del prof X", il tool rewrite()
+  trasformava la query in "Corsi insegnati X" (Rule 6 applicata erroneamente).
+  Causa: la riga "Apply this pattern to ANY professor name; names in the examples
+  are illustrative only, not a closed list." era ambigua — il modello 8b la
+  interpretava come "ogni volta che compare un nome di professore → applica Rule 6".
+  Fix: rimossa la riga. Gli esempi con tre prof diversi (Rossi, Vento, Gragnaniello)
+  già dimostrano la generalità del pattern senza ambiguità.
+
+  KNOWLEDGE BASE STRUCTURE IN AGENT_SYSTEM_PROMPT (src/prompts.py)
+  -----------------------------------------------------------------
+  Aggiunto blocco descrittivo prima di STEP 1:
+  "KNOWLEDGE BASE STRUCTURE: The knowledge base contains pages from diem.unisa.it,
+  professor pages from docenti.unisa.it (personal info, office hours, courses, research),
+  degree program pages from corsi.unisa.it, and course data from easycourse.unisa.it.
+  Exam dates (appelli) and weekly lecture schedules (orario lezioni) are sourced from EasyCourse."
+  Motivazione: il 120b può formulare query retrieve più mirate conoscendo la struttura
+  delle sorgenti (es. "appelli Reti di Calcolatori" vs query generica).
+
+  EXCEPTION ORARIO LEZIONI IN KNOWLEDGE_GAP (src/prompts.py)
+  -----------------------------------------------------------
+  Aggiunta eccezione a rule 3 (KNOWLEDGE GAP) in STEP 2:
+  "Exception: if the query is about lecture schedules (orario lezioni) and nothing is
+  found, do NOT use [KNOWLEDGE_GAP] — instead respond that there are likely no lectures
+  scheduled in this period (exam session, holiday, or end of semester)."
+  Motivazione: EasyCourse lectures vengono crawlati solo per la settimana corrente;
+  durante sessioni d'esame/vacanze non ci sono lezioni → assenza di dati è attesa,
+  non un knowledge gap reale.
+
+  HEADER EURISTICO PER STRUTTURE DIEM (src/ingestion/header_heuristic.py)
+  ------------------------------------------------------------------------
+  Problema: i chunk di diem.unisa.it/dipartimento/strutture?id=X ricevevano
+  header generico "dipartimento DIEM - strutture" per tutti i laboratori/centri/aule,
+  rendendo impossibile distinguerli in retrieval. La root cause: header generato per
+  ogni parent chunk separatamente — il chunk con la strumentazione poteva ricevere
+  un header diverso (e peggiore) rispetto al chunk con i membri.
+  Soluzione: aggiunto caso specifico in classify_context_header per questo pattern URL.
+  Estrae il nome del gruppo dal tag H1 "Dipartimento | <nome>" presente nel testo
+  (fallback se metadata title non disponibile). Tipo determinato dal nome:
+    - "centro" in nome → "centro DIEM - <nome>"
+    - "aula" in nome → "aula DIEM - <nome>"
+    - altrimenti → "laboratorio DIEM - <nome>"
+  Risultato: "laboratorio DIEM - Robotica", "centro DIEM - Centro di Calcolo e
+  Servizi di Rete", "aula DIEM - Aula Infografica", "laboratorio DIEM - Embedded
+  Intelligent Systems". Tutti i chunk della stessa pagina ricevono header identico.
+  Effettivo al prossimo re-index.
+
+  TEST HEURISTIC (scripts/test_heuristic.py)
+  ------------------------------------------
+  Aggiunti 6 casi di test per il nuovo pattern strutture:
+  id=2 (Robotica), id=210 (Laboratorio Didattico Sistemi), id=3 (Centro di Calcolo),
+  id=732 (Aula Infografica), id=212 (Embedded Intelligent Systems), id=99 (no title).
+  Tutti i casi passano con header atteso.
+
+  CHUNK SIZES CONFIGURABILI VIA ENV (config.py)
+  ---------------------------------------------
+  PARENT_CHUNK_SIZE, PARENT_CHUNK_OVERLAP, CHILD_CHUNK_SIZE, CHILD_CHUNK_OVERLAP
+  ora leggono dal .env con fallback ai valori attuali (2000/200/400/50).
+  Permette di testare configurazioni diverse (es. parent 800, child 250)
+  senza modificare il codice. Richiede re-index per essere effettivo.
