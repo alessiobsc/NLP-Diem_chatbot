@@ -517,7 +517,7 @@ sono identificati e scaricati tramite \code{load\_pdfs\_from\_links}.
 
 \subsubsection{Crawling dei profili docenti}
 
-\snote{Problema scoperto durante il crawling ricorsivo: venivano recuperati anche docenti di altri dipartimenti (linkati incidentalmente da pagine DIEM) e mancavano docenti DIEM non linkati da nessuna pagina. La soluzione via \texttt{/dipartimento/personale} come lista canonica garantisce copertura esatta del personale DIEM senza falsi positivi.}
+\snote{Problema scoperto durante il crawling ricorsivo: venivano recuperati anche docenti di altri dipartimenti (linkati incidentalmente da pagine DIEM) e mancavano docenti DIEM non linkati da nessuna pagina. La soluzione via \texttt{/dipartimento/personale} come lista canonica garantisce copertura esatta del personale DIEM senza falsi positivi. L'introduzione della validazione concorrente tramite thread pool ha risolto i successivi colli di bottiglia I/O-bound durante la verifica dei profili.}
 
 La raccolta delle pagine dei docenti ha richiesto una soluzione ad hoc dovuta a una
 particolarità strutturale del portale. Il sito DIEM non linka direttamente le pagine dei
@@ -533,10 +533,12 @@ espressione regolare e viene effettuata una richiesta alla rispettiva pagina di 
 verificare l'esistenza di un link verso \texttt{docenti.unisa.it}. Solo in questo caso viene
 costruito e mantenuto l'URL canonico del docente nella forma
 \texttt{https://docenti.unisa.it/\{matricola\}/home}. I profili privi di pagina dedicata vengono
-scartati. Un ritardo di 0,5 secondi tra le richieste evita il sovraccarico del server.
-Per ciascun docente validato il crawling viene eseguito separatamente con
-\code{max\_depth=2} e \code{base\_url} pari al prefisso specifico del docente, confinando
-la navigazione alla sezione del singolo profilo.
+scartati. Per superare il collo di bottiglia I/O-bound tipico della navigazione sequenziale,
+la fase di validazione è parallelizzata utilizzando un \code{ThreadPoolExecutor} con 10 worker
+concorrenti. Ciascun thread opera in totale sicurezza sfruttando il rate limiter globale e il
+caching del \code{CrawlStateManager}. Per ciascun docente validato il crawling viene poi
+eseguito separatamente con \code{max\_depth=2} e \code{base\_url} pari al prefisso specifico del docente,
+confinando la navigazione alla sezione del singolo profilo.
 
 \subsubsection{Crawling dei corsi}
 
@@ -564,12 +566,14 @@ in inglese o cinese (segmenti \texttt{/en/}, \texttt{/zh/} nell'URL o attributo
 
 \textbf{Rate limiting e caching incrementale.} Il crawler utilizza una
 \code{RateLimitedSession} con strategia Token Bucket (5 richieste/secondo) per rispettare
-i server istituzionali. La sessione è costruita tramite factory \code{create\_resilient\_session()}
-con dependency injection nel \code{CustomRecursiveUrlLoader}, eliminando il monkey-patching
-della libreria \texttt{requests}. Il modulo \code{CrawlStateManager} mantiene un database
-SQLite locale con gli \texttt{ETag} e \texttt{Last-Modified} delle pagine già visitate:
-nelle run successive, una richiesta HTTP~304 Not Modified consente di saltare il
-ri-download dei contenuti invariati, riducendo significativamente il traffico di rete
+i server istituzionali. La sessione è costruita tramite factory \code{create\_resilient\_session()},
+che integra una strategia di \emph{retry} automatica (\code{urllib3.util.retry}) per gestire in
+modo trasparente errori temporanei lato server (status code 429, 50x). Questa sessione resiliente
+è integrata per dependency injection nel \code{CustomRecursiveUrlLoader}, eliminando il
+monkey-patching della libreria \texttt{requests}. Il modulo \code{CrawlStateManager} mantiene
+inoltre un database SQLite locale \emph{thread-safe} con gli \texttt{ETag} e \texttt{Last-Modified}
+delle pagine già visitate: nelle run successive, una richiesta HTTP~304 Not Modified consente di
+saltare il ri-download dei contenuti invariati, riducendo significativamente il traffico di rete
 nelle re-ingestion.
 
 \textbf{Fonti aggiuntive.} La pipeline integra due sorgenti supplementari oltre al crawl HTML/PDF.
