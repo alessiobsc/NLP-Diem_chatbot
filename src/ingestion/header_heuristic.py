@@ -329,9 +329,9 @@ def classify_context_header(text: str, url: str, metadata: dict | None = None) -
 
     if host == "www.diem.unisa.it" and path.rstrip("/") == "/dipartimento/personale":
         return (
-            "personale DIEM - professori ordinari, associati, ricercatori, "
-            "personale tecnico-amministrativo, assegnisti, dottorandi, "
-            "docenti a contratto, professori emeriti"
+            "personale DIEM elenco membri per sezione - ordinari, associati, "
+            "ricercatori, tecnico-amministrativi, assegnisti, dottorandi, "
+            "docenti a contratto, emeriti"
         )
 
     if "__schede-sua" in path:
