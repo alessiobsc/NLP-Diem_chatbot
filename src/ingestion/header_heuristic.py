@@ -413,7 +413,7 @@ def classify_context_header(text: str, url: str, metadata: dict | None = None) -
 
     if host == "www.diem.unisa.it" and "/dipartimento/strutture" in path:
         group_name = title.split("|", 1)[-1].strip() if "|" in title else ""
-        if not group_name:
+        if group_name.lower() in ("strutture", ""):
             m = re.search(r"Dipartimento\s*\|\s*(.+?)(?:\n|Componenti|Mission|$)", text[:500])
             if m:
                 group_name = m.group(1).strip()

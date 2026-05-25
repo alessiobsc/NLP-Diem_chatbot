@@ -105,7 +105,7 @@ BI_ENCODER_K: int = int(os.getenv("BI_ENCODER_K", "15"))
 # CROSS_ENCODER_K: number of documents kept after reranking in the second stage (precision reranking)
 CROSS_ENCODER_K: int = int(os.getenv("CROSS_ENCODER_K", "5"))
 
-RETRIEVER_SCORE_THRESHOLD: float = float(os.getenv("RETRIEVER_SCORE_THRESHOLD", "0.50"))
+RETRIEVER_SCORE_THRESHOLD: float = float(os.getenv("RETRIEVER_SCORE_THRESHOLD", "0.45"))
 
 # Document Splitting Settings (Parent-Child Strategy)
 # Parent Document Settings (Broad context)
