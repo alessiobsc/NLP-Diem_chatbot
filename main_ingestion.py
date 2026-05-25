@@ -361,6 +361,11 @@ def apply_html_metadata_and_filter(raw_html_docs: list) -> list:
 
 
 def run_full_pipeline(embedding_model) -> None:
+    crawl_state_path = "db/crawl_state.db"
+    if os.path.exists(crawl_state_path):
+        os.remove(crawl_state_path)
+        logger.info("Cleared crawl_state.db — full pipeline forces fresh crawl")
+
     raw_html_docs, pdf_docs = crawl_phase()
 
     logger.info(f"Applying HTML extractor + metadata gate to {len(raw_html_docs)} HTML documents...")
