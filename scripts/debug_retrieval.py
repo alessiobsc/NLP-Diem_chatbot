@@ -88,12 +88,12 @@ def main():
     )
     print(f"Chroma loaded — {vectorstore._collection.count()} child chunks\n")
 
-    # ──────────────────────────────────────────────────────────────────────────
+    # --------------------------------------------------------------------------
     # STAGE 1: raw similarity, no threshold, large k
-    # ──────────────────────────────────────────────────────────────────────────
-    print(f"{'─'*70}")
+    # --------------------------------------------------------------------------
+    print(f"{'-'*70}")
     print(f"STAGE 1 — Raw Chroma similarity (top {args.raw_k}, no threshold)")
-    print(f"{'─'*70}")
+    print(f"{'-'*70}")
 
     raw_results = vectorstore.similarity_search_with_relevance_scores(
         args.query, k=args.raw_k
@@ -128,10 +128,10 @@ def main():
         print(f"         src : {src}")
         print(f"         text: {snippet}\n")
 
-    # ──────────────────────────────────────────────────────────────────────────
+    # --------------------------------------------------------------------------
     # STAGE 2: after threshold filter
-    # ──────────────────────────────────────────────────────────────────────────
-    print(f"{'─'*70}")
+    # --------------------------------------------------------------------------
+    print(f"{'-'*70}")
     print(f"STAGE 2 — After threshold={args.threshold}: {len(pass_threshold)} child chunks pass")
     kw_in_stage2 = sum(
         1 for _, doc, _ in pass_threshold
@@ -141,10 +141,10 @@ def main():
         print(f"  Keyword '{args.keyword}' hits in stage 2: {kw_in_stage2}")
     print()
 
-    # ──────────────────────────────────────────────────────────────────────────
+    # --------------------------------------------------------------------------
     # STAGE 3: after bi-encoder k cap
-    # ──────────────────────────────────────────────────────────────────────────
-    print(f"{'─'*70}")
+    # --------------------------------------------------------------------------
+    print(f"{'-'*70}")
     print(f"STAGE 3 — After bi-encoder k={args.bi_k}: {len(pass_bik)} child chunks remain")
     kw_in_stage3 = sum(
         1 for _, doc, _ in pass_bik
@@ -154,10 +154,10 @@ def main():
         print(f"  Keyword '{args.keyword}' hits in stage 3: {kw_in_stage3}")
     print()
 
-    # ──────────────────────────────────────────────────────────────────────────
+    # --------------------------------------------------------------------------
     # STAGE 3b: resolve parents via ParentDocumentRetriever
-    # ──────────────────────────────────────────────────────────────────────────
-    print(f"{'─'*70}")
+    # --------------------------------------------------------------------------
+    print(f"{'-'*70}")
     print("STAGE 3b — Resolving parent docs via ParentDocumentRetriever...")
 
     parent_store = create_kv_docstore(LocalFileStore(str(PARENT_STORE_DIR)))
@@ -186,10 +186,10 @@ def main():
         print(f"  Parent #{i:2d}: {src}{marker}")
     print()
 
-    # ──────────────────────────────────────────────────────────────────────────
+    # --------------------------------------------------------------------------
     # STAGE 4: cross-encoder reranking
-    # ──────────────────────────────────────────────────────────────────────────
-    print(f"{'─'*70}")
+    # --------------------------------------------------------------------------
+    print(f"{'-'*70}")
     print(f"STAGE 4 — Cross-encoder reranking (top {args.cross_k})...")
     if not parent_docs:
         print("  No parent docs to rerank.\n")
@@ -205,9 +205,9 @@ def main():
         print(f"  Rank #{i}: score={score:.4f}  {src}{marker}")
     print()
 
-    # ──────────────────────────────────────────────────────────────────────────
+    # --------------------------------------------------------------------------
     # SUMMARY
-    # ──────────────────────────────────────────────────────────────────────────
+    # --------------------------------------------------------------------------
     if args.keyword:
         kw_in_final = sum(
             1 for d in reranked
@@ -215,7 +215,7 @@ def main():
         )
         print(f"{'='*70}")
         print(f"SUMMARY for keyword '{args.keyword}':")
-        print(f"  Stage 1 (raw {args.raw_k})      : {sum(1 for _, d, _ in raw_results if args.keyword.lower() in d.page_content.lower())} hits")
+        print(f"  Stage 1 (raw {args.raw_k})      : {sum(1 for d, _ in raw_results if args.keyword.lower() in d.page_content.lower())} hits")
         print(f"  Stage 2 (threshold)         : {kw_in_stage2} pass")
         print(f"  Stage 3 (bi-k={args.bi_k:3d})        : {kw_in_stage3} pass")
         print(f"  Stage 3b (parents)          : {kw_in_parents} pass")

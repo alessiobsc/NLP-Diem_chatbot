@@ -428,27 +428,19 @@ def classify_context_header(text: str, url: str, metadata: dict | None = None) -
             return f"{category} - {group_name}"
         return "strutture DIEM"
 
-    # URL path checks before broad text checks — prevents "laborator in text" false positives
+    # URL path checks before broad text checks — prevents false positives
     if "/dipartimento/organi-collegiali" in path:
         return "organi collegiali DIEM"
     if "/international/" in path or "/erasmus" in path:
         return "Accordi internazionali DIEM"
     if "/aree-di-ricerca" in path:
         return "Aree di ricerca DIEM"
-    if "/ricerca/laboratori" in path or "/laboratori/" in path:
-        return "Laboratorio DIEM"
     if "/premi-ricerca" in path:
         return "Premi ricerca DIEM"
     if "/terza-missione" in path:
         return "Terza missione DIEM"
     if "progetti-finanziati" in path:
         return "Progetti finanziati DIEM"
-    if any(term in combined for term in ("avviso", "avvisi", "news", "bando", "seminario", "evento")):
-        return "Avviso DIEM"
-    if any(term in combined for term in ("segreteria", "ufficio", "contatti")):
-        return "Servizi e contatti DIEM"
-    if "didattica" in combined:
-        return "Didattica DIEM"
 
     fallback_title = title or title_from_url(url)
     return f"Pagina DIEM - {fallback_title}" if fallback_title else "Pagina DIEM"
