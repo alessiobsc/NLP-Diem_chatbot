@@ -72,6 +72,7 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
         """Search the DIEM knowledge base and return relevant document excerpts.
         ALWAYS call this before generating any answer — context is mandatory.
         If rewrite() was called, pass its output EXACTLY as the query.
+        If rewrite() was NOT called, pass the user's original question verbatim — do NOT convert to a keyword list.
         If the returned context is empty or off-topic, retry with a rephrased or broader query
         (never retry with the identical query string).
         Returns formatted document excerpts as a string."""
