@@ -5,6 +5,7 @@ Handles the splitting and vectorization of documents using a Parent-Child strate
 
 import os
 import time
+from collections import defaultdict
 from typing import Iterable, List, Optional
 
 from langchain_chroma import Chroma
@@ -155,34 +156,74 @@ class DocumentIndexer:
     @staticmethod
     def _add_context_headers_to_parent_documents(docs: List[Document]) -> tuple[int, int]:
         """
-        Generate parent-specific context headers and store them only in metadata.
+        Generate context headers per source URL (one LLM call per URL for docs with
+        fewer than LARGE_DOC_THRESHOLD parent chunks). Large docs keep per-chunk headers
+        since their chunks cover semantically distinct sections.
         """
-        generated = 0
-        missing = 0
+        LARGE_DOC_THRESHOLD = 10
+
+        # Group doc indices by source URL, preserving order
+        url_to_indices: dict[str, list[int]] = defaultdict(list)
+        for i, doc in enumerate(docs):
+            url_to_indices[doc.metadata.get("source", "")].append(i)
+
+        large_doc_sources: set[str] = set()
+        url_header_cache: dict[str, str] = {}  # source → header for small docs
+
+        n_small = sum(1 for idxs in url_to_indices.values() if len(idxs) < LARGE_DOC_THRESHOLD)
+        n_large = len(url_to_indices) - n_small
         total = len(docs)
         start_time = time.time()
 
         logger.info("=" * 60)
         logger.info("PHASE 2B - Generating parent context headers")
+        logger.info(f"  {n_small} URLs -> per-URL header | {n_large} URLs -> per-chunk (large doc)")
         logger.info("=" * 60)
 
-        for index, doc in enumerate(docs, 1):
-            previous_header = _get_context_header(doc)
-            if previous_header:
-                doc.page_content = _strip_context_header(doc.page_content, previous_header)
-
-            source = doc.metadata.get("source", "")
-            title = str(doc.metadata.get("title", ""))[:120]
-            parent_chars = len(doc.page_content or "")
-            logger.debug(
-                "Header generation parent start: "
-                f"{index}/{total}; chars={parent_chars}; source={source}; title={title}"
-            )
+        # Pass 1: generate one header per small-doc URL using first chunk
+        n_urls = len(url_to_indices)
+        for url_idx, (source, indices) in enumerate(url_to_indices.items(), 1):
+            if len(indices) >= LARGE_DOC_THRESHOLD:
+                large_doc_sources.add(source)
+                continue
+            first_doc = docs[indices[0]]
+            text = first_doc.page_content
+            prev = _get_context_header(first_doc)
+            if prev:
+                text = _strip_context_header(text, prev)
             try:
-                header = generate_context_header(doc.page_content, source, doc.metadata)
+                header = generate_context_header(text, source, first_doc.metadata)
             except Exception as e:
-                logger.warning(f"Could not generate context header for parent from {source}: {e}")
+                logger.warning(f"Could not generate context header for {source}: {e}")
                 header = ""
+            url_header_cache[source] = header
+
+            if url_idx % 50 == 0 or url_idx == n_urls:
+                elapsed_mins = (time.time() - start_time) / 60
+                logger.info(
+                    f"  -> URL header pass: {url_idx}/{n_urls} URLs; "
+                    f"elapsed={elapsed_mins:.1f} min; last={source}"
+                )
+
+        # Pass 2: strip old headers and assign to all docs
+        generated = 0
+        missing = 0
+        for index, doc in enumerate(docs, 1):
+            source = doc.metadata.get("source", "")
+            prev = _get_context_header(doc)
+            if prev:
+                doc.page_content = _strip_context_header(doc.page_content, prev)
+
+            if source in large_doc_sources:
+                # Per-chunk for large docs
+                logger.debug(f"Header (per-chunk): {index}/{total}; source={source}")
+                try:
+                    header = generate_context_header(doc.page_content, source, doc.metadata)
+                except Exception as e:
+                    logger.warning(f"Could not generate context header for parent from {source}: {e}")
+                    header = ""
+            else:
+                header = url_header_cache.get(source, "")
 
             if header:
                 doc.metadata["context_header"] = header
@@ -194,10 +235,10 @@ class DocumentIndexer:
             if index % 25 == 0 or index == total:
                 elapsed_mins = (time.time() - start_time) / 60
                 logger.info(
-                    "  -> Header generation progress: "
-                    f"{index}/{total} parents "
-                    f"({index / total:.1%}); generated={generated}; missing={missing}; "
-                    f"elapsed={elapsed_mins:.1f} min; last_source={source}"
+                    "  -> Header assign progress: "
+                    f"{index}/{total} ({index / total:.1%}); "
+                    f"generated={generated}; missing={missing}; "
+                    f"elapsed={elapsed_mins:.1f} min; last={source}"
                 )
 
         return generated, missing

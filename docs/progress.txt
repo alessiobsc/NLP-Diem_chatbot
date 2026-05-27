@@ -1448,3 +1448,85 @@ CRONOLOGIA AGGIORNAMENTI
   ora leggono dal .env con fallback ai valori attuali (2000/200/400/50).
   Permette di testare configurazioni diverse (es. parent 800, child 250)
   senza modificare il codice. Richiede re-index per essere effettivo.
+
+2026-05-26 - Fix heuristic corsi.unisa.it + per-URL header grouping in database.py
+
+  FIX ABC: CLASSIFY_CONTEXT_HEADER PER CORSI.UNISA.IT (src/ingestion/header_heuristic.py)
+  -----------------------------------------------------------------------------------------
+  Problema: 88/189 pagine HTML di corsi.unisa.it venivano classificate come
+  "Scheda insegnamento" invece di "Pagina corso di studio - <nome corso>".
+  Due condizioni nella funzione classify_context_header causavano falsi positivi:
+
+  Fix A: rimossa condizione `re.search(r"/\d{10,}/", path)`.
+    I codici numerici nell'URL (es. /0650107302900001/) sono codici identificativi
+    dei corsi, non ID di schede insegnamento. La regex matchava ogni corso con
+    codice numerico lungo nell'URL.
+
+  Fix B: la condizione `"insegnament" in combined` usava `combined = url + title + text`,
+    quindi ogni pagina che contenesse la parola "insegnamenti" nel corpo del testo
+    (es. "Strutture Didattiche — Aule dedicate agli insegnamenti") veniva classificata
+    come scheda insegnamento. Fix: controllo spostato su `path` only.
+
+  Fix C: il path `/insegnamenti` come segmento terminale indica la pagina di listing
+    degli insegnamenti del corso (non una singola scheda). Aggiunta esclusione esplicita
+    per path.rstrip("/").endswith(("/insegnamenti", "/insegnamento")).
+
+  Risultato: 88/88 URL erroneamente classificati corretti, 0 regressioni su 101 URL
+  già corretti. Test eseguito con scripts/test_all_domain_headers.py.
+
+  ANALISI LLM VS HEURISTIC PER CORSI HTML (src/ingestion/enrichment.py)
+  -----------------------------------------------------------------------
+  Prima dei fix, si e' valutato se usare l'LLM (OpenRouter) per i corsi HTML
+  al posto dell'euristico, poiche' l'euristico produceva output errati.
+  Test reale su campioni (scripts/test_real_pipeline_headers.py):
+    - LLM su pagina strutture-didattiche → "scheda insegnamento - strutture
+      didattiche ingegneria informatica" (classificazione errata).
+    - Euristico con Fix ABC su stessa pagina → "Pagina corso di studio - Ingegneria
+      Informatica [AY 2025/2026]" (corretto).
+  Decisione: mantenere heuristic per corsi HTML (routing invariato in enrichment.py).
+  Il routing per corsi.unisa.it rimane:
+    - HTML (path senza /uploads/): heuristic
+    - PDF regolamento con codice noto: heuristic
+    - Altri PDF (/uploads/): LLM
+
+  PER-URL HEADER GROUPING (src/ingestion/database.py)
+  ----------------------------------------------------
+  Problema: _add_context_headers_to_parent_documents generava un header per ogni
+  parent chunk separatamente. Con ~9200 parent doc da ~2400 URL, questo causava:
+    - Costo: ~9200 chiamate LLM invece di ~2400.
+    - Inconsistenza: chunk diversi della stessa URL potevano ricevere header diversi
+      (la prima call usa il testo del primo chunk, le successive usano chunk con
+      contenuto parziale diverso → output LLM non deterministico).
+
+  Soluzione: due-pass con soglia LARGE_DOC_THRESHOLD=10.
+
+  Pass 1 — per ogni source URL con < 10 parent chunk: una sola chiamata
+  generate_context_header sul testo del primo chunk. Risultato salvato in
+  url_header_cache[source]. URL con >= 10 chunk aggiunti a large_doc_sources.
+
+  Pass 2 — per ogni doc: strip dell'eventuale vecchio header da metadata,
+  poi assegnazione. URL in large_doc_sources → header per-chunk (chiamata
+  separata, perche' chunks di PDF grandi coprono sezioni semanticamente distinte).
+  URL piccoli → header da url_header_cache (uguale per tutti i chunk).
+
+  Impatto stimato: ~9200 → ~2400 chiamate LLM al prossimo full re-index.
+  Beneficio aggiuntivo: header consistente su tutti i chunk della stessa URL.
+
+  Import aggiunto: `from collections import defaultdict` in database.py.
+
+  UNIT TEST GROUPING LOGIC (scripts/_tmp_test_per_url_grouping.py)
+  -----------------------------------------------------------------
+  5 scenari testati con mock di generate_context_header:
+    1. 2 URL small (2 chunk ciascuno) → 1 chiamata per URL, header identico su entrambi i chunk.
+    2. 1 URL large (12 chunk) → 12 chiamate per-chunk.
+    3. Mix 2 small + 1 large → chiamate attese corrette per ogni URL.
+    4. Strip vecchio header da metadata → vecchio valore "OLD_HEADER" sostituito.
+    5. URL con 1 solo chunk → 1 chiamata.
+  Tutti i check passati.
+
+  NUOVO SCRIPT: scripts/test_real_pipeline_headers.py
+  ----------------------------------------------------
+  Campiona N doc per categoria URL dal parent store locale e confronta
+  l'header stored nel DB con l'output del pipeline generate_context_header attuale
+  (LLM reale incluso). Utile per validare modifiche a heuristic/routing senza
+  re-index. Opzione: --n N (default 3 campioni per categoria).

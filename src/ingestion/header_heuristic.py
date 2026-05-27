@@ -391,7 +391,13 @@ def classify_context_header(text: str, url: str, metadata: dict | None = None) -
         return f"{cat} - {label}" if label else cat
 
     if "corsi.unisa.it" in host:
-        if "insegnament" in combined or re.search(r"/\d{10,}/", path):
+        # Fix A: numeric path segments are course codes, not insegnamento IDs
+        # Fix B: check path only, not full page text (avoids false positives from body)
+        # Fix C: /insegnamenti as terminal segment = listing page, not single scheda
+        _insegnament_in_path = "insegnament" in path
+        if _insegnament_in_path and path.rstrip("/").endswith(("/insegnamenti", "/insegnamento")):
+            _insegnament_in_path = False
+        if _insegnament_in_path:
             return "Scheda insegnamento"
         # Prefer metadata title; discard if it's a generic doc-type label
         course_name = title.split("|", 1)[0].strip() if title else ""

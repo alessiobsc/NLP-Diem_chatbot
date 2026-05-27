@@ -6,6 +6,7 @@ chroma_diem*/
 *.pyc
 crawled_urls.json
 crawled_pdfs.json
+easycourse_docs.json
 evaluation/cache/
 evaluation/results/
 evaluation/crawler_comparison/
@@ -22,3 +23,4 @@ report_scheletro.pdf
 Project Assignment.pdf
 study.txt
 db/crawl_state.db
+report_latex/outputs/*

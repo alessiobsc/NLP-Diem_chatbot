@@ -99,7 +99,15 @@ demo = gr.ChatInterface(
         "Qual è il programma del corso di Ingegneria del Software?",
         "Quali sono gli orari di ricevimento del professore Capuano?"
     ],
-    chatbot=gr.Chatbot(height=500),
+    chatbot=gr.Chatbot(
+        height=500,
+        latex_delimiters=[
+            {"left": "$$", "right": "$$", "display": True},
+            {"left": "$", "right": "$", "display": False},
+            {"left": "\\(", "right": "\\)", "display": False},
+            {"left": "\\[", "right": "\\]", "display": True},
+        ],
+    ),
 )
 
 if __name__ == "__main__":

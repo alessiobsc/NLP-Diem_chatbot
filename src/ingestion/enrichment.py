@@ -55,7 +55,7 @@ def _use_heuristic_for_url(url: str) -> bool:
     if netloc in _HEURISTIC_ONLY_DOMAINS:
         return True
 
-    # corsi.unisa.it HTML pages: metadata title reliably contains course name → heuristic.
+    # corsi.unisa.it HTML pages: heuristic handles correctly after Fix ABC in header_heuristic.py.
     # Regolamento PDFs with a known course code → heuristic (deterministic, chunk-stable).
     # Other /uploads/ PDFs have no course name in URL or title → LLM.
     if netloc == "corsi.unisa.it":
@@ -82,11 +82,15 @@ def generate_context_header(text: str, url: str, metadata: dict | None = None) -
     source_page = str((metadata or {}).get("source_page", ""))
     cache_key = (url, title, source_page, text[:500])
     if cache_key in _HEADER_CACHE:
-        return _HEADER_CACHE[cache_key]
+        header, source_type = _HEADER_CACHE[cache_key]
+        if metadata is not None:
+            metadata["header_source"] = source_type
+        return header
 
     header_context = build_header_context(text, url, metadata)
     prompt = CONTEXT_HEADER_PROMPT.format(text=header_context, url=url)
     header = ""
+    source_type = "heuristic_fallback"
 
     # Hybrid: use heuristic when URL/title already contain reliable signals
     if _use_heuristic_for_url(url):
@@ -95,7 +99,10 @@ def generate_context_header(text: str, url: str, metadata: dict | None = None) -
         if year_tag:
             header = f"{header} {year_tag}"
         header = ensure_context_prefix(header)
-        _HEADER_CACHE[cache_key] = header
+        source_type = "heuristic"
+        _HEADER_CACHE[cache_key] = (header, source_type)
+        if metadata is not None:
+            metadata["header_source"] = source_type
         return header
 
     if USE_LLM_CONTEXT_HEADERS:
@@ -127,6 +134,7 @@ def generate_context_header(text: str, url: str, metadata: dict | None = None) -
                 response.raise_for_status()
                 raw_header = response.json()["choices"][0]["message"]["content"].strip().splitlines()[0]
                 header = normalize_context_header(raw_header, text, url, metadata)
+                source_type = "llm_openrouter"
                 _OPENROUTER_FAILURES = 0
                 elapsed = time.time() - request_start
                 logger.debug(
@@ -183,6 +191,7 @@ def generate_context_header(text: str, url: str, metadata: dict | None = None) -
                     response.raise_for_status()
                     raw_header = response.json().get("response", "").strip().splitlines()[0]
                     header = normalize_context_header(raw_header, text, url, metadata)
+                    source_type = "llm_ollama"
                     _OLLAMA_FAILURES = 0
                     elapsed = time.time() - request_start
                     logger.debug(
@@ -224,7 +233,9 @@ def generate_context_header(text: str, url: str, metadata: dict | None = None) -
         header = f"{header} {year_tag}"
 
     header = ensure_context_prefix(header)
-    _HEADER_CACHE[cache_key] = header
+    _HEADER_CACHE[cache_key] = (header, source_type)
+    if metadata is not None:
+        metadata["header_source"] = source_type
     return header
 
 
