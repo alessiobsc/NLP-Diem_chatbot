@@ -4,27 +4,22 @@ A simple Streamlit-based viewer for local Chroma DB instances.
 
 ## Usage
 
-1.  **Clone the repository**
-    ```bash
-    git clone <repository_url>
-    ```
-
-2.  **Navigate to the directory**
+1. **Navigate to the directory**
     ```bash
     cd chroma-viewer
     ```
 
-3.  **Install dependencies**
+2. **Install dependencies**
     ```bash
     pip install -r requirements.txt
     ```
 
-4.  **Run the application**
+3. **Run the application**
     ```bash
     streamlit run viewer.py
     ```
 
-5.  **View your data**
+4. **View your data**
     *   This will open a new tab in your browser.
     *   Enter the absolute path to your Chroma DB directory in the input field.
     *   Press Enter. The collections and their documents will be displayed below.
