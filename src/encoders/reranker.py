@@ -8,6 +8,7 @@ Module-level symbols (embedding_model, reranker, rerank, _format_context) are ke
 so ingestion scripts and tester.py continue to import without modification.
 """
 import json
+import re
 from typing import List
 import requests
 from langchain_core.documents import Document
@@ -17,6 +18,36 @@ from src.utils.logger import get_logger
 
 
 logger = get_logger(__name__)
+
+# Matches [AY 2025/2026] or [2021] in context_header
+_YEAR_RE = re.compile(r'\[AY (\d{4})|\[(\d{4})\]')
+
+
+def _extract_year(header: str) -> int | None:
+    m = _YEAR_RE.search(header)
+    if not m:
+        return None
+    return int(m.group(1) or m.group(2))
+
+
+def _apply_recency_boost(docs: List[Document]) -> List[Document]:
+    """Re-sort docs by relevance_score + small recency bonus extracted from context_header.
+
+    Bonus = (year - 2020) * 0.001 → max 0.005 for year 2025.
+    Acts as tiebreaker only; docs without a detectable year get no boost.
+    """
+    for doc in docs:
+        year = _extract_year(doc.metadata.get("context_header", ""))
+        is_pdf = doc.metadata.get("source", "").lower().endswith(".pdf")
+        bonus = max(0.0, (year - 2020) * 0.001) if (year and is_pdf) else 0.0
+        base = doc.metadata.get("relevance_score", 0.0)
+        doc.metadata["relevance_score_boosted"] = round(base + bonus, 6)
+        if bonus > 0:
+            logger.debug(
+                f"Recency boost +{bonus:.4f} (year={year}): "
+                f"{doc.metadata.get('source', '')[-60:]}"
+            )
+    return sorted(docs, key=lambda d: d.metadata["relevance_score_boosted"], reverse=True)
 
 # Load once at module level — avoids 20s reload on every retrieve call
 _local_reranker: CrossEncoder | None = None
@@ -67,6 +98,7 @@ def _rerank_with_openrouter(query: str, documents: List[Document], top_n: int) -
             logger.debug(f"Reranked doc (score={score:.4f}): {doc.metadata.get('source', 'Unknown')}")
             reranked_docs.append(doc)
 
+        reranked_docs = _apply_recency_boost(reranked_docs)
         logger.info(f"Selected top {len(reranked_docs)} documents after OpenRouter reranking")
         return reranked_docs
 
@@ -89,10 +121,13 @@ def _rerank_local(query: str, documents: List[Document], top_n: int) -> List[Doc
     ranked = sorted(zip(documents, scores), key=lambda x: x[1], reverse=True)
 
     out = []
-    for i, (d, s) in enumerate(ranked[:top_n]):
+    for d, s in ranked:
         d.metadata["relevance_score"] = float(s)
-        logger.debug(f"Reranked rank {i+1}: score={s:.4f}, source={d.metadata.get('source', 'Unknown')}")
         out.append(d)
+
+    out = _apply_recency_boost(out)[:top_n]
+    for i, d in enumerate(out):
+        logger.debug(f"Reranked rank {i+1}: score={d.metadata['relevance_score']:.4f} boosted={d.metadata['relevance_score_boosted']:.4f}, source={d.metadata.get('source', 'Unknown')}")
 
     logger.info(f"Selected top {len(out)} documents after local reranking")
     return out

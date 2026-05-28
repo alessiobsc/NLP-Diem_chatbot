@@ -10,12 +10,13 @@ logger = get_logger(__name__)
 
 class OpenRouterEmbeddings:
     """Custom Langchain Embeddings wrapper for OpenRouter API using the official OpenAI client."""
-    def __init__(self, model_name: str, api_key: str):
+    def __init__(self, model_name: str, api_key: str, query_instruction: str = ""):
         self.client = OpenAI(
             base_url="https://openrouter.ai/api/v1",
             api_key=api_key,
         )
         self.model_name = model_name
+        self.query_instruction = query_instruction
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         # Prevent API calls if the Langchain batch is empty
@@ -47,6 +48,11 @@ class OpenRouterEmbeddings:
         # Handle empty query strings safely
         if not text or not text.strip():
             return []
+
+        # Instruction-tuned models (e.g. Qwen3-Embedding) use asymmetric encoding:
+        # queries get an instruction prefix, passages are encoded without prefix.
+        if self.query_instruction:
+            text = f"Instruct: {self.query_instruction}\nQuery: {text}"
 
         try:
             res = self.client.embeddings.create(

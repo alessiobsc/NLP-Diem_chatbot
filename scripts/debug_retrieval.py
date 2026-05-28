@@ -17,11 +17,16 @@ Flags:
   --bi-k     N      bi-encoder k (default: BI_ENCODER_K from config)
   --cross-k  N      cross-encoder top-n (default: CROSS_ENCODER_K from config)
   --threshold F     score threshold (default: RETRIEVER_SCORE_THRESHOLD from config)
+  --show-content    print full content of parent docs in stage 3b and stage 4
 """
 
 import argparse
 import os
 import sys
+
+# Windows cp1252 can't encode some Unicode chars in chunk content
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 # Make sure project root is on path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -69,6 +74,7 @@ def main():
     parser.add_argument("--bi-k", type=int, default=BI_ENCODER_K)
     parser.add_argument("--cross-k", type=int, default=CROSS_ENCODER_K)
     parser.add_argument("--threshold", type=float, default=RETRIEVER_SCORE_THRESHOLD)
+    parser.add_argument("--show-content", action="store_true", help="Print full parent doc content in stage 3b and 4")
     args = parser.parse_args()
 
     print(f"\n{'='*70}")
@@ -181,9 +187,17 @@ def main():
         print(f"  Keyword '{args.keyword}' hits in parents: {kw_in_parents}")
     for i, doc in enumerate(parent_docs, start=1):
         src = doc.metadata.get("source", "?")[-70:]
+        header = doc.metadata.get("context_header", "")
         kw_hit = args.keyword and args.keyword.lower() in doc.page_content.lower()
         marker = "  <<< KEYWORD" if kw_hit else ""
-        print(f"  Parent #{i:2d}: {src}{marker}")
+        print(f"  Parent #{i:2d} [{len(doc.page_content)} chars]: {src}{marker}")
+        if header:
+            print(f"           header: {header}")
+        if args.show_content:
+            print(f"           content:")
+            for line in doc.page_content.splitlines():
+                print(f"             {line}")
+            print()
     print()
 
     # --------------------------------------------------------------------------
@@ -200,9 +214,17 @@ def main():
     for i, doc in enumerate(reranked, start=1):
         score = doc.metadata.get("relevance_score", "?")
         src = doc.metadata.get("source", "?")[-70:]
+        header = doc.metadata.get("context_header", "")
         kw_hit = args.keyword and args.keyword.lower() in doc.page_content.lower()
         marker = "  <<< KEYWORD" if kw_hit else ""
-        print(f"  Rank #{i}: score={score:.4f}  {src}{marker}")
+        print(f"  Rank #{i}: score={score:.4f}  [{len(doc.page_content)} chars]  {src}{marker}")
+        if header:
+            print(f"           header: {header}")
+        if args.show_content:
+            print(f"           content:")
+            for line in doc.page_content.splitlines():
+                print(f"             {line}")
+            print()
     print()
 
     # --------------------------------------------------------------------------

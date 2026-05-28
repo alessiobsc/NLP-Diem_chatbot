@@ -131,12 +131,14 @@ class DocumentIndexer:
         Configures the parent and child document splitters.
         """
         self._parent_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=PARENT_CHUNK_SIZE, 
-            chunk_overlap=PARENT_CHUNK_OVERLAP
+            chunk_size=PARENT_CHUNK_SIZE,
+            chunk_overlap=PARENT_CHUNK_OVERLAP,
+            separators=["\n\n", ".\n", ". ", "\n", " ", ""],
         )
         self._child_splitter = ContextHeaderTextSplitter(
-            chunk_size=CHILD_CHUNK_SIZE, 
-            chunk_overlap=CHILD_CHUNK_OVERLAP
+            chunk_size=CHILD_CHUNK_SIZE,
+            chunk_overlap=CHILD_CHUNK_OVERLAP,
+            separators=["\n\n", ".\n", ". ", "\n", " ", ""],
         )
 
     def _get_collection_count(self) -> Optional[int]:

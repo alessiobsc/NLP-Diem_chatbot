@@ -26,6 +26,7 @@ def main():
     parser.add_argument("url", help="Source URL (exact) or substring with --partial")
     parser.add_argument("--partial", action="store_true", help="Substring match on source URL")
     parser.add_argument("--children-only", action="store_true", help="Skip parent doc lookup")
+    parser.add_argument("--keyword", help="Filter chunks containing this substring (case-insensitive)")
     args = parser.parse_args()
 
     client = chromadb.PersistentClient(path=CHROMA_DIR_NAME)
@@ -34,18 +35,29 @@ def main():
     print(f"\nChroma: {CHROMA_DIR_NAME} / {COLLECTION_NAME} ({total} child chunks)\n")
 
     if args.partial:
-        all_res = col.get(include=["documents", "metadatas"], limit=total)
         ids, docs, metas = [], [], []
-        for i, meta in enumerate(all_res["metadatas"]):
-            if args.url.lower() in meta.get("source", "").lower():
-                ids.append(all_res["ids"][i])
-                docs.append(all_res["documents"][i])
-                metas.append(meta)
+        batch_size = 5000
+        offset = 0
+        while offset < total:
+            batch = col.get(include=["documents", "metadatas"], limit=batch_size, offset=offset)
+            for i, meta in enumerate(batch["metadatas"]):
+                if args.url.lower() in meta.get("source", "").lower():
+                    ids.append(batch["ids"][i])
+                    docs.append(batch["documents"][i])
+                    metas.append(meta)
+            offset += batch_size
     else:
         res = col.get(where={"source": args.url}, include=["documents", "metadatas"])
         ids, docs, metas = res["ids"], res["documents"], res["metadatas"]
 
-    print(f"Child chunks found: {len(ids)}")
+    if args.keyword:
+        kw = args.keyword.lower()
+        filtered = [(i, d, m) for i, d, m in zip(ids, docs, metas) if kw in d.lower()]
+        print(f"Child chunks found: {len(ids)} — keyword '{args.keyword}' matches: {len(filtered)}")
+        ids, docs, metas = zip(*filtered) if filtered else ([], [], [])
+    else:
+        print(f"Child chunks found: {len(ids)}")
+
     if not ids:
         print("  -> URL not in index. Try --partial for substring match.")
         return

@@ -1530,3 +1530,195 @@ CRONOLOGIA AGGIORNAMENTI
   l'header stored nel DB con l'output del pipeline generate_context_header attuale
   (LLM reale incluso). Utile per validare modifiche a heuristic/routing senza
   re-index. Opzione: --n N (default 3 campioni per categoria).
+
+2026-05-27 - Rewrite opt-out, temperatura lightweight, chunk sizes v3, embedding Qwen3
+
+  REWRITE OPT-OUT (src/prompts.py)
+  ---------------------------------
+  Problema osservato: l'agent chiamava rewrite() troppo raramente sulle query
+  accademiche e sui follow-up con pronomi. Per i follow-up con pronome implicito
+  (lui/lei/questo/loro) il modello a volte saltava rewrite() e riformulava da solo
+  la query di retrieve(), introducendo parole non richieste (es. "DIEM") e
+  variabilità stocastica.
+
+  Fix: il comportamento di default su rewrite() è stato invertito da opt-in a opt-out.
+  La sezione STEP 1 del AGENT_SYSTEM_PROMPT ora specifica:
+  - Chiamare rewrite() per DEFAULT su qualsiasi query accademica (docenti, corsi,
+    esami, regolamenti, iscrizione, TOLC, voto di laurea) e su qualsiasi follow-up
+    con pronomi o riferimento implicito.
+  - Saltare rewrite() SOLO per query strutturali/organizzative (sede, contatti,
+    giunta, organi collegiali, laboratori, accordi internazionali) dove l'iniezione
+    dell'anno accademico non è rilevante — e SOLO se la query non contiene pronomi.
+  - In caso di dubbio: chiamare rewrite().
+
+  Rimosse le istruzioni precedenti che lasciavano all'agent la discrezione di
+  saltare rewrite() su "query già chiare" — source principale dell'instabilità.
+
+  Fix REWRITE_PROMPT — esempio TOLC: rimosso "al DIEM" dall'esempio
+  "<output>Posso immatricolarmi con 18 punti al TOLC e 15 punti in matematica?</output>"
+  (precedentemente includeva "al DIEM" che induceva il modello lightweight ad
+  aggiungere "DIEM" in output, poi trasmesso a retrieve() come query artefatta).
+
+  TEMPERATURA 0 PER IL MODELLO LIGHTWEIGHT (src/agent/init_models.py)
+  --------------------------------------------------------------------
+  build_lightweight_model(): temperature cambiata da LLM_TEMPERATURE (0.1) a 0
+  in entrambi i path (OpenRouter e Ollama). Il modello lightweight gestisce solo
+  rewrite() e guardrails — task deterministici dove la temperatura elevata
+  introduceva variabilità nell'output (query riscritta diversamente a parità di
+  input). Il modello agent (120b) mantiene LLM_TEMPERATURE invariata.
+
+  CHUNK SIZES V3 (config.py / .env)
+  -----------------------------------
+  Analisi: estratti con pdfplumber i caratteri delle schede corso e della formula
+  voto dal PDF regolamento IE227.pdf (Ingegneria Informatica Magistrale).
+  - Scheda corso singola: ~3470 chars (titolo + obiettivi + programma + testi).
+  - Formula voto laurea (pag. 10): 3048 chars. Continuazione FC/lode (pag. 11):
+    ~2678 chars (totale ~5726 chars su due pagine).
+
+  Decisione:
+  - PARENT_CHUNK_SIZE: 2000 → 3750 (copre una scheda corso in 1 parent; la
+    formula voto pag. 10 in 1 parent, con la parte FC/lode in overlap/chunk 2).
+  - PARENT_CHUNK_OVERLAP: 200 → 375 (10% del parent size).
+  - CHILD_CHUNK_SIZE: 400 → 600 (chunk figlio più denso semanticamente).
+  - CHILD_CHUNK_OVERLAP: 50 → 80.
+
+  Nuovi separatori aggiunti a entrambi i splitter (parent e child):
+  ".\n" e ". " inseriti prima di "\n" e " " nel parametro `separators` di
+  RecursiveCharacterTextSplitter. Permettono di spezzare su fine frase quando
+  possibile, producendo chunk più coerenti semanticamente.
+
+  Configurazione via .env (già resa configurabile in sessione precedente).
+  Richiede re-index completo → nuova collection chroma_diem_qwen3_v1.
+
+  SWITCHING EMBEDDING: e5-base → QWEN3-EMBEDDING-8B (.env, config.py)
+  -----------------------------------------------------------------------
+  Analisi:
+  - multilingual-e5-base (locale): progettato per retrieval denso, performance
+    MTEB media. Usato con prefissi "query: " / "passage: " (E5HuggingFaceEmbeddings).
+  - BAAI/bge-m3: inizialmente considerato, ma ottimizzato per hybrid search
+    (dense + sparse + ColBERT reranking); in retrieval puramente denso (Chroma
+    usa cosine similarity) non esprime il suo potenziale e può sottoperformare.
+  - qwen/qwen3-embedding-8b: top MTEB leaderboard per retrieval denso, 4096
+    dimensioni, costo ~$0.01/1M token (stima ~$0.06 per la run completa ~6M token).
+    Nessun parametro `dimensions` supportato via OpenRouter (Matryoshka truncation
+    non disponibile API-side) — si usa la dimensione nativa 4096.
+
+  Modifiche .env:
+    EMBEDDING_PROVIDER=openrouter
+    OPENROUTER_EMBEDDING_MODEL=qwen/qwen3-embedding-8b
+    EMBEDDING_DIMENSION=4096
+    CHROMA_DIR_NAME=chroma_diem_qwen3_v1
+    RERANKER_PROVIDER=local
+    LOCAL_RERANKER_MODEL=BAAI/bge-reranker-v2-m3
+
+  OpenRouterEmbeddings invariato: usa encoding_format="float" standard, nessuna
+  modifica al client. EMBEDDING_DIMENSION usato solo per Chroma collection metadata.
+
+  SCRIPT inspect_chroma_url.py (scripts/inspect_chroma_url.py)
+  -------------------------------------------------------------
+  Due fix/aggiunte:
+
+  1. --keyword: nuovo argomento per filtrare i child chunk per parola chiave
+     (case-insensitive substring match sul testo del documento). Applicato dopo
+     il filtro URL. Output: "Child chunks found: N — keyword 'X' matches: M".
+     Utile per diagnosticare se un termine specifico (es. "artificial vision")
+     compare nei chunk indicizzati per una data URL.
+
+  2. Fix paginazione --partial: il codice originale chiamava col.get(limit=total)
+     con total fino a 42712, causando "too many SQL variables" in SQLite (ChromaDB
+     imposta internamente un binding per ID+documento+metadato → overflow a ~5000).
+     Fix: loop paginato con batch_size=5000 e offset incrementale.
+
+  FILE MODIFICATI
+  ---------------
+  src/prompts.py, src/agent/init_models.py, src/ingestion/database.py,
+  src/encoders/embedding_models.py (nessuna modifica sostanziale — cleanup
+  tentativo dimensions rollbackato), .env, scripts/inspect_chroma_url.py
+
+2026-05-28 - Tuning retrieval Qwen3, diagnosi /didattica, decisione revert a e5-base
+
+  INSTRUCTION PREFIX PER QWEN3 (src/encoders/embedding_init.py)
+  --------------------------------------------------------------
+  Aggiunta query_instruction per Qwen3: "Retrieve relevant passages that answer
+  the user's query" passata all'OpenRouterEmbeddings.embed_query(). I documenti
+  restano senza prefix (design asimmetrico nativo di Qwen3).
+  Motivazione: Qwen3-Embedding è un modello instruction-tuned; senza istruzione
+  la query viene encodata come testo puro, senza ottimizzare per il retrieval.
+
+  RECENCY BOOST PER PDF (src/encoders/reranker.py)
+  -------------------------------------------------
+  Aggiunta funzione _apply_recency_boost() nel reranker (dopo cross-encoder):
+  estrae l'anno dal context_header (regex su "[AY YYYY]" o "[YYYY]") e aggiunge
+  bonus = (year - 2020) * 0.001 solo ai documenti PDF. Max +0.005 (anno 2025).
+  Applicato come tiebreaker post-reranking; documenti senza anno rilevabile o
+  non-PDF ricevono bonus 0. Non influisce sul bi-encoder né sul threshold.
+
+  SCRIPT calibrate_threshold.py (scripts/calibrate_threshold.py)
+  ---------------------------------------------------------------
+  Nuovo script per calibrare RETRIEVER_SCORE_THRESHOLD sul golden set.
+  Interroga Chroma senza threshold (k configurable, default 20) su tutte le
+  query in/out-scope. Stampa distribuzioni percentili + istogramma ASCII.
+  Con --output salva JSON (dati raw) + Markdown (tabelle per il report).
+  Risultato con Qwen3: tutte le query in-scope hanno score ≥ 0.6263 →
+  threshold impostato a 0.62 in .env.
+  Nota: le query out-of-scope sono gestite dallo scope guardrail prima del
+  retriever → la distribuzione out-of-scope non è rilevante per il threshold.
+
+  SEMPLIFICAZIONE REWRITE_PROMPT (src/prompts.py)
+  ------------------------------------------------
+  Rimossi 3 regole controproducenti con i nuovi chunk/embedding:
+  - Rule 6 (TEACHER COURSES INTENT): produceva format "Corsi insegnati
+    GivenName SURNAME" con keyword stuffing + codici corso.
+  - Rule 7 (GRADUATION GRADE INTENT): aggiungeva "LM-32 IE227 voto di
+    immatricolazione" alla query, confondendo il retriever.
+  - Rule 8 (YEAR INJECTION): aggiungeva "anno accademico 2025/2026"
+    anche a query dove non era rilevante (es. orari di ricevimento).
+  REWRITE_PROMPT ridotto da 8 a 5 regole. Rimosse le istruzioni che
+  causavano l'agent a ri-chiamare rewrite() sulle retry di retrieve()
+  con la stessa query riscritta.
+
+  REMOVE VERBATIM CONSTRAINT IN RETRIEVE (src/prompts.py)
+  --------------------------------------------------------
+  Rimossa istruzione "FIRST retrieve() call: pass user message VERBATIM"
+  da AGENT_SYSTEM_PROMPT. Causava l'agent a ripetere la stessa query su
+  tutti i retry invece di riformularla.
+
+  DIAGNOSI FALLIMENTO RETRIEVAL /didattica (scripts/debug_retrieval.py)
+  ----------------------------------------------------------------------
+  Indagine su perché le pagine docenti.unisa.it/*/didattica non venivano
+  trovate nonostante presenti in Chroma con context_header corretto.
+  Risultato: chunk /didattica al rank 210 con score 0.5880 (sotto threshold 0.62).
+  Root cause: modello Qwen3 asimmetrico (query con instruction, documenti senza).
+  Il chunk /didattica contiene header italiano ("Corsi insegnati - Nicola CAPUANO",
+  ~50 chars) + nomi corsi in inglese + codici (~400 chars). L'embedding viene
+  dominato dal contenuto inglese strutturato, lontano nello spazio vettoriale
+  dalla query italiana. Pagine con prosa italiana (es. curriculum) rankkano
+  più in alto per lo stesso professore.
+  Test: embedding solo header → score 0.7840 (ottimo). Embedding chunk completo
+  → 0.5880. Il fix architetturale (embed solo header per child chunk) richiederebbe
+  re-index completo.
+
+  INDAGINE INSTRUCTION QWEN3
+  --------------------------
+  Testato cambio instruction: "Italian passages" rimosso → migliora /didattica
+  da 0.5880 a ~0.62-0.64. Non sufficiente: il bi-encoder k=15 richiede score
+  ≥ 0.64 circa per garantire l'inclusione nel top-15. Varianti testate:
+  "neutral/no Italian", "domain-aware with EN+IT mention" → migliorano ma non
+  risolvono completamente. Limite intrinseco: document embeddings già salvati
+  senza instruction, impossibile modificarli senza re-index.
+
+  FIX debug_retrieval.py (scripts/debug_retrieval.py)
+  ----------------------------------------------------
+  Fix UnicodeEncodeError su Windows (cp1252): aggiunto
+  sys.stdout.reconfigure(encoding="utf-8", errors="replace") all'avvio.
+
+  DECISIONE: REVERT A E5-BASE
+  ---------------------------
+  e5-base (intfloat/multilingual-e5-base) usa encoding simmetrico (query:/ passage:)
+  → matching lessicale diretto tra query e context header → trovava /didattica
+  correttamente. Con i nuovi chunk sizes (parent 3750/375, child 600/80):
+  - formula voto completa entra in un singolo parent (era frammentata con 2000 chars)
+  - pagine /didattica ritrovabili via matching lessicale sull'header
+  Re-index avviato con EMBEDDING_PROVIDER=local, LOCAL_EMBEDDING_MODEL=
+  intfloat/multilingual-e5-base, EMBEDDING_DIMENSION=768.
+  Threshold da ri-calibrare con calibrate_threshold.py post re-index.

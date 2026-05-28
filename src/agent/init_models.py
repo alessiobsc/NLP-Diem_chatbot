@@ -23,13 +23,13 @@ def build_lightweight_model():
                 base_url="https://openrouter.ai/api/v1",
                 api_key=OPENROUTER_API_KEY,
                 model=OPENROUTER_LIGHTWEIGHT_MODEL,
-                temperature=LLM_TEMPERATURE,
+                temperature=0,
                 timeout=30,
             )
         except Exception as e:
             logger.warning(f"OpenRouter lightweight init failed ({e}), falling back to Ollama")
     logger.info(f"Lightweight model fallback: Ollama {OLLAMA_CHAT_MODEL}")
-    return ChatOllama(model=OLLAMA_CHAT_MODEL, temperature=LLM_TEMPERATURE)
+    return ChatOllama(model=OLLAMA_CHAT_MODEL, temperature=0)
 
 
 def build_agent_model():
