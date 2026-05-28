@@ -70,9 +70,16 @@ def view_collections(dir):
                 "Metadata": metadatas
             })
 
-            # Streamlit displays dataframes efficiently, but sending >200MB at once will crash it.
-            # Without embeddings, the dataframe size is drastically reduced.
-            st.dataframe(df, use_container_width=True)
+            # Add a search bar for the 'Source' column
+            search_term = st.text_input(f"Search by Source in '{collection.name}'", key=f"search_{collection.name}")
+
+            if search_term:
+                # Filter the DataFrame based on the search term (case-insensitive)
+                filtered_df = df[df["Source"].str.contains(search_term, case=False, na=False)]
+                st.dataframe(filtered_df, use_container_width=True)
+            else:
+                # If the search bar is empty, show the full dataframe
+                st.dataframe(df, use_container_width=True)
 
         except Exception as e:
             st.error(f"Failed to retrieve data for collection '{collection.name}': {e}")
