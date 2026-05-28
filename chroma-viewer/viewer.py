@@ -1,5 +1,4 @@
 import chromadb
-from chromadb.config import Settings
 import pandas as pd
 import streamlit as st
 import os
@@ -49,7 +48,6 @@ def view_collections(dir):
                 include=["metadatas", "documents"]
             )
 
-            # Estrai i dati, gestendo il caso in cui ChromaDB restituisca None
             documents = data.get("documents")
             documents = documents if documents is not None else [None] * len(data.get("ids", []))
 
@@ -76,10 +74,10 @@ def view_collections(dir):
             if search_term:
                 # Filter the DataFrame based on the search term (case-insensitive)
                 filtered_df = df[df["Source"].str.contains(search_term, case=False, na=False)]
-                st.dataframe(filtered_df, use_container_width=True)
+                st.dataframe(filtered_df, width='stretch')
             else:
                 # If the search bar is empty, show the full dataframe
-                st.dataframe(df, use_container_width=True)
+                st.dataframe(df, width='stretch')
 
         except Exception as e:
             st.error(f"Failed to retrieve data for collection '{collection.name}': {e}")
