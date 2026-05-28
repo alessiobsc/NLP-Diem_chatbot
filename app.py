@@ -4,7 +4,7 @@ from config import CHROMA_DIR_NAME, COLLECTION_NAME, DEFAULT_SESSION_ID, EMBEDDI
 from dotenv import load_dotenv
 from langchain_chroma import Chroma
 import gradio as gr
-
+import chromadb
 from src.agent.brain import DiemBrain, STREAM_DEGENERATE_SIGNAL
 from src.encoders.embedding_init import build_embedding_model
 from src.utils.logger import get_logger
@@ -20,7 +20,6 @@ embedding_model = build_embedding_model()
 # ─────────────────────────────────────────────────────────────────────────────
 # Configuration
 # ─────────────────────────────────────────────────────────────────────────────
-# TODO (Code Refactorer): Use argparse instead of checking sys.argv directly for better CLI handling.
 FORCE_REINDEX = "--reindex" in sys.argv
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -43,10 +42,12 @@ vectorstore = Chroma(
 )
 
 try:
-    logger.info(f"  -> {vectorstore._collection.count()} chunks in index")
+    client = chromadb.PersistentClient(path=CHROMA_DIR_NAME)
+    collection = client.get_collection(name=COLLECTION_NAME)
+    count = collection.count()
+    logger.info(f"  -> Collection '{COLLECTION_NAME}' loaded: {count} chunks in index. Metadata: {collection.metadata}")
 except Exception as e:
     logger.warning(f"  -> Could not count chunks in index: {e}")
-    logger.info("  -> Index loaded")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Brain
