@@ -47,7 +47,7 @@ def _use_heuristic_for_url(url: str) -> bool:
 
     if netloc == "www.diem.unisa.it" and "/dipartimento/strutture" in path:
         qs = parse_qs(parsed.query)
-        return bool(qs.get("id"))  # specific lab/center page only; listing page → LLM
+        return path.rstrip("/") == "/dipartimento/strutture" or bool(qs.get("id"))
 
     if netloc == "www.diem.unisa.it" and "/dipartimento/organi-collegiali" in path:
         return True

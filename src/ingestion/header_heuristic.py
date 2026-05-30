@@ -418,6 +418,10 @@ def classify_context_header(text: str, url: str, metadata: dict | None = None) -
         return f"{base} - {detail}" if detail else base
 
     if host == "www.diem.unisa.it" and "/dipartimento/strutture" in path:
+        qs = parse_qs(parsed.query)
+        if path.rstrip("/") == "/dipartimento/strutture" and not qs.get("id"):
+            return "strutture DIEM - elenco laboratori, laboratori didattici e centri di servizio"
+
         group_name = title.split("|", 1)[-1].strip() if "|" in title else ""
         if group_name.lower() in ("strutture", ""):
             m = re.search(r"Dipartimento\s*\|\s*(.+?)(?:\n|Componenti|Mission|$)", text[:500])

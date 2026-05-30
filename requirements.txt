@@ -12,7 +12,9 @@ langchain-chroma==1.1.0
 
 # --- UI ---
 gradio==6.14.0
-langgraph-cli[inmem]
+langgraph-cli[inmem]==0.4.27
+langgraph-api==0.9.0
+opentelemetry-exporter-otlp-proto-grpc==1.42.1
 
 # --- Document Processing ---
 pdfplumber==0.11.9
