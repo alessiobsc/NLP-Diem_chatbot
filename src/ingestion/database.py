@@ -3,6 +3,7 @@ Database indexing module for the DIEM Chatbot.
 Handles the splitting and vectorization of documents using a Parent-Child strategy.
 """
 
+import hashlib
 import os
 import time
 from collections import defaultdict
@@ -245,6 +246,25 @@ class DocumentIndexer:
 
         return generated, missing
 
+    @staticmethod
+    def _assign_chunk_indices(parent_docs: List[Document]) -> None:
+        """Assign chunk_index, chunk_total, chunk_id to each parent in source order.
+
+        chunk_id is a deterministic 16-char hex derived from (source, chunk_index),
+        used as the docstore key so adjacent chunks can be fetched at retrieval time.
+        """
+        by_source: dict[str, list[int]] = defaultdict(list)
+        for i, doc in enumerate(parent_docs):
+            by_source[doc.metadata.get("source", "")].append(i)
+
+        for source, indices in by_source.items():
+            total = len(indices)
+            for seq, idx in enumerate(indices):
+                chunk_id = hashlib.md5(f"{source}:{seq}".encode()).hexdigest()[:16]
+                parent_docs[idx].metadata["chunk_index"] = seq
+                parent_docs[idx].metadata["chunk_total"] = total
+                parent_docs[idx].metadata["chunk_id"] = chunk_id
+
     def index(self, all_docs: List[Document]) -> Chroma:
         """
         Executes the parent-child splitting and indexes the documents into the vector store.
@@ -263,6 +283,9 @@ class DocumentIndexer:
         parent_docs = self._parent_splitter.split_documents(all_docs)
         total_parents = len(parent_docs)
         logger.info(f"  -> Generated {total_parents} parent documents from {len(all_docs)} sources")
+
+        self._assign_chunk_indices(parent_docs)
+        logger.info("  -> chunk_index/chunk_id assigned to all parent documents")
 
         headers_generated, parents_without_header = self._add_context_headers_to_parent_documents(parent_docs)
         logger.info(f"  -> Context headers generated for {headers_generated} parent documents")
@@ -286,7 +309,8 @@ class DocumentIndexer:
                 return
 
             try:
-                self._retriever.add_documents(current_batch)
+                batch_ids = [doc.metadata["chunk_id"] for doc in current_batch]
+                self._retriever.add_documents(current_batch, ids=batch_ids)
                 indexed_parent_docs += len(current_batch)
                 
                 elapsed_mins = (time.time() - start_time) / 60

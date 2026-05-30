@@ -1722,3 +1722,55 @@ CRONOLOGIA AGGIORNAMENTI
   Re-index avviato con EMBEDDING_PROVIDER=local, LOCAL_EMBEDDING_MODEL=
   intfloat/multilingual-e5-base, EMBEDDING_DIMENSION=768.
   Threshold da ri-calibrare con calibrate_threshold.py post re-index.
+
+2026-05-30 - PDF merge + Adjacent retrieval + threshold calibration
+
+  FIX PDF LOADING: MERGE PAGINE (src/ingestion/parser.py)
+  --------------------------------------------------------
+  PDFPlumberLoader restituisce un Document per pagina PDF. Il parent splitter
+  trattava ogni pagina come documento indipendente → chunk cappati a dimensione
+  pagina, spesso < 1000 chars. Fix: tutte le pagine di un PDF vengono unite in
+  un singolo Document (join con "\n\n") prima di passare al splitter. Il parent
+  splitter può così creare chunk cross-page fino a PARENT_CHUNK_SIZE.
+  Risultato su IE227.pdf: chunks < 1000 chars calano da 26 a 3; avg chars
+  2049 → 2994; totale parent da 77 a 53.
+  metadata["total_pages"] aggiunto al documento merged.
+
+  ADJACENT RETRIEVAL (src/agent/tools.py, src/ingestion/database.py, config.py)
+  ------------------------------------------------------------------------------
+  Root cause: contenuto semanticamente connesso spezzato su più parent chunk.
+  Il retriever trova il chunk con score alto ma non recupera il successivo
+  (embedding distante dalla query perché contiene testo di transizione/tabelle).
+
+  Soluzione: durante l'indexing, ogni parent riceve chunk_index (posizione
+  ordinale per source), chunk_total (totale chunk dello stesso source) e chunk_id
+  (MD5 deterministico di "source:chunk_index", 16 hex chars). Gli IDs vengono
+  passati esplicitamente a ParentDocumentRetriever.add_documents(ids=...) come
+  chiavi del docstore invece di UUID random.
+
+  Nel tool retrieve(): dopo retriever.invoke(query), per ogni parent recuperato
+  si calcola il next_id = MD5("source:chunk_index+1"), si fetcha dal docstore
+  con mget() in O(1), e si aggiunge alla lista doc prima del reranking.
+  Il reranker sceglie i migliori tra bi-encoder docs + adiacenti.
+
+  Configurabile via USE_ADJACENT_RETRIEVAL=true/false in .env (default true).
+  Nota: attivo su tutti i source (HTML + PDF), non solo PDF — anche le pagine
+  HTML lunghe soffrono dello stesso problema di frammentazione.
+
+  CALIBRAZIONE THRESHOLD (scripts/calibrate_threshold.py)
+  --------------------------------------------------------
+  Eseguito calibrate_threshold.py con qwen3-embedding-8b su 30 query in-scope
+  + 8 out-of-scope (k=20). Fix bug: per_query=raw → per_query=json_data["per_query"]
+  (raw["in_scope"] è dict con chiavi "all"/"top1"/"per_query", non lista di dicts).
+  Risultato: p10 top-1 in-scope = 0.6570, nessun gap netto con out-of-scope.
+  Soglia impostata a 0.61 in .env (maximize recall).
+
+  FEATURE USE_RERANKER (config.py, src/agent/tools.py) — commit Angelo
+  ----------------------------------------------------------------------
+  Aggiunto USE_RERANKER=true/false in .env per disabilitare il cross-encoder
+  durante i test sugli embedding (già committato da Angelo Annunziata in c470c66).
+
+  FILE MODIFICATI
+  ---------------
+  src/ingestion/parser.py, src/ingestion/database.py, src/agent/tools.py,
+  config.py, scripts/calibrate_threshold.py, CLAUDE.md

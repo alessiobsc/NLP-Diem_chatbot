@@ -66,6 +66,7 @@ if RERANKER_PROVIDER not in ["local", "openrouter"]:
     raise NotImplementedError(f"RERANKER_PROVIDER '{RERANKER_PROVIDER}' is not supported. Use 'local' or 'openrouter'.")
 
 USE_RERANKER: bool = strtobool(os.getenv("USE_RERANKER", "True").lower())
+USE_ADJACENT_RETRIEVAL: bool = strtobool(os.getenv("USE_ADJACENT_RETRIEVAL", "True").lower())
 
 # =============================================================================
 # MODEL CONFIGURATION - LOCAL

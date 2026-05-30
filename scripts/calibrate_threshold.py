@@ -310,7 +310,7 @@ def main():
             n_in=len(in_scope_qs),
             n_out=len(out_of_scope_qs),
             stats=stats,
-            per_query=raw,
+            per_query=json_data["per_query"],
             note=note,
             date=date_str,
         )

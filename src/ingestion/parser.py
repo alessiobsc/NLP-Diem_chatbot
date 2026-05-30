@@ -930,11 +930,23 @@ def load_pdfs_from_links(raw_docs: list, seen_urls: set | None = None) -> list:
                 try:
                     # TODO (Software Architect): Replaced PyPDFLoader with PDFPlumberLoader for better table and layout extraction.
                     docs = PDFPlumberLoader(pdf_url).load()
-                    for pdf_doc in docs:
-                        pdf_doc.metadata.setdefault("source", pdf_url)
-                        pdf_doc.metadata.setdefault("source_page", page_url)
-                    pdf_docs.extend(docs)
-                    logger.info(f"  PDF loaded: {pdf_url} ({len(docs)} pages)")
+                    if docs:
+                        # Merge all pages into one Document so the parent splitter
+                        # can create cross-page chunks instead of being capped at page boundaries.
+                        merged_text = "\n\n".join(
+                            d.page_content for d in docs if d.page_content.strip()
+                        )
+                        merged_doc = Document(
+                            page_content=merged_text,
+                            metadata={
+                                **docs[0].metadata,
+                                "source": pdf_url,
+                                "source_page": page_url,
+                                "total_pages": len(docs),
+                            },
+                        )
+                        pdf_docs.append(merged_doc)
+                    logger.info(f"  PDF loaded: {pdf_url} ({len(docs)} pages → 1 merged doc)")
                 except Exception as e:
                     logger.warning(f"  WARNING: skipped PDF {pdf_url}: {e}")
         except Exception as e:
