@@ -65,6 +65,8 @@ RERANKER_PROVIDER: str = os.getenv("RERANKER_PROVIDER", "local")
 if RERANKER_PROVIDER not in ["local", "openrouter"]:
     raise NotImplementedError(f"RERANKER_PROVIDER '{RERANKER_PROVIDER}' is not supported. Use 'local' or 'openrouter'.")
 
+USE_RERANKER: bool = strtobool(os.getenv("USE_RERANKER", "True").lower())
+
 # =============================================================================
 # MODEL CONFIGURATION - LOCAL
 # =============================================================================

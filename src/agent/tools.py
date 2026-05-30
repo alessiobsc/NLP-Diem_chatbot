@@ -14,7 +14,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedState
 
-from config import CROSS_ENCODER_K
+from config import CROSS_ENCODER_K, USE_RERANKER
 from src.utils.logger import get_logger
 
 
@@ -78,12 +78,18 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
         from src.agent.brain import rerank, format_context
 
         docs = retriever.invoke(query)
-        reranked = rerank(query, docs, top_n=CROSS_ENCODER_K) if docs else []
+        
+        if USE_RERANKER and docs:
+            final_docs = rerank(query, docs, top_n=CROSS_ENCODER_K)
+        else:
+            final_docs = docs
+            
         # brain_ref._last_docs lets DiemBrain access the latest docs after graph completes
-        brain_ref._last_docs = reranked
-        context = format_context({"docs": reranked, "question": query, "history": []})["context"]
+        brain_ref._last_docs = final_docs
+        context = format_context({"docs": final_docs, "question": query, "history": []})["context"]
+        
         logger.info(
-            f"retrieve | query='{query[:80]}' | bi-encoder={len(docs)} | reranked={len(reranked)} "
+            f"retrieve | query='{query[:80]}' | bi-encoder={len(docs)} | reranker_used={USE_RERANKER} | final_docs={len(final_docs)} "
             f"| context_len={len(context)}"
         )
         return context
