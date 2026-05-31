@@ -1,6 +1,6 @@
 import re
 from urllib.parse import parse_qs, urlparse, urldefrag, urljoin
-
+from langchain_core.documents import Document
 import trafilatura
 from bs4 import BeautifulSoup, Tag
 from langchain_community.document_loaders import PDFPlumberLoader
@@ -147,7 +147,6 @@ def extract_html_metadata(html: str) -> dict:
     """
     meta: dict = {}
     try:
-        # TODO (Bug Hunter): Consider using a more robust parser like lxml for BeautifulSoup to handle heavily malformed HTML better.
         soup = BeautifulSoup(html, "lxml")
 
         title_tag = soup.find("title")
@@ -244,7 +243,6 @@ def remove_site_boilerplate(text: str) -> str:
 
 
 def _bs4_extractor(html: str) -> str:
-    # TODO (Code Refactorer): Repeated parsing with BeautifulSoup. If possible, parse once and pass the tree around.
     soup = BeautifulSoup(html, "lxml")
     for tag in soup(["script", "style", "nav", "footer", "header",
                      "noscript", "aside", "iframe"]):
@@ -253,10 +251,10 @@ def _bs4_extractor(html: str) -> str:
                      "#main", ".main-content", ".entry-content"]:
         content = soup.select_one(selector)
         if content:
-            return remove_site_boilerplate(content.get_text("\n", strip=True))
+            return remove_site_boilerplate(content.get_text(separator="\n", strip=True))
     body = soup.find("body")
     source = body if body else soup
-    return remove_site_boilerplate(source.get_text("\n", strip=True))
+    return remove_site_boilerplate(source.get_text(separator="\n", strip=True))
 
 
 def html_extractor(html: str) -> str:
@@ -296,7 +294,7 @@ def _dedupe_lines(lines: list[str]) -> list[str]:
 
 
 def _visible_text(tag: Tag) -> str:
-    return clean_text(tag.get_text(" ", strip=True))
+    return clean_text(tag.get_text(separator=" ", strip=True))
 
 
 def _is_structured_noise_label(text: str) -> bool:
@@ -341,7 +339,7 @@ def _extract_table_rows(table: Tag) -> list[str]:
     rows: list[str] = []
     for tr in table.find_all("tr"):
         cells = [
-            clean_text(cell.get_text(" ", strip=True))
+            clean_text(cell.get_text(separator=" ", strip=True))
             for cell in tr.find_all(["th", "td"])
         ]
         cells = [cell for cell in cells if cell and cell not in {"-", "×"}]
@@ -387,14 +385,14 @@ def _extract_non_table_lines(container: Tag) -> list[str]:
 
     block_lines: list[str] = []
     for tag in body_without_tables.find_all(["h2", "h3", "h4", "h5", "h6", "p", "li"], recursive=True):
-        line = clean_text(tag.get_text(" ", strip=True))
+        line = clean_text(tag.get_text(separator=" ", strip=True))
         if line and not _is_structured_noise_label(line):
             block_lines.append(line)
 
     if block_lines:
         return block_lines
 
-    return _text_lines(body_without_tables.get_text(" ", strip=True))
+    return _text_lines(body_without_tables.get_text(separator=" ", strip=True))
 
 
 def _extract_panel_body_lines(container: Tag) -> list[str]:
@@ -908,7 +906,6 @@ def load_pdfs_from_links(raw_docs: list, seen_urls: set | None = None) -> list:
     for doc in raw_docs:
         page_url = doc.metadata.get("source", "")
         try:
-            # TODO (Bug Hunter): Consider using `lxml` here as well for better performance and error handling.
             soup = BeautifulSoup(doc.page_content, "lxml")
             for a in soup.find_all("a", href=True):
                 href = a["href"].strip()
@@ -928,7 +925,6 @@ def load_pdfs_from_links(raw_docs: list, seen_urls: set | None = None) -> list:
                     continue
 
                 try:
-                    # TODO (Software Architect): Replaced PyPDFLoader with PDFPlumberLoader for better table and layout extraction.
                     docs = PDFPlumberLoader(pdf_url).load()
                     if docs:
                         # Merge all pages into one Document so the parent splitter
