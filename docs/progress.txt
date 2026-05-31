@@ -1774,3 +1774,150 @@ CRONOLOGIA AGGIORNAMENTI
   ---------------
   src/ingestion/parser.py, src/ingestion/database.py, src/agent/tools.py,
   config.py, scripts/calibrate_threshold.py, CLAUDE.md
+
+2026-05-30 - Fix mirati retrieval: aree di ricerca e laboratori DIEM
+
+  REWRITE "AREE DI RICERCA" (src/prompts.py)
+  ------------------------------------------
+  Problema: la domanda completa "Quali sono le aree di ricerca del dipartimento
+  DIEM dell'Università di Salerno?" veniva contaminata da termini generici
+  ("dipartimento", "DIEM", "Università di Salerno") e il bi-encoder preferiva
+  pagine di progetti finanziati.
+
+  Test:
+  - "aree di ricerca DIEM" peggiora: la pagina /ricerca/aree-di-ricerca entra
+    nei candidati, ma il reranker preferisce PDF/progetti/eccellenza.
+  - "Quali sono le aree di ricerca?" funziona meglio: /ricerca/aree-di-ricerca
+    rank #1 sia nel bi-encoder sia dopo reranker.
+
+  Modifica: aggiunta regola minimale nel rewrite prompt:
+  domande sulle aree di ricerca DIEM -> "Quali sono le aree di ricerca?"
+
+  REWRITE "LABORATORI DIEM" (src/prompts.py)
+  ------------------------------------------
+  Problema: domande generiche sui laboratori potevano recuperare anche pagine
+  di eccellenza o dettagli di singoli laboratori.
+
+  Test query:
+  - "strutture DIEM - elenco laboratori, laboratori didattici e centri di servizio":
+    ottima per bi-encoder (rank #1, score ~0.806), ma dopo reranker
+    /dipartimento/strutture scende a rank #2.
+  - "Dipartimento | Strutture Laboratori":
+    /dipartimento/strutture rank #1 dopo reranker (score ~0.979).
+
+  Modifica: aggiunta regola minimale nel rewrite prompt:
+  domande sulla lista generale dei laboratori DIEM -> "Dipartimento | Strutture Laboratori".
+  La regola non si applica quando l'utente chiede un laboratorio specifico per nome.
+
+  HEADER DETERMINISTICO /dipartimento/strutture
+  ---------------------------------------------
+  Aggiunto header euristico per la pagina generale:
+  "Context: strutture DIEM - elenco laboratori, laboratori didattici e centri di servizio".
+
+  File coinvolti:
+  - src/ingestion/enrichment.py: /dipartimento/strutture ora usa l'euristico
+    anche senza ?id=...
+  - src/ingestion/header_heuristic.py: la listing page /dipartimento/strutture
+    riceve l'header specifico sopra.
+
+  Nota: l'header deterministico richiede re-ingestion per avere effetto sugli
+  embedding dei child chunk. La modifica è mirata: non cambia gli header delle
+  pagine dei singoli laboratori /dipartimento/strutture?id=...
+
+  Verifiche:
+  - python -m py_compile src/prompts.py src/ingestion/header_heuristic.py src/ingestion/enrichment.py
+  - test diretto fallback_context_header() su /dipartimento/strutture:
+    restituisce correttamente "strutture DIEM - elenco laboratori, laboratori
+    didattici e centri di servizio".
+
+2026-05-31 - Offerta formativa strutturata, audit Chroma Havertz e rewrite minimale
+
+  FIX ESTRAZIONE OFFERTA FORMATIVA DIEM (src/ingestion/parser.py)
+  ---------------------------------------------------------------
+  Problema: con Trafilatura configurato con favor_precision=True, le pagine
+  /didattica/offerta-formativa conservavano soltanto lo scheletro della pagina:
+  titolo, sottotitolo e filtro. L'elenco effettivo dei corsi veniva perso.
+
+  Test:
+  - favor_precision=False recuperava i nomi dei corsi, ma rischiava di aumentare
+    il rumore sulle altre pagine;
+  - l'estrattore strutturato già usato per le pagine critiche recupera le sezioni
+    accordion senza abbassare globalmente la precisione.
+
+  Modifica:
+  - aggiunto /didattica/offerta-formativa alla whitelist di _is_structured_source();
+  - mantenuto favor_precision=True per il parser generale;
+  - la regola vale anche per le pagine annuali con query string.
+
+  Verifica live:
+  - pagina base: 5 sezioni strutturate e corsi IE127, IE128, IE227, IE232, IE233;
+  - pagina ?anno=2024: 3 sezioni strutturate recuperate.
+
+  AUDIT chroma_diem_qwen3_Havertz
+  --------------------------------
+  Confrontato Havertz con chroma_diem_qwen3_v1, entrambi basati su
+  qwen/qwen3-embedding-8b con embedding da 4096 dimensioni.
+
+  Risultati:
+  - qwen3_v1: 2418 fonti uniche, 444 PDF, 7201 parent, 31551 child, 697 MB;
+  - Havertz: 2337 fonti uniche, 440 PDF, 10113 parent, 48521 child, circa 1 GB.
+
+  Havertz non contiene molte più fonti: frammenta quasi lo stesso corpus in più
+  chunk perché usa parent 2000/200 e child 400/50. qwen3_v1 era stato indicizzato
+  con parent 3750/375 e child 600/80. Verifica diretta sui documenti salvati:
+  - qwen3_v1: max parent 3750, mediana child 521;
+  - Havertz: max parent 2000, mediana child 365.
+
+  Il peso è coerente: 48521 vettori x 4096 float32 occupano circa 758 MiB;
+  data_level0.bin pesa circa 768 MB. Nessuna anomalia grave di indicizzazione.
+
+  Nota contatore PDF:
+  - crawled_pdfs.json/log stampa 440 PDF sources (440 pages total);
+  - il totale pagine è fuorviante perché le pagine vengono unite prima del
+    salvataggio del riepilogo. I contenuti PDF risultano comunque indicizzati.
+
+  FIX REWRITE MINIMALE (src/prompts.py, src/agent/tools.py)
+  ---------------------------------------------------------
+  Problema: query semplici come "Dove sta l'aula 126?" potevano essere espanse
+  con termini istituzionali generici come DIEM e Università di Salerno. Questi
+  termini spostavano il retrieval verso documenti meno pertinenti.
+
+  Modifica al prompt:
+  - il rewrite deve restare il più vicino possibile alla domanda originale;
+  - vietata l'aggiunta automatica di DIEM, dipartimento DIEM, UNISA e Università
+    di Salerno quando non sono già presenti o necessari per risolvere un
+    riferimento implicito dalla cronologia;
+  - aggiornato l'esempio TOLC;
+  - aggiunto esempio aula 126.
+
+  Test reale OpenRouter:
+  - "Dove sta l'aula 126?" -> "Dove si trova l'aula 126?";
+  - "Quali corsi insegna Mario Vento?" -> invariata;
+  - follow-up TOLC "ho 15 punti in matematica" -> query autonoma senza "al DIEM".
+
+  FIX INPUT DEL TOOL rewrite() (src/agent/nodes.py, src/agent/tools.py)
+  --------------------------------------------------------------------
+  Problema residuo: prima del rewriter, il routing model poteva già costruire
+  una tool call espansa, ad esempio:
+  "membri della Giunta del Dipartimento DIEM Università di Salerno".
+  Il rewriter riceveva quindi una query già contaminata.
+
+  Soluzione:
+  - _node_agent sostituisce l'argomento della prima tool call rewrite() di ogni
+    turno con l'ultimo HumanMessage reale;
+  - rewrite() applica una seconda protezione e legge direttamente l'ultimo
+    HumanMessage dallo stato, ignorando eventuali espansioni dell'agente;
+  - nei follow-up il rewriter continua a usare la cronologia per risolvere
+    riferimenti impliciti, ad esempio "E qual è la sua capienza?".
+
+  Test simulato:
+  - input inventato dall'agente:
+    "membri della Giunta del Dipartimento DIEM Università di Salerno";
+  - input effettivo passato al rewriter:
+    "Quali sono i membri della Giunta?";
+  - output:
+    "Quali sono i membri della Giunta?".
+
+  Verifiche:
+  - python -m py_compile src/prompts.py src/agent/tools.py src/agent/nodes.py
+  - git diff --check

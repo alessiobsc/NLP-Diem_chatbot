@@ -138,6 +138,24 @@ class DiemNodes:
         response = self._agent_model_with_tools.invoke([system] + clean_messages)
         tool_calls = getattr(response, "tool_calls", None)
 
+        # rewrite() must receive the user's actual latest message. The routing
+        # model may otherwise expand it with generic institutional terms before
+        # the dedicated rewrite model gets a chance to normalize it.
+        if tool_calls and any(tc["name"] == "rewrite" for tc in tool_calls):
+            user_question = (
+                extract_text(state["messages"][last_human_idx].content)
+                if last_human_idx >= 0
+                else ""
+            )
+            overridden = []
+            for tc in tool_calls:
+                if tc["name"] == "rewrite":
+                    tc = {**tc, "args": {**tc["args"], "query": user_question}}
+                    logger.info(f"agent | overriding rewrite input with user question: '{user_question[:80]}'")
+                overridden.append(tc)
+            response = AIMessage(id=response.id, content=response.content, tool_calls=overridden)
+            tool_calls = overridden
+
         # If agent is calling retrieve, check if rewrite was already called this turn.
         # If so, force the retrieve query to use the rewrite output — model compliance is unreliable.
         if tool_calls and any(tc["name"] == "retrieve" for tc in tool_calls):

@@ -522,6 +522,7 @@ def _is_structured_source(source: str) -> bool:
             "/dipartimento/organi-collegiali",
             "/dipartimento/commissione-paritetica",
             "/dipartimento/commissioni",
+            "/didattica/offerta-formativa",
         }:
             return True
         if path == "/dipartimento/strutture" and not query.get("id"):

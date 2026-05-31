@@ -31,7 +31,9 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
         """Rewrite the user's latest message into a self-contained, standalone search query.
         Call BEFORE the first retrieve() of every turn — even for self-contained queries.
         rewrite() resolves pronouns, injects the academic year, and adapts phrasing to knowledge
-        base terminology. Skip ONLY if retrieve() was already called in this turn.
+        base terminology while keeping the query minimal. It does not add generic institutional
+        terms unless needed to resolve an implicit reference. Skip ONLY if retrieve() was already
+        called in this turn.
         Returns the rewritten query as a string. After calling this tool you MUST immediately
         call retrieve() with the returned string as the query — do not modify it, do not generate an answer first."""
         from src.agent.brain import extract_text
@@ -45,8 +47,17 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
         ) + tuple(t[:10] for t in REJECTION_TAGS)
 
         messages = state.get("messages", [])
+        last_human_idx = max(
+            (i for i, msg in enumerate(messages) if isinstance(msg, HumanMessage)),
+            default=-1,
+        )
+        user_query = (
+            extract_text(messages[last_human_idx].content)
+            if last_human_idx >= 0
+            else query
+        )
         history_lines = []
-        for msg in messages[:-1]:  # exclude current HumanMessage
+        for msg in messages[:last_human_idx]:
             if isinstance(msg, HumanMessage) and not getattr(msg, "tool_calls", None):
                 history_lines.append(f"User: {extract_text(msg.content)}")
             elif isinstance(msg, AIMessage) and not getattr(msg, "tool_calls", None):
@@ -58,13 +69,16 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
                     history_lines.append(f"AI: {text}")
         history_str = "\n".join(history_lines[-6:])
 
-        prompt = f"<history>\n{history_str}\n</history>\n<user_latest>{query}</user_latest>"
+        if query != user_query:
+            logger.info(f"rewrite | ignoring agent-expanded query: '{query}'")
+
+        prompt = f"<history>\n{history_str}\n</history>\n<user_latest>{user_query}</user_latest>"
         result = generation_model.invoke([
             SystemMessage(content=REWRITE_PROMPT),
             HumanMessage(content=prompt),
         ])
         rewritten = result.content.strip()
-        logger.info(f"rewrite: '{query}' -> '{rewritten}'")
+        logger.info(f"rewrite: '{user_query}' -> '{rewritten}'")
         return rewritten
 
     @tool
