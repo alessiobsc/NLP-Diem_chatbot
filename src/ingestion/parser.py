@@ -265,7 +265,7 @@ def html_extractor(html: str) -> str:
         include_tables=True,
         include_links=False,
         include_images=False,
-        favor_precision=False,
+        favor_precision=True,
     )
     if result:
         return remove_site_boilerplate(result)
