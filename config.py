@@ -112,12 +112,12 @@ RETRIEVER_SCORE_THRESHOLD: float = float(os.getenv("RETRIEVER_SCORE_THRESHOLD", 
 
 # Document Splitting Settings (Parent-Child Strategy)
 # Parent Document Settings (Broad context)
-PARENT_CHUNK_SIZE: int = int(os.getenv("PARENT_CHUNK_SIZE", "2000"))
-PARENT_CHUNK_OVERLAP: int = int(os.getenv("PARENT_CHUNK_OVERLAP", "200"))
+PARENT_CHUNK_SIZE: int = int(os.getenv("PARENT_CHUNK_SIZE", "3750"))
+PARENT_CHUNK_OVERLAP: int = int(os.getenv("PARENT_CHUNK_OVERLAP", "375"))
 
 # Child Document Settings (Precise retrieval)
-CHILD_CHUNK_SIZE: int = int(os.getenv("CHILD_CHUNK_SIZE", "400"))
-CHILD_CHUNK_OVERLAP: int = int(os.getenv("CHILD_CHUNK_OVERLAP", "50"))
+CHILD_CHUNK_SIZE: int = int(os.getenv("CHILD_CHUNK_SIZE", "600"))
+CHILD_CHUNK_OVERLAP: int = int(os.getenv("CHILD_CHUNK_OVERLAP", "80"))
 
 # Ingestion Batching
 MAX_CHILD_CHUNKS_PER_BATCH: int = 100
