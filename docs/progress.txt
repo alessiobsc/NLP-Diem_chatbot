@@ -1921,3 +1921,99 @@ CRONOLOGIA AGGIORNAMENTI
   Verifiche:
   - python -m py_compile src/prompts.py src/agent/tools.py src/agent/nodes.py
   - git diff --check
+
+2026-05-31 - Rewrite opt-out totale + esperimento query instruction Qwen3
+
+  REWRITE OPT-OUT TOTALE (src/prompts.py, src/agent/tools.py)
+  ------------------------------------------------------------
+  Problema: il tool rewrite() veniva chiamato raramente nonostante la logica
+  opt-out parziale introdotta il 2026-05-27. L'agent classificava la maggior
+  parte delle query come "già self-contained" e saltava il rewrite, poi
+  riformulava da solo la query di retrieve() — con variabilità stocastica e
+  miss su retrieval.
+
+  Causa radice: il blocco STEP 1 del prompt elencava una lista di casi
+  in cui chiamare rewrite() (opt-in), seguita da una condizione di skip
+  "if self-contained AND not about graduation grade". L'LLM leggeva
+  quasi ogni query come self-contained e applicava lo skip.
+
+  Soluzione: logica invertita da opt-in a opt-out completo.
+  - AGENT_SYSTEM_PROMPT (src/prompts.py): rimossa la lista di casi specifici.
+    Nuova regola: "Call rewrite() ALWAYS before the first retrieve() of each
+    turn. Skip ONLY if retrieve() was already called in this turn."
+    Motivazione esplicita: anche query self-contained beneficiano di rewrite
+    (year injection, adattamento terminologia KB).
+  - Tool docstring rewrite() (src/agent/tools.py): allineato alla nuova logica.
+    "Call BEFORE the first retrieve() of every turn — even for self-contained
+    queries. Skip ONLY if retrieve() was already called in this turn."
+
+  Flusso risultante:
+  - Prima: retrieve() diretto (rewrite skippato spesso) → query non ottimale.
+  - Ora: rewrite() → retrieve() → [retry retrieve diretto se empty].
+
+  ESPERIMENTO QUERY INSTRUCTION QWEN3 (src/encoders/embedding_init.py)
+  ---------------------------------------------------------------------
+  Ipotesi: l'instruction generica "Retrieve relevant passages that answer
+  the user's query" potrebbe essere migliorata per la KB mista IT/EN del
+  progetto (testo in italiano, nomi corsi/lab in inglese).
+
+  Instruction testata:
+  "Given a question about an Italian university department, retrieve the
+  most relevant passage about courses, professors, laboratories, or academic
+  regulations. Documents contain Italian text with English course and lab names."
+
+  Calibrazione eseguita con calibrate_threshold.py su 30 query in-scope +
+  8 out-of-scope (k=20). Confronto con baseline (threshold_qwen3.json):
+
+  | Metrica            | Baseline | Nuova  | Delta  |
+  |--------------------|----------|--------|--------|
+  | in_scope min       | 0.6138   | 0.6531 | +0.039 |
+  | in_scope p10       | 0.6584   | 0.6844 | +0.026 |
+  | in_scope median    | 0.7265   | 0.7211 | -0.005 |
+  | in_scope p90       | 0.7963   | 0.7676 | -0.029 |
+  | out_of_scope median| 0.4239   | 0.6406 | +0.217 |
+
+  Risultato: l'instruction specifica del dominio comprime la distribuzione
+  in-scope verso il centro (peggiora le query forti) e alza massicciamente
+  gli score out-of-scope (+0.22 sulla mediana). La separazione in/out-of-scope
+  crolla — l'instruction domain-specific "attira" le query out-of-scope verso
+  score alti rendendo il modello meno discriminante.
+
+  Decisione: revert all'instruction generica originale.
+  Risultato salvato in evaluation/results/threshold_qwen3_new_instr.json
+  come reference per eventuali futuri esperimenti.
+
+  RICERCA INSTRUCTION OTTIMALE — 3 CANDIDATI TASK-FOCUSED
+  --------------------------------------------------------
+  Ipotesi: instruction più specifica sul task (non sul dominio) può migliorare
+  i punteggi in-scope senza gonfiare gli score out-of-scope come nel test precedente.
+  Il rischio del test precedente era l'ancoraggio al dominio (corsi, professori,
+  laboratori) che attirava le query out-of-scope. I candidati evitano menzioni
+  di dominio e descrivono solo il tipo di retrieval atteso.
+
+  Candidati testati:
+    A: "Retrieve the passage that most directly and completely answers the following question"
+    B: "Given a question, retrieve passages that contain the specific factual answer"
+    C: "Retrieve the most relevant passage to answer the question"
+
+  Calibrazione su 30 query in-scope + 8 out-of-scope (k=20) per ogni variante.
+  Risultati top-1 in-scope:
+
+  | Metrica | Baseline | A      | B      | C      |
+  |---------|----------|--------|--------|--------|
+  | min     | 0.6138   | 0.6594 | 0.6559 | 0.6313 |
+  | p10     | 0.6588   | 0.6770 | 0.7012 | 0.6599 |
+  | median  | 0.7267   | 0.7508 | 0.7473 | 0.7366 |
+  | max     | 0.8832   | 0.8885 | 0.8746 | 0.8843 |
+  | oos_med | 0.4427   | 0.4826 | 0.5455 | 0.4882 |
+
+  Decisione: istruzione A adottata.
+  - Migliora tutte le metriche in-scope vs baseline (min +0.046, p10 +0.018, median +0.024).
+  - OOS median sale solo +0.04 — trascurabile, separazione in/out-of-scope preservata.
+  - B: p10 migliore ma OOS +0.10 — troppa degradazione separazione.
+  - C: quasi invariato rispetto al baseline.
+
+  File modificati:
+  - src/encoders/embedding_init.py: instruction aggiornata a variante A.
+  - .env: RETRIEVER_SCORE_THRESHOLD=0.61 → 0.63 (calibrato su p10 A = 0.677).
+  Risultati salvati in evaluation/results/threshold_instr_{A,B,C}.json.

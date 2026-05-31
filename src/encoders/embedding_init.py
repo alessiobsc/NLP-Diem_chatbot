@@ -13,7 +13,7 @@ def build_embedding_model():
     if EMBEDDING_PROVIDER == "openrouter":
         logger.info(f"Using OpenRouter embedding model: {OPENROUTER_EMBEDDING_MODEL}")
         query_instruction = (
-            "Retrieve relevant passages that answer the user's query "
+            "Retrieve the passage that most directly and completely answers the following question"
             if "qwen3" in OPENROUTER_EMBEDDING_MODEL.lower() else ""
         )
         return OpenRouterEmbeddings(
