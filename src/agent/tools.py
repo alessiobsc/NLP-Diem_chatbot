@@ -29,12 +29,9 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
     @tool
     def rewrite(query: str, state: Annotated[dict, InjectedState]) -> str:
         """Rewrite the user's latest message into a self-contained, standalone search query.
-        Call BEFORE retrieve() when the message:
-        - contains pronouns or implicit references (lui, lei, suoi, questo, quale, quel, loro, ne)
-        - is a follow-up that omits the subject (e.g. 'e i suoi orari?', 'cosa insegna?', 'quali corsi?')
-        - is incomplete or poorly phrased
-        - concerns academic content (courses, regulations, exams, degree programs) AND does not
-          specify an academic year → the rewrite appends 'anno accademico 2025/2026'
+        Call BEFORE the first retrieve() of every turn — even for self-contained queries.
+        rewrite() resolves pronouns, injects the academic year, and adapts phrasing to knowledge
+        base terminology. Skip ONLY if retrieve() was already called in this turn.
         Returns the rewritten query as a string. After calling this tool you MUST immediately
         call retrieve() with the returned string as the query — do not modify it, do not generate an answer first."""
         from src.agent.brain import extract_text
