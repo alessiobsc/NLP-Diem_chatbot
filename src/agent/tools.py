@@ -92,13 +92,18 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
 
         docs = retriever.invoke(query)
 
-        # For each retrieved parent, also fetch the immediately following chunk
-        # from the same source — captures content split across page boundaries.
+        if USE_RERANKER and docs:
+            final_docs = rerank(query, docs, top_n=CROSS_ENCODER_K)
+        else:
+            final_docs = docs
+
+        # Fetch the immediately following chunk for each top-k result — done after
+        # reranking so adjacent chunks are always included and not subject to reranker scoring.
         adjacent_added = 0
-        if USE_ADJACENT_RETRIEVAL and docs:
-            seen_ids = {doc.metadata.get("chunk_id") for doc in docs}
+        if USE_ADJACENT_RETRIEVAL and final_docs:
+            seen_ids = {doc.metadata.get("chunk_id") for doc in final_docs}
             extra = []
-            for doc in docs:
+            for doc in final_docs:
                 source = doc.metadata.get("source", "")
                 chunk_index = doc.metadata.get("chunk_index")
                 if chunk_index is None:
@@ -110,20 +115,15 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
                 if result and result[0] is not None:
                     seen_ids.add(next_id)
                     extra.append(result[0])
-            docs = docs + extra
+            final_docs = final_docs + extra
             adjacent_added = len(extra)
-
-        if USE_RERANKER and docs:
-            final_docs = rerank(query, docs, top_n=CROSS_ENCODER_K)
-        else:
-            final_docs = docs
 
         # brain_ref._last_docs lets DiemBrain access the latest docs after graph completes
         brain_ref._last_docs = final_docs
         context = format_context({"docs": final_docs, "question": query, "history": []})["context"]
 
         logger.info(
-            f"retrieve | query='{query[:80]}' | bi-encoder={len(docs) - adjacent_added} "
+            f"retrieve | query='{query[:80]}' | bi-encoder={len(docs)} "
             f"| adjacent={adjacent_added} | reranker_used={USE_RERANKER} | final_docs={len(final_docs)} "
             f"| context_len={len(context)}"
         )

@@ -2017,3 +2017,53 @@ CRONOLOGIA AGGIORNAMENTI
   - src/encoders/embedding_init.py: instruction aggiornata a variante A.
   - .env: RETRIEVER_SCORE_THRESHOLD=0.61 → 0.63 (calibrato su p10 A = 0.677).
   Risultati salvati in evaluation/results/threshold_instr_{A,B,C}.json.
+
+2026-06-01 - Adjacent retrieval post-rerank + REWRITE_PROMPT year injection corsi/programmi
+
+  ADJACENT RETRIEVAL: SPOSTATO POST-RERANK (src/agent/tools.py)
+  --------------------------------------------------------------
+  Problema: il chunk adiacente (N+1) veniva fetchato PRIMA del reranking e
+  aggiunto al pool dei candidati. Il cross-encoder lo scorava in isolamento,
+  senza sapere che è la continuazione diretta di un chunk già rilevante (N),
+  e lo tagliava fuori dai top-k finali.
+  Verificato: senza reranker il chunk adiacente veniva incluso correttamente.
+
+  Fix: adjacent retrieval spostato DOPO il reranking, su final_docs (top-k)
+  invece che su docs (tutti i candidati bi-encoder).
+
+  Flusso precedente:
+    retriever.invoke() → [adjacent fetch su tutti i 15] → rerank → final_docs
+
+  Flusso attuale:
+    retriever.invoke() → rerank → final_docs → [adjacent fetch su top-k]
+
+  Vantaggi:
+  - Il chunk adiacente è sempre incluso in final_docs (non è soggetto al reranker).
+  - Adjacent fetchato solo per i chunk già rilevanti (top-k post-rerank), non
+    per tutti i 15 candidati del bi-encoder — meno rumore, più mirato.
+  - Codice più semplice: rimossa la sottrazione len(docs) - adjacent_added nel log;
+    adjacent_added ora conta i chunk aggiunti dopo il rerank.
+
+  File modificato: src/agent/tools.py
+
+  REWRITE_PROMPT: RULE 10 — YEAR INJECTION CORSI/REGOLAMENTI (src/prompts.py)
+  ---------------------------------------------------------------------------
+  Aggiunta Rule 10 in REWRITE_PROMPT per iniettare "anno accademico 2025/2026"
+  su query curriculari, senza estendere la regola a topic non pertinenti.
+
+  Trigger: piano di studi, curriculum, regolamento del corso di laurea,
+  insegnamenti per anno, attività formative, struttura del corso, esami del
+  corso, programma di un corso.
+
+  Non si applica a: professori, laboratori, ricerca, orari, appelli, bandi.
+
+  Comportamento: appende "anno accademico 2025/2026" alla query riscritta,
+  a meno che l'utente abbia già specificato un anno diverso.
+
+  Due esempi aggiunti nella sezione <examples>:
+  - "Quali esami devo dare al secondo anno di Ingegneria Informatica?"
+    → "Esami secondo anno Ingegneria Informatica anno accademico 2025/2026"
+  - "Qual è il programma del corso di Ingegneria del Software?"
+    → "Programma corso Ingegneria del Software anno accademico 2025/2026"
+
+  File modificato: src/prompts.py
