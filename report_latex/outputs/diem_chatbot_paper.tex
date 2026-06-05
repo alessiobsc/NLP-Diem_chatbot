@@ -1327,6 +1327,298 @@ accessibili tramite pagine statiche correlate. Trafilatura è invece superiore p
 d'uso primario del chatbot DIEM, ovvero le domande su fatti atomici precisi.
 
 %% ============================================================
+\section{Valutazione Metriche e Risultati}
+\label{sec:eval_results}
+
+Il presente capitolo riporta i risultati della valutazione quantitativa condotta su
+quattro configurazioni evolutive del sistema \sys{}. Ciascuna configurazione introduce
+modifiche incrementali --- al modello linguistico, all'embedding, al reranker o alla
+strategia di chunking --- per misurarne l'impatto sulle metriche Ragas e sui criteri
+custom di scope awareness e robustezza. Il golden set utilizzato è
+\code{golden\_set\_it.json}: 32~domande nelle categorie \emph{in\_scope} e
+\emph{multi\_turn}, 8~domande \emph{out\_of\_scope} e 6~scenari di robustezza.
+Il modello giudice è \code{meta-llama/llama-3.1-8b-instruct} per tutti e quattro i run.
+
+\subsection{Configurazioni a Confronto}
+\label{subsec:eval_configs}
+
+Le quattro configurazioni rappresentano un percorso evolutivo da un sistema
+completamente locale (C1) a una configurazione ibrida con componenti cloud per LLM,
+embedding e reranking (C4). La Tabella~\ref{tab:configs} ne sintetizza i parametri
+principali.
+
+\begin{table}[H]
+\centering
+\caption{Parametri delle quattro configurazioni valutate. \textit{BiK}: documenti
+         estratti dal bi-encoder al primo stadio. \textit{CrossK}: documenti
+         selezionati dopo il reranking. \textit{Parent\,/\,Child}: dimensione e overlap
+         dei chunk in token.}
+\label{tab:configs}
+\footnotesize
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{@{}cp{2.7cm}p{3.0cm}p{2.7cm}ccc@{}}
+\toprule
+ & \textbf{LLM} & \textbf{Embedding} & \textbf{Reranker}
+ & \textbf{BiK / CrossK} & \textbf{Soglia} & \textbf{Parent\,/\,Child (token)} \\
+\midrule
+\textbf{C1}
+  & Qwen2.5-7B (locale)
+  & e5-base 768d (locale)
+  & cross-encoder locale
+  & 20\,/\,3 & 0.50 & 2000\,/\,200\,\textbar\;400\,/\,50 \\
+\addlinespace[3pt]
+\textbf{C2}
+  & GPT-oss-120B (cloud)
+  & e5-base 768d (locale)
+  & Cohere Rerank-4-Pro
+  & 15\,/\,5 & 0.45 & 2000\,/\,200\,\textbar\;400\,/\,50 \\
+\addlinespace[3pt]
+\textbf{C3}
+  & GPT-oss-120B (cloud)
+  & Qwen3-Emb-8B 4096d (cloud)
+  & Cohere Rerank-4-Pro
+  & 15\,/\,5 & 0.45 & 2000\,/\,200\,\textbar\;400\,/\,50 \\
+\addlinespace[3pt]
+\textbf{C4}
+  & GPT-oss-120B (cloud)
+  & Qwen3-Emb-8B 4096d (cloud)
+  & Cohere Rerank-4-Pro
+  & 15\,/\,5 & 0.45 & 3750\,/\,375\,\textbar\;600\,/\,80 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Le variazioni introdotte ad ogni transizione sono tre. C1$\to$C2: sostituzione del
+LLM locale con un modello cloud di larga scala e adozione del reranker Cohere
+Rerank-4-Pro, con soglia di recupero abbassata da 0.50 a 0.45 e CrossK aumentato
+da 3 a 5. C2$\to$C3: sostituzione dell'embedding locale a 768 dimensioni con un
+modello cloud ad alta dimensionalità (4096d) e re-indicizzazione completa del corpus
+su un nuovo Chroma store. C3$\to$C4: aumento dei chunk padre del $+87.5\%$
+(da 2000 a 3750 token) e dei chunk figlio del $+50\%$ (da 400 a 600 token), con
+overlap scalato proporzionalmente, per fornire al modello contesti più autocontenuti.
+
+\subsection{Risultati Aggregati}
+\label{subsec:eval_results_table}
+
+La Tabella~\ref{tab:allresults} mostra i valori di tutte le metriche per le quattro
+configurazioni. I valori in \textbf{grassetto} indicano il massimo per ciascuna riga.
+Nessuna configurazione domina in modo assoluto: ogni transizione migliora alcune
+metriche a scapito di altre, evidenziando i compromessi tipici dei sistemi RAG.
+
+\begin{table}[H]
+\centering
+\caption{Valori aggregati per configurazione. \textit{Scope Awareness} e
+         \textit{Robustness} sono pass rate rispettivamente su 8 e 6 scenari;
+         le restanti metriche sono score Ragas $\in[0,1]$. In parentesi il numero
+         di domande con valutazione valida.}
+\label{tab:allresults}
+\small
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textbf{Metrica} & \textbf{C1} & \textbf{C2} & \textbf{C3} & \textbf{C4} \\
+\midrule
+\rowcolor{blue!4}
+ResponseRelevancy   & 0.703 \scriptsize(32/32) & \textbf{0.877} \scriptsize(32/32)
+                    & 0.681 \scriptsize(32/32) & 0.717 \scriptsize(32/32) \\
+Faithfulness        & \textbf{0.764} \scriptsize(32/32) & 0.664 \scriptsize(31/32)
+                    & 0.696 \scriptsize(30/32) & 0.675 \scriptsize(31/32) \\
+\rowcolor{blue!4}
+AnswerCorrectness   & 0.537 \scriptsize(31/32) & \textbf{0.603} \scriptsize(30/32)
+                    & 0.527 \scriptsize(31/32) & 0.597 \scriptsize(30/32) \\
+LLMContextPrecision & \textbf{0.711} \scriptsize(32/32) & 0.526 \scriptsize(32/32)
+                    & 0.584 \scriptsize(32/32) & 0.667 \scriptsize(31/32) \\
+\rowcolor{blue!4}
+LLMContextRecall    & 0.737 \scriptsize(30/32) & 0.797 \scriptsize(32/32)
+                    & \textbf{0.820} \scriptsize(32/32) & 0.799 \scriptsize(29/32) \\
+Coherence           & 0.737 \scriptsize(19/32) & \textbf{0.815} \scriptsize(27/32)
+                    & \textbf{0.815} \scriptsize(27/32) & 0.750 \scriptsize(20/32) \\
+\rowcolor{blue!4}
+Scope Awareness     & 0.375 \scriptsize(3/8)  & 0.500 \scriptsize(4/8)
+                    & \textbf{0.750} \scriptsize(6/8)  & 0.500 \scriptsize(4/8) \\
+Robustness          & 0.333 \scriptsize(2/6)  & \textbf{0.833} \scriptsize(5/6)
+                    & 0.667 \scriptsize(4/6)  & 0.667 \scriptsize(4/6) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Analisi per Metrica}
+\label{subsec:per_metric}
+
+\subsubsection{Rilevanza della risposta (ResponseRelevancy)}
+
+Il salto da C1 (0.703) a C2 (0.877, $+24.8\%$) evidenzia come il modello cloud
+sia nettamente più efficace nel produrre risposte focalizzate sulla domanda, senza
+divagazioni o risposte parziali. Il calo da C2 a C3 (0.681, $-22.3\%$) è attribuibile
+alla re-indicizzazione su un nuovo Chroma store con embedding Qwen3: nella fase
+iniziale il nuovo indice può produrre contesti meno centrati rispetto a un corpus
+ottimizzato iterativamente. C4 recupera a 0.717 ($+5.3\%$ su C3), beneficiando
+di chunk più autocontenuti che limitano il rumore nel contesto fornito al generatore.
+
+\subsubsection{Fedeltà al contesto (Faithfulness)}
+
+C1 registra la Faithfulness più elevata (0.764): il modello locale, avendo capacità
+generative più limitate, tende a restare più ancorato al testo estratto. Le
+configurazioni cloud (C2--C4, valori 0.664--0.696) mostrano valori inferiori,
+coerentemente con la propensione dei modelli di larga scala a integrare conoscenza
+pretrainata anche in presenza di un contesto esplicito. La lieve risalita da C2 a
+C3 ($+4.8\%$) è coerente con il miglioramento qualitativo del retrieval: contesti
+più rilevanti riducono la necessità del modello di ricorrere a fonti esterne.
+
+\subsubsection{Correttezza della risposta (AnswerCorrectness)}
+
+L'AnswerCorrectness segue una traiettoria analoga alla ResponseRelevancy: picco in
+C2 (0.603, $+12.3\%$ su C1), flessione in C3 (0.527) per le stesse ragioni legate
+alla re-indicizzazione, e quasi completo recupero in C4 (0.597). Il modello cloud
+è strutturalmente più accurato nell'estrapolare fatti dal contesto e nel formulare
+risposte complete rispetto al riferimento atteso nel golden set.
+
+\subsubsection{Qualità del contesto recuperato}
+
+\textbf{LLMContextPrecision.} Il baseline C1 mantiene la precisione più alta (0.711),
+grazie alla soglia più selettiva (0.50) e al numero ridotto di chunk conservati
+(CrossK=3). L'abbassamento della soglia e l'aumento di CrossK in C2--C4 incrementano
+la copertura a scapito della precisione (minimo in C2: 0.526, $-26.0\%$).
+Il trend di recupero C2$\to$C3$\to$C4 (0.526$\to$0.584$\to$0.667) dimostra che
+l'embedding Qwen3 ad alta dimensionalità produce corrispondenze semantiche più
+accurate e che chunk più lunghi, pur in numero minore, contengono informazioni più
+pertinenti nel loro insieme.
+
+\textbf{LLMContextRecall.} La recall mostra la traiettoria complementare e opposta:
+miglioramento progressivo da C1 (0.737) al picco in C3 (0.820, $+11.3\%$ su C1),
+con lieve calo in C4 (0.799). L'embedding ad alta dimensionalità (4096d) è più
+efficace nel catturare la semantica completa del corpus italiano multidominio.
+Il calo in C4 è spiegabile con la riduzione del numero totale di chunk indicizzati
+derivante da frammenti più grandi, con conseguente minore ridondanza nel corpus.
+
+\subsubsection{Coerenza della risposta (Coherence)}
+
+La Coherence presenta un netto comportamento a due livelli: 0.737 con il LLM locale
+(C1) e 0.815 con il LLM cloud (C2 e C3, $+10.6\%$). L'intero guadagno è attribuibile
+alla qualità generativa superiore del modello cloud, che produce risposte strutturalmente
+più coese e logicamente organizzate. La lieve regressione in C4 (0.750) è compatibile
+con l'ipotesi che contesti più lunghi, pur informativi, possano introdurre ridondanza
+che rende la sintesi della risposta meno fluida. Si segnala che il campione di valutazione
+per la Coherence è ridotto rispetto alle altre metriche (19--20 domande valide su 32
+per C1 e C4; 27/32 per C2 e C3), il che riduce la significatività statistica del
+confronto su questa metrica.
+
+\subsubsection{Consapevolezza dell'ambito (Scope Awareness)}
+
+Il tasso di rifiuto corretto delle domande fuori ambito segue una traiettoria non
+monotona: C1 (37.5\%, 3/8) $\to$ C2 (50.0\%, 4/8) $\to$ C3 (75.0\%, 6/8) $\to$
+C4 (50.0\%, 4/8). Il picco in C3 indica che l'embedding Qwen3, addestrato su un
+corpus più ampio e con dimensionalità quattro volte superiore, distingue meglio
+tra contenuto specifico del DIEM e conoscenza generica fuori ambito. La regressione
+in C4 (50\%), nonostante l'uso dello stesso embedding, è probabilmente dovuta ai
+chunk più grandi: frammenti più estesi aumentano la probabilità di includere
+contenuto parzialmente fuori dominio, inducendo il modello a rispondere invece di
+applicare il guardrail di rifiuto.
+
+\subsubsection{Robustezza (Robustness)}
+
+Il miglioramento più marcato dell'intera sperimentazione riguarda la robustezza:
+C1 (33.3\%, 2/6) $\to$ C2 (83.3\%, 5/6, $+150\%$). Il modello cloud dimostra
+superiorità netta nella gestione di scenari avversariali, domande ambigue e challenge
+alle risposte precedenti. Il calo C2$\to$C3 (66.7\%, 4/6) coincide con il cambio
+di store e di embedding: la differente distribuzione dei contesti recuperati può
+alterare il comportamento del guardrail su certi pattern avversariali specifici.
+C4 mantiene il valore di C3 (66.7\%), confermando che la variazione delle dimensioni
+dei chunk non influisce in misura significativa sulla robustezza.
+
+\subsection{Riepilogo dell'Evoluzione}
+\label{subsec:evolution_summary}
+
+Le Figure~\ref{fig:ragas_metrics} e~\ref{fig:scope_robust} visualizzano l'evoluzione
+delle metriche Ragas e dei criteri custom sulle quattro configurazioni.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  ybar,
+  bar width=9pt,
+  width=0.96\textwidth,
+  height=7.5cm,
+  enlarge x limits=0.10,
+  legend style={
+    at={(0.5,-0.22)}, anchor=north,
+    legend columns=4,
+    font=\small,
+    /tikz/every even column/.append style={column sep=0.4em}
+  },
+  ylabel={Punteggio},
+  ymin=0, ymax=1.05,
+  ytick={0,0.2,0.4,0.6,0.8,1.0},
+  xtick={1,2,3,4,5,6},
+  xticklabels={{Resp.\ Relevancy},{Faithfulness},{Ans.\ Correctness},
+               {Ctx.\ Precision},{Ctx.\ Recall},{Coherence}},
+  xticklabel style={font=\footnotesize, rotate=28, anchor=east},
+  grid=major,
+  grid style={dotted, gray!35},
+]
+\addplot[fill=blue!60, draw=blue!80!black] coordinates
+  {(1,0.703)(2,0.764)(3,0.537)(4,0.711)(5,0.737)(6,0.737)};
+\addplot[fill=orange!65, draw=orange!80!black] coordinates
+  {(1,0.877)(2,0.664)(3,0.603)(4,0.526)(5,0.797)(6,0.815)};
+\addplot[fill=green!50!black!70, draw=green!60!black] coordinates
+  {(1,0.681)(2,0.696)(3,0.527)(4,0.584)(5,0.820)(6,0.815)};
+\addplot[fill=purple!55, draw=purple!75!black] coordinates
+  {(1,0.717)(2,0.675)(3,0.597)(4,0.667)(5,0.799)(6,0.750)};
+\legend{C1 (baseline locale), C2 (LLM cloud), C3 (embed.\ cloud), C4 (chunk ottim.)}
+\end{axis}
+\end{tikzpicture}
+\caption{Metriche Ragas per le quattro configurazioni. Ogni gruppo di quattro barre
+         corrisponde a una metrica; i colori distinguono le configurazioni.}
+\label{fig:ragas_metrics}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  ybar,
+  bar width=16pt,
+  width=0.60\textwidth,
+  height=6.0cm,
+  enlarge x limits=0.40,
+  legend style={
+    at={(1.05,0.5)}, anchor=west,
+    legend columns=1,
+    font=\small
+  },
+  ylabel={Pass rate},
+  ymin=0, ymax=1.05,
+  ytick={0,0.2,0.4,0.6,0.8,1.0},
+  xtick={1,2},
+  xticklabels={{Scope Awareness},{Robustness}},
+  xticklabel style={font=\small},
+  grid=major,
+  grid style={dotted, gray!35},
+]
+\addplot[fill=blue!60, draw=blue!80!black] coordinates {(1,0.375)(2,0.333)};
+\addplot[fill=orange!65, draw=orange!80!black] coordinates {(1,0.500)(2,0.833)};
+\addplot[fill=green!50!black!70, draw=green!60!black] coordinates {(1,0.750)(2,0.667)};
+\addplot[fill=purple!55, draw=purple!75!black] coordinates {(1,0.500)(2,0.667)};
+\legend{C1, C2, C3, C4}
+\end{axis}
+\end{tikzpicture}
+\caption{Pass rate per Scope Awareness (8~scenari out-of-scope) e Robustness
+         (6~scenari avversariali) nelle quattro configurazioni.}
+\label{fig:scope_robust}
+\end{figure}
+
+Il passaggio dal baseline locale (C1) alla configurazione finale (C4) produce
+guadagni netti sostanziali su Robustness ($+100\%$, da 33.3\% a 66.7\%),
+Scope Awareness ($+33.3\%$, da 37.5\% a 50.0\%) e AnswerCorrectness ($+11.2\%$,
+da 0.537 a 0.597), con LLMContextRecall in miglioramento dell'$8.4\%$ (da 0.737
+a 0.799). A fronte di questi guadagni si osservano regressioni su Faithfulness
+($-11.6\%$, da 0.764 a 0.675) e LLMContextPrecision ($-6.2\%$, da 0.711 a 0.667),
+entrambe spiegabili con l'allargamento del retrieval (soglia più bassa, CrossK
+maggiore) e la tendenza dei modelli di larga scala a integrare conoscenza esterna ---
+un compromesso accettabile in un sistema orientato alla copertura e alla robustezza
+conversazionale.
+
+%% ============================================================
 \section{Discussione}
 \label{sec:discussion}
 
