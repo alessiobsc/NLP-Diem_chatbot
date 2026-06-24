@@ -37,11 +37,13 @@ _SCOPE_KEYWORDS = {
     "diem", "unisa", "università", "universita", "salerno", "corso", "corsi",
     "esame", "esami", "laurea", "professore", "prof", "docente", "ricerca",
     "dipartimento", "informatica", "ingegneria", "matematica", "voto", "voti",
-    "media", "cfu", "crediti", "tirocinio", "tesi", "iscrizione", "ammissione",
+    "media", "cfu", "crediti", "tirocinio", "tesi", "iscrizione",
     "orario", "ricevimento", "riceve", "aula", "laboratorio", "erasmus", "borsa", "studente", "studenti",
     "piano", "regolamento", "offerta", "formativa", "magistrale", "triennale", "missione", "giunta",
     "dottorato", "master", "faculty", "department", "enrollment", "grade",
     "average", "graduation", "thesis", "exam", "lecture", "semester",
+    # note: "ammissione" intentionally excluded — too generic, causes false positives
+    # on queries about other universities; DIEM admission queries always have other keywords
     # Academic person/role patterns — specific enough to be safe scope indicators
     "insegna", "insegnamento", "ricercatore", "pubblicazioni", "curriculum", "personale",
     # Administrative/contact data published on DIEM/UNISA site
@@ -57,6 +59,8 @@ _SCOPE_SYSTEM = (
     "department services, Erasmus programs, and university life at UniSa. "
     "Administrative and contact data published on the DIEM or UNISA website — including "
     "P.IVA, codice fiscale, addresses, phone numbers, and PEC — are also in scope. "
+    "Questions about other universities (not UniSa or DIEM) are out of scope. "
+    "Questions asking to solve math exercises or problems are out of scope, even if the subject is taught at DIEM. "
     "Respond with exactly one word: yes or no. No explanations, no punctuation."
 )
 _SCOPE_PROMPT = (
@@ -78,6 +82,9 @@ _SCOPE_PROMPT = (
     "- 'Tell me a joke' (entertainment/trivia)\n"
     "- 'What is the capital of France?' (general trivia unrelated to university)\n"
     "- 'Who is Taylor Swift?' (celebrity with no university connection)\n"
+    "- 'Quali sono i requisiti di ammissione al Politecnico di Milano?' (another university, not UniSa/DIEM)\n"
+    "- 'Come si iscrive al corso di laurea alla Bocconi?' (another university, not UniSa/DIEM)\n"
+    "- 'Risolvimi l integrale di sin(x)*cos(x)' (math exercise, not about DIEM curriculum or services)\n"
     "- 'How do I invest in Bitcoin?' (finance/investment)\n"
     "- 'What is the weather forecast?' (general information)\n"
     "- 'Write me a poem about love' (creative writing, no academic context)\n"

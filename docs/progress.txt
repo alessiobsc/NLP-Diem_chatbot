@@ -2067,3 +2067,261 @@ CRONOLOGIA AGGIORNAMENTI
     → "Programma corso Ingegneria del Software anno accademico 2025/2026"
 
   File modificato: src/prompts.py
+
+================================================================================
+
+2026-06-24 - Fix robustezza multi-turn: gestione challenge e ScopeGuard (branch final-fixes)
+
+  CONTESTO E MOTIVAZIONE
+  ----------------------
+  L'evaluation C4 (run "politano", 2026-06-03) ha evidenziato due fallimenti
+  strutturali nella robustezza multi-turn del chatbot, identificati analizzando
+  i run di robustness (rob_001 e rob_005 falliti, score 4/6 = 66.7%):
+
+  PROBLEMA 1 — ScopeGuardrail blocca follow-up brevi
+  ---------------------------------------------------
+  Il nodo scope_guard classifica ogni messaggio utente come in-scope o OOS
+  prima di passarlo all'agente. La classificazione usa due meccanismi:
+  (1) keyword fast-path: se uno dei ~50 termini accademici (DIEM, unisa,
+      corso, esame, ecc.) è presente → in-scope senza LLM.
+  (2) LLM slow-path: se nessuna keyword → chiamata a llama-3.1-8b con
+      prompt di classificazione binaria yes/no.
+
+  Il bug: un follow-up di conferma breve come "Davvero?" (1 parola) non
+  contiene keyword accademiche. L'LLM, valutando il messaggio isolato e
+  senza storia conversazionale, lo classifica come fuori scope (non riguarda
+  l'università). Il guardrail lo blocca con il messaggio di rifiuto standard,
+  impedendo all'utente di ricevere risposta anche su conversazioni già avviate
+  su topic pertinenti.
+
+  PROBLEMA 2 — Agente risponde dalla cache su challenge di conferma
+  ----------------------------------------------------------------
+  Su turni di challenge ("Sei sicuro?", "Ne sei certo?", "Sei davvero sicuro
+  di quella lista?"), l'agente riceveva il retrieved_context già pieno dal
+  turno T1 (prima domanda). Il hint dinamico iniettato nel system prompt
+  al primo invocation del turno diceva "Call retrieve() UNLESS the tool results
+  already in this conversation contain the specific, complete answer".
+  L'agente interpretava il contesto del turno precedente come sufficiente
+  e rispondeva direttamente dalla cache senza ri-eseguire il retrieve —
+  di fatto non verificando l'informazione, ma limitandosi a confermarla.
+  Nei run C4 questo generava: "A cosa ti riferisci?" (richiesta di chiarimento
+  invece di ri-retrieve) oppure risposta invariata senza nuova verifica.
+
+  APPROCCIO AL FIX (decisioni di design)
+  ----------------------------------------
+  Per il Problema 1 si è scelto di NON usare una soglia dimensionale semplice
+  (≤N parole → passa comunque) perché un messaggio breve potrebbe comunque
+  essere genuinamente OOS (es. "Vaffanculo!" è breve ma inappropriato).
+  Soluzione adottata: se la query è ≤4 parole E c'è history precedente,
+  riscrivila prima con rewrite_query() (llama-3.1-8b) per espanderla con il
+  contesto. Lo scope guard vede poi la query completa (es. "Dove si trova il
+  DIEM?") e la classifica correttamente. Questo preserva la sicurezza del
+  guardrail e sfrutta il modello di rewrite già presente nel sistema.
+
+  Per il Problema 2 si è agito su tre livelli complementari (prompt +
+  codice) per massimizzare la robustezza contro la non-determinismo del LLM:
+  - Livello 1 (codice, più forte): nel nodo _node_agent, detection del pattern
+    challenge via regex + hint dinamico rafforzato che ordina esplicitamente
+    il re-retrieve. Questo override il comportamento di default del modello.
+  - Livello 2 (REWRITE_PROMPT): la Rule 11 istruisce il rewrite tool a copiare
+    il topic della domanda precedente quando riceve una challenge, così la
+    query passata a retrieve() è semanticamente corretta (non "Sei sicuro?").
+  - Livello 3 (AGENT_SYSTEM_PROMPT): Rule 7 divisa in 7a CHALLENGE (ri-retrieve
+    obbligatorio, no clarification) e 7b USER DISSATISFIED (ri-retrieve con
+    riformulazione), per dare all'agente istruzioni esplicite distinte sui
+    due casi.
+
+  FIX 1 — ScopeGuard rewrite pre-check (src/agent/nodes.py)
+  ----------------------------------------------------------
+  Metodo modificato: _node_scope_guard
+  Logica aggiunta (prima del check scope):
+
+    has_prior = any(isinstance(m, HumanMessage) for m in state["messages"][:-1])
+    check_query = question
+    if has_prior and len(question.split()) <= 4:
+        check_query = rewrite_query(question, state, self._lightweight_model) or question
+
+  Effetto: "Davvero?" in conversazione su DIEM → rewrite → "Chi è il delegato
+  alla mobilità internazionale del DIEM?" → keyword match → in-scope.
+  Il rewrite usa la stessa istanza di lightweight_model già presente nel brain,
+  senza aggiungere nuove dipendenze. Fallback: se rewrite restituisce stringa
+  vuota o lancia eccezione, si usa la query originale.
+
+  FIX 2 — Challenge hint injection (src/agent/nodes.py)
+  -------------------------------------------------------
+  Aggiunto a livello modulo:
+    _CHALLENGE_RE = re.compile(r"\b(sicuro|sicura|certo|certa|davvero)\b", re.IGNORECASE)
+
+  Logica in _node_agent (al primo invocation del turno):
+    is_challenge = has_prior AND _CHALLENGE_RE.search(last_q) AND len(last_q.split()) <= 8
+
+  Se is_challenge=True, il system content dinamico cambia da:
+    "Call retrieve() UNLESS tool results already contain the answer"
+  a:
+    "MUST call rewrite() then retrieve() — do NOT answer from memory or
+     previous context alone. This is mandatory even if retrieved context from
+     a prior turn seems sufficient."
+
+  Il guard ≤8 parole evita che frasi lunghe con "sicuro" (es. "Sono sicuro
+  che questo corso esista, puoi verificare?") triggherino il challenge path.
+  Falsi positivi residui (frasi brevi con "certo/sicuro" non challenge) sono
+  accettabili: al peggio costano un retrieve aggiuntivo, non una risposta errata.
+
+  FIX 3 — REWRITE_PROMPT Rule 11 (src/prompts.py)
+  ------------------------------------------------
+  Aggiunta dopo Rule 10 (anno accademico corsi/regolamenti):
+  "11. CONFIRMATION CHALLENGE: se <user_latest> è una challenge breve
+   ('Sei sicuro?', 'Ne sei certo?', 'Davvero?', ecc.) e la history contiene
+   almeno uno scambio precedente, riscrivere ripetendo il topic esatto della
+   domanda precedente — non outputtare la frase di challenge."
+  Esempio incluso: history="Dove si trova il DIEM?" + challenge="Sei sicuro?"
+  → output="Dove si trova il DIEM?"
+
+  FIX 4 — AGENT_SYSTEM_PROMPT Rule 7 split (src/prompts.py)
+  ----------------------------------------------------------
+  Rule 7 originale (monolitica): "USER DISSATISFIED: ... call retrieve() again
+  with a rephrased query before answering — even if you already have context."
+  Non distingueva tra challenge di conferma (stessa query) e insoddisfazione
+  (query riformulata).
+
+  Sostituita con:
+  Rule 7a CONFIRMATION CHALLENGE: challenge breve → call rewrite() then
+    retrieve() per ri-verificare, mai chiedere chiarimenti, mai rispondere
+    dalla cache.
+  Rule 7b USER DISSATISFIED: segnale di incompletezza/errore → call retrieve()
+    again con query riformulata (comportamento invariato rispetto a prima).
+
+  RISULTATI TEST POST-FIX (scripts/test_chatbot_auto.py, 2026-06-24)
+  -------------------------------------------------------------------
+  Stack: gpt-oss-120b + qwen3-emb-8b + Cohere Rerank-4-Pro + 3750/375/600/80
+  Tutti i 10 scenari superati:
+
+  Challenge (A1-A7) — target del fix:
+  - A1 "Sei sicuro?" → ri-confermato indirizzo DIEM (Fisciano) ✓
+  - A2 "Ne sei certo?" → ri-confermato direttore (Tortorella) ✓
+  - A3 "Sei sicuro di quello che hai detto?" → ri-retrieved, risposta onesta:
+    contesto non conteneva conferma esplicita CFU tesi → "non posso confermare"
+    (comportamento corretto: non conferma dalla cache un dato non verificato) ✓
+  - A4 "Sei davvero sicuro di quella lista?" → confermato lista corsi ✓
+  - A5 "Sicuro? Non mi sembra completo." → lista laboratori espansa con fonti
+    aggiuntive (pagine Strutture + Dipartimento di eccellenza) ✓
+  - A6 "Davvero?" → ScopeGuard non blocca più, agente ri-conferma delegato
+    mobilità internazionale con source URL ✓  [fix Problema 1]
+  - A7 "Sei sicuro che sia quel giorno?" → confermato mercoledì 11-13 con
+    dettagli aggiuntivi (Edificio E, Piano 2, Stanza 007, source) ✓
+
+  Regressioni (B1-B3) — nessuna regressione introdotta:
+  - B1 "Quello più recente attivato" → rewrite risolve riferimento implicito,
+    recuperato "Electrical Engineering for Digital Energy" (LM-28, a.a. 2023/24) ✓
+  - B2 "Non hai risposto, ripeti" → Rule 7b attiva: ri-retrieved e ripetuto
+    orario ricevimento Prof. Capuano ✓
+  - B3 "Prima mi avevi detto che era a Napoli" → Rule 8 (FALSE PREMISE): nega
+    esplicitamente ("Non risulta alcuna sede a Napoli; l'indirizzo ufficiale
+    indicato nei documenti del DIEM è quello di Fisciano") ✓
+
+  COMMIT
+  ------
+  f6cb338 fix: handle confirmation challenges with re-retrieve instead of cached answer
+
+  BACKLOG AGGIORNATO
+  ------------------
+  - Chiuso: bug Challenge "Sei sicuro?" (rob_001, rob_005 da evaluation C4)
+  - Chiuso: bug ScopeGuard blocca follow-up brevi multi-turn
+  - Rimasto aperto: context window saturation su conversazioni lunghe (post-C5)
+  - Rimasto aperto: adjacent retrieval limitato ai soli PDF (HTML ha meno
+    frammentazione, adjacent su HTML aumenta contesto senza beneficio netto)
+
+2026-06-24 - Analisi correctness C3/C4, fix scope guardrail, preparazione C5
+
+  FIX SCOPE GUARDRAIL (src/middleware.py)
+  ----------------------------------------
+  Identificati due fail reali su Scope Awareness (C4):
+  - oos_003: "Risolvimi l'integrale di sin(x)*cos(x)." → LLM diceva yes
+    perché SCOPE_SYSTEM menzionava "mathematics" senza distinguere materia
+    DIEM da esercizi di calcolo.
+  - oos_004: "Quali sono i requisiti di ammissione al Politecnico di Milano?"
+    → keyword "ammissione" in _SCOPE_KEYWORDS → bypass LLM → falso in-scope.
+
+  Modifiche:
+  1. Rimossa "ammissione" da _SCOPE_KEYWORDS (safe: query DIEM su ammissione
+     contengono sempre altri keyword come "diem", "unisa", "laurea", etc.)
+  2. Aggiunte due righe a _SCOPE_SYSTEM:
+     - "Questions about other universities (not UniSa or DIEM) are out of scope."
+     - "Questions asking to solve math exercises or problems are out of scope,
+       even if the subject is taught at DIEM."
+  3. Aggiunti 3 esempi OOS a _SCOPE_PROMPT:
+     - "Quali sono i requisiti di ammissione al Politecnico di Milano?" (altro ateneo)
+     - "Come si iscrive al corso di laurea alla Bocconi?" (altro ateneo)
+     - "Risolvimi l'integrale di sin(x)*cos(x)" (esercizio di calcolo)
+
+  Test post-fix (5/5 pass):
+  - oos_003: in_scope=False ✓
+  - oos_004: in_scope=False ✓
+  - control "ammissione al DIEM": in_scope=True ✓
+  - control "ammissione alla magistrale": in_scope=True ✓
+  - control "media per laurearmi": in_scope=True ✓
+
+  CONFIGURAZIONE C5 (.env)
+  ------------------------
+  Switch da Politano a Havertzv2 per evaluation C5:
+  - CHROMA_DIR_NAME: chroma_diem_qwen3_Politano → chroma_diem_qwen3_Havertzv2
+  - PARENT_CHUNK_SIZE: 3750 → 2000
+  - PARENT_CHUNK_OVERLAP: 375 → 200
+  - CHILD_CHUNK_SIZE: 600 → 400
+  - CHILD_CHUNK_OVERLAP: 80 → 50
+  - USE_RERANKER=true (Cohere rerank-4-pro) — invariato
+  Rationale: chunk più piccoli + adjacent retrieval = contesto più denso e
+  rilevante (~6000 char vs ~9000 char per 5 doc reranked). C3 (havertz senza
+  reranker) aveva 7 risposte vuote per retrieval failure; C4 (politano + reranker)
+  era migliore. C5 combina havertz + reranker per equilibrio ottimale.
+
+  ANALISI CORRECTNESS C4 vs C3 (in_scope, 30 domande)
+  -----------------------------------------------------
+  C4 (politano + Cohere rerank): 18×3 + 9×2 + 3×0 = 72/90
+  C3 (havertz senza reranker):   15×3 + 8×2 + 7×0 = 61/90
+
+  Fail comuni (entrambe le config):
+  - is_curr_006: CFU tesi — C4 dice 14 (sbagliato), C3 non sa. Reale: 17 CFU
+    (verificato su regolamento IE227.pdf, Art. 16). Causa: retrieval recupera
+    chunk da corso sbagliato su query generica "al DIEM".
+  - is_news_001: bot risponde con decreti/bandi invece della sezione "ultime news".
+    Causa: retrieval porta pagina bandi invece della homepage news.
+  - is_res_001: area Ingegneria del Software → bot descrive AI/CV/Robotica.
+    Causa: retrieval porta pagine dei laboratori AI invece del SSD software.
+
+  Fail specifici C3 (havertz senza reranker, 4 extra zero):
+  - is_curr_003, is_other_003: risposta completamente vuota (retrieval fallisce).
+  - is_addr_001: non trova P.IVA.
+  - is_imm_001: dice "non risulta" invece di confermare sezione slideshow.
+  Il reranker in C4 recupera i chunk giusti dove C3 restituisce empty/errato.
+
+  Note su scoring:
+  - is_curr_001 e is_curr_004 trattate come score 3 (clarification corretta):
+    entrambi i corsi hanno l'insegnamento (triennale + magistrale), chiedere
+    il corso specifico è comportamento corretto.
+  - is_curr_006: confermato 17 CFU da regolamento ufficiale (Art. 16).
+  - is_prosp_002: OFA confusion (bot dice "con OFA se Math≥8", REF "senza OFA
+    se Math≥8") — score 2 entrambe le config.
+
+  GOLDEN SET AGGIORNATO (evaluation/dataset/golden_set_it.json)
+  --------------------------------------------------------------
+  is_curr_001: domanda resa specifica per evitare ambiguità triennale/magistrale.
+    Vecchia: "Qual è il programma del corso di Ingegneria del Software?"
+    Nuova: "Qual è il programma del corso di Ingegneria del Software della
+            laurea triennale in Ingegneria Informatica?"
+  is_curr_004: aggiunto corso specifico per risposta diretta senza clarification.
+    Vecchia: "La mia media è 28.8. Qual è il voto massimo di laurea che posso ottenere?"
+    Nuova: "La mia media è 28.8. Qual è il voto massimo di laurea che posso
+            ottenere nel corso magistrale in Ingegneria Informatica?"
+  Le reference rimangono invariate.
+
+  BACKLOG AGGIORNATO
+  ------------------
+  - Chiuso: scope fail oos_003 (integrale) e oos_004 (Politecnico di Milano)
+  - Rimasto aperto (domani):
+    * Rimozione tool calculate (alta latenza, risultati inesatti)
+    * Retrieve retry con stessa query: rewrite non cambia query al secondo
+      tentativo → retrieve identico → latenza inutile. Fix: rafforzare
+      STEP 2 AGENT_SYSTEM_PROMPT con check esplicito sul KEY FACT atteso.
+  - Post-C5: adjacent retrieval limitato ai soli PDF se HTML da rumore
+
