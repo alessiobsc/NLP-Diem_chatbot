@@ -140,16 +140,30 @@ class DiemNodes:
         system = SystemMessage(content=system_content)
 
         # Find start of current turn: everything before the last HumanMessage is history
-        last_human_idx = max(
-            (i for i, m in enumerate(state["messages"]) if isinstance(m, HumanMessage)),
-            default=-1,
+        human_indices = [i for i, m in enumerate(state["messages"]) if isinstance(m, HumanMessage)]
+        last_human_idx = human_indices[-1] if human_indices else -1
+        # sliding window: drop tool pairs older than 5 turns to prevent context bloat
+        cutoff_idx = human_indices[-5] if len(human_indices) > 5 else 0
+
+        dropped = sum(
+            1 for i, m in enumerate(state["messages"])
+            if i < cutoff_idx and (
+                isinstance(m, ToolMessage)
+                or (isinstance(m, AIMessage) and getattr(m, "tool_calls", None))
+            )
         )
+        if dropped:
+            logger.info(f"agent | sliding_window | kept_turns=5 | dropped_tool_msgs={dropped}")
 
         clean_messages = []
-        for m in state["messages"]:
-            # Replace guardrail-injected AIMessages with placeholder across all turns.
-            # ToolMessages and tool-call AIMessages are kept so the agent can reuse
-            # previously retrieved context when answering follow-up questions.
+        for i, m in enumerate(state["messages"]):
+            # strip ToolMessages and tool-call AIMessages from turns outside the window
+            if i < cutoff_idx and (
+                isinstance(m, ToolMessage)
+                or (isinstance(m, AIMessage) and getattr(m, "tool_calls", None))
+            ):
+                continue
+            # replace guardrail-injected AIMessages with placeholder across all turns
             if (
                 isinstance(m, AIMessage)
                 and not getattr(m, "tool_calls", None)

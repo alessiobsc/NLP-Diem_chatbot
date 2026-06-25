@@ -2325,3 +2325,114 @@ CRONOLOGIA AGGIORNAMENTI
       STEP 2 AGENT_SYSTEM_PROMPT con check esplicito sul KEY FACT atteso.
   - Post-C5: adjacent retrieval limitato ai soli PDF se HTML da rumore
 
+2026-06-25 - Retrieve retry rewrite-aware, sliding window pruning, name hallucination fix
+
+  RETRIEVE RETRY — REWRITE RETRY-AWARE (src/agent/tools.py, nodes.py, prompts.py)
+  ---------------------------------------------------------------------------------
+  Problema: su retry retrieve, agente ri-chiamava retrieve con stessa query o
+  query riscritta identica → latenza inutile, nessun beneficio. Root cause:
+  _node_agent forzava query dell'ultima rewrite anche su retry, e rewrite()
+  produceva sempre lo stesso output perché non aveva contesto del tentativo
+  precedente.
+
+  Soluzione in 3 parti:
+
+  1. src/agent/tools.py — rewrite() retry-aware:
+     Aggiunta detection di ToolMessage precedente con name=="rewrite" dopo
+     l'ultima HumanMessage. Se trovato (= retry), prompt dinamico con:
+       <previous_query>: output della prima rewrite
+       <retry_instruction>: strategia in ordine di priorità:
+         1. Se previous_query diversa da user_latest (termini aggiunti, phrasing
+            cambiato): avvicinarsi alla query utente raw rimuovendo elementi
+            aggiunti
+         2. Solo se already identica: esplorare angolo semantico diverso
+     Se non trovato (= prima chiamata): comportamento invariato.
+     Aggiornato docstring: "Call BEFORE every retrieve(), including retry
+     retrieves — on retries, automatically produces a diversified query."
+     Rimossa istruzione contradditoria "Skip ONLY if retrieve() was already called".
+
+  2. src/agent/nodes.py — _node_agent usa ULTIMA rewrite:
+     Cambiato next() → reversed() nell'override retrieve query:
+       next((m.content for m in reversed(state["messages"][current_turn_start:])
+             if isinstance(m, ToolMessage) and m.name == "rewrite"), None)
+     Garantisce che su retry retrieve l'override usi l'output della seconda
+     rewrite (quella diversificata) e non della prima.
+
+  3. src/prompts.py — AGENT_SYSTEM_PROMPT STEP 1 aggiornato:
+     Vecchio: "call ALWAYS before the first retrieve() of each turn" +
+              "Skip rewrite() ONLY if..." + "rephrase the query yourself"
+     Nuovo: "call ALWAYS before EVERY retrieve(), including retry retrieves" +
+            "On retries, rewrite() automatically handles query diversification —
+            call it again before each retry retrieve() and it will generate a
+            different query."
+     Rimossa istruzione "rephrase the query yourself" (ora gestito da rewrite).
+     Rimossa da docstring retrieve(): "never retry with the identical query string".
+
+  Impatto atteso: retrieve retry ora prova prima la query utente raw (se rewrite
+  aveva aggiunto termini), poi angoli semantici diversi. Prima retrieve invariata
+  → nessuna regressione sui casi che già funzionano.
+
+  FIX HALLUCINATION NOMI PROPRI (src/prompts.py)
+  ------------------------------------------------
+  Problema: agente storpiava occasionalmente nomi/cognomi da documenti recuperati
+  (es. "Saggese" → "Sagese", nomi laboratori abbreviati).
+  Fix: aggiunta regola esplicita al rule 6 (NO HALLUCINATION) in AGENT_SYSTEM_PROMPT:
+    "Never alter, abbreviate, or paraphrase names, surnames, or proper nouns
+    found in retrieved documents — copy them verbatim."
+
+  SLIDING WINDOW CONTEXT PRUNING (src/agent/nodes.py)
+  ----------------------------------------------------
+  Problema: su conversazioni lunghe (>5-6 turni) accumulo di ToolMessages con
+  retrieve context completo → token bloat → degradazione qualità risposte,
+  potenziale confusione modello (es. tool "search" non esistente).
+
+  Fix in _node_agent: sliding window che mantiene solo ultimi 5 turni:
+    cutoff_idx = human_indices[-5] if len(human_indices) > 5 else 0
+    for i, m in enumerate(state["messages"]):
+        if i < cutoff_idx and (isinstance(m, ToolMessage) or
+           (isinstance(m, AIMessage) and getattr(m, "tool_calls", None))):
+            continue  # drop old tool pairs
+        ...  # keep Human/AI text pairs from all turns
+
+  Turni >5 conservano solo messaggi Human (domanda) e AI text (risposta finale),
+  senza ToolMessages (retrieve context) e senza AIMessages con tool_calls.
+  Turni ultimi 5: tutto conservato.
+  Guardrail placeholder replacement (già presente) applicato su tutti i turni.
+
+  Nessun impatto su funzionalità: MemorySaver conserva stato completo, pruning
+  avviene solo nella vista che il modello riceve, non nel grafo persistente.
+
+  TEST AGGIUNTI
+  -------------
+  tests/test_rewrite_retry.py (nuovo file, 3 test):
+  - test_rewrite_first_call_no_previous_query: prima chiamata → no tag retry
+  - test_rewrite_retry_includes_previous_query_tag: retry → <previous_query> presente
+  - test_rewrite_retry_uses_last_rewrite_output_as_previous_query: 2 rewrite in
+    sequenza → previous_query = output seconda rewrite (non prima)
+
+  tests/test_brain_agentic.py (4 test aggiunti):
+  - test_node_agent_retrieve_override_uses_last_rewrite_output: 2 ToolMessage
+    rewrite in state → retrieve override usa il secondo
+  - test_agent_system_prompt_does_not_say_rephrase_yourself: verifica rimozione
+  - test_agent_system_prompt_says_rewrite_before_every_retrieve: verifica STEP 1
+  - test_retrieve_docstring_does_not_say_never_retry_identical: verifica docstring
+
+  COMMIT
+  ------
+  (commit separati per ogni task — messaggi forniti all'utente, commit eseguiti
+  manualmente)
+  Task 1: feat(tools): make rewrite() retry-aware with diversified query strategy
+  Task 2: fix(nodes): use last rewrite ToolMessage output for retrieve override
+  Task 3: feat(prompts): update STEP 1 to require rewrite() before every retrieve
+  Fix docstring: fix(tools): remove contradictory rewrite() docstring instruction
+  Fix nomi: feat(prompts): add verbatim proper noun rule to prevent hallucination
+  Sliding window: feat(nodes): sliding window pruning — drop tool pairs older than 5 turns
+
+  BACKLOG AGGIORNATO
+  ------------------
+  - Chiuso: retrieve retry rewrite-aware
+  - Chiuso: sliding window context pruning (>5 turni)
+  - Rimasto aperto:
+    * Rimozione tool calculate (alta latenza, risultati inesatti)
+    * Adjacent retrieval: valutare limitazione ai soli PDF se HTML introduce rumore
+

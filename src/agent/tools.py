@@ -29,13 +29,11 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
     @tool
     def rewrite(query: str, state: Annotated[dict, InjectedState]) -> str:
         """Rewrite the user's latest message into a self-contained, standalone search query.
-        Call BEFORE the first retrieve() of every turn — even for self-contained queries.
-        rewrite() resolves pronouns, injects the academic year, and adapts phrasing to knowledge
-        base terminology while keeping the query minimal. It does not add generic institutional
-        terms unless needed to resolve an implicit reference. Skip ONLY if retrieve() was already
-        called in this turn.
-        Returns the rewritten query as a string. After calling this tool you MUST immediately
-        call retrieve() with the returned string as the query — do not modify it, do not generate an answer first."""
+        Call BEFORE every retrieve(), including retry retrieves — on retries, automatically
+        produces a diversified query. rewrite() resolves pronouns, injects the academic year,
+        and adapts phrasing to knowledge base terminology while keeping the query minimal.
+        It does not add generic institutional terms unless needed to resolve an implicit reference.
+        Returns the rewritten query as a string."""
         from src.agent.brain import extract_text
         from src.prompts import REWRITE_PROMPT, REJECTION_TAGS
         from src.middleware import _SCOPE_REJECTION, _OFFENSIVE_FALLBACK
@@ -67,7 +65,7 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
                 # to a failed/rejected turn.
                 if text and not any(text.startswith(p) for p in _GUARDRAIL_PREFIXES):
                     history_lines.append(f"AI: {text}")
-        history_str = "\n".join(history_lines[-6:])
+        history_str = "\n".join(history_lines[-2:])
 
         if query != user_query:
             logger.info(f"rewrite | ignoring agent-expanded query: '{query}'")
