@@ -109,8 +109,7 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
     def retrieve(query: str) -> str:
         """Search the DIEM knowledge base and return relevant document excerpts.
         ALWAYS call this before generating any answer — context is mandatory.
-        If the returned context is empty or off-topic, retry with a rephrased or broader query
-        (never retry with the identical query string).
+        If the returned context is empty or off-topic, call rewrite() again then retry retrieve().
         Returns formatted document excerpts as a string."""
         from src.agent.brain import rerank, format_context
 
