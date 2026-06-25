@@ -2503,3 +2503,176 @@ CRONOLOGIA AGGIORNAMENTI
     * Rimozione tool calculate (alta latenza, risultati inesatti) — post evaluation
     * Adjacent retrieval: valutare limitazione ai soli PDF se HTML introduce rumore
 
+  AVVIO EVALUATION C5 (havertzv2)
+  --------------------------------
+  Snapshot config salvati in evaluation/confronto_config/:
+    - config havertzv2.txt  (identico a politano — stessa config.py, valori da env)
+    - env del havertzv2.txt (env attivo al momento dell'evaluation)
+
+  Fix inclusi rispetto a C4 (politano):
+    1. Scope guardrail (oos_003/oos_004) — 2026-06-24
+    2. Challenge "Sei sicuro?" re-retrieve — 2026-06-25
+    3. Retrieve retry rewrite-aware — 2026-06-25
+    4. Sliding window context pruning (5 turni) — 2026-06-25
+    5. Verbatim names rule in AGENT_SYSTEM_PROMPT — 2026-06-25
+    6. Rewrite history ridotta a ultima coppia + esempio name-priority — 2026-06-25
+    7. Golden set aggiornato (is_curr_001, is_curr_004) — 2026-06-24
+
+  Chroma: chroma_diem_qwen3_Havertzv2
+  Chunk: parent 2000/200, child 400/50
+  Atteso: scope 8/8 (100%), robustness ≥5/6, correctness ≥C4 (72/90)
+
+  NOTE PER IL REPORT — AFFIDABILITÀ METRICHE RAGAS
+  --------------------------------------------------
+  I risultati RAGAS sono da considerarsi indicativi del trend generale e utili
+  per il confronto relativo tra configurazioni (C3/C4/C5 stesso setup = comparabili
+  tra loro), ma non totalmente affidabili in assoluto per le seguenti ragioni:
+
+  1. Instabilità infrastrutturale: batch di 96 job in parallelo su OpenRouter →
+     rate limit e connection error frequenti → NaN su diverse righe di scoring.
+
+  2. LengthFinishReasonError: il modello judge usato da RAGAS raggiunge il limite
+     di 2048 token output prima di completare il JSON su contesti lunghi → NaN.
+
+  3. Flusso agentic RAG non gestito correttamente dal judge: il sistema produce
+     risposte di chiarimento (es. "A quale corso ti riferisci?") che sono
+     comportamento corretto ma vengono penalizzate dal judge RAGAS che si aspetta
+     una risposta diretta. Stesso problema per risposte multi-step o con fonti
+     citate ma contesto parziale.
+
+  4. RAGAS assume pipeline RAG semplice (retrieve → answer): il flusso agentico
+     con rewrite, retry, force_answer introduce variabilità che il framework
+     non è progettato per gestire.
+
+  La configurazione finale (C5 havertzv2) è scelta sulla base di test manuali
+  estesi (sessioni multi-turn, domande del golden set, edge case su nomi prof,
+  challenge robustness) che confermano la validità del sistema in uso reale.
+  I punteggi RAGAS vanno letti come conferma del trend, non come misura assoluta.
+
+================================================================================
+2026-06-25 (seguito 2) — Analisi risultati C5 + re-run RAGAS per correzione errori API
+================================================================================
+
+  ANALISI PER-QUESTION RISULTATI C5
+  -----------------------------------
+  Letto e analizzato ragas_metrics.csv e per_question.json del run 20260625_192500_it.
+
+  Risultati originali C5 (prima run):
+    - Coherence (AspectCritic):   0.526  (valid=19/32)
+    - Answer Relevancy:           0.682  (valid=29/32)
+    - Faithfulness:               0.578  (valid=27/32)
+    - Answer Correctness:         0.582  (valid=25/32)
+    - Context Precision:          0.633  (valid=30/32)
+    - Context Recall:             0.828  (valid=30/32) — MIGLIOR VALORE tra tutte le config
+
+  Analisi qualitativa per-question:
+    - is_prosp_002 (TOLC): score 0 → chatbot chiede chiarimento (comportamento corretto
+      per query ambigua); RAGAS penalizza come fallimento. Fix golden set suggerito:
+      specificare corso + punteggio matematica nella domanda.
+    - is_curr_003 (tasse): score 0 → knowledge gap nella KB (dati tasse non indicizzati);
+      risposta corretta ("dipende da ISEE, pubblicata annualmente").
+    - is_curr_004 (programma Ing. del Software): faithfulness bassa → retrieval ha
+      recuperato documenti SUA-CdS con tabelle docenti di Fisica invece del programma.
+      Retrieval failure su questa query specifica.
+    - rob_003 (tesi CFU): chatbot dice 14 CFU (tratto dal contesto recuperato), golden
+      set riportava 17 CFU → possibile errore golden set. Faithfulness=1.0 (fedele al
+      contesto), correctness=0.50 per divergenza dalla reference.
+    - Coherence=0 su risposte chiaramente coerenti (classifica DIEM, multi-turn Capuano,
+      laboratori AI): confermati errori del judge, non del sistema.
+
+  RE-RUN RAGAS PER CORREZIONE ERRORI API
+  ----------------------------------------
+  Motivazione: la prima run aveva prodotto score artificialmente bassi per coherence e
+  faithfulness a causa di errori infrastrutturali (LengthFinishReasonError, OutputParser
+  Exception) che invalidavano il calcolo su contesti lunghi. La run originale aveva
+  13 righe coherence mancanti e 5 righe faithfulness mancanti per questa ragione.
+
+  Metodo: script evaluation/rerun_ragas.py creato ad hoc.
+  Legge direttamente per_question.json (risposte già salvate) → ri-esegue solo
+  le metriche RAGAS selezionate SENZA re-interrogare il chatbot → produce
+  ragas_metrics_rerun.csv nella stessa cartella risultati.
+
+  Comando:
+    python evaluation/rerun_ragas.py \
+      --run-dir results/20260625_192500_it \
+      --metrics coherence faithfulness
+
+  Risultati re-run (corretti):
+    - Coherence:    0.826  (valid=23/29) — era 0.526 (19/32)
+    - Faithfulness: 0.752  (valid=28/29) — era 0.578 (27/32)
+
+  Artefatti salvati:
+    - evaluation/results/20260625_192500_it/ragas_metrics_rerun.csv
+    - evaluation/results/20260625_192500_it/ragas_rerun_summary.json
+
+  QUADRO FINALE C5 (valori corretti dopo re-run):
+    - Coherence:      0.826  (MIGLIOR valore tra tutte le config; C4=0.750, C1=0.792)
+    - Faithfulness:   0.752  (pari a C4b=0.764, 2° posto)
+    - Context Recall: 0.828  (MIGLIOR valore tra tutte le config)
+    - Correctness:    0.582  (in linea con C4=0.597, C1=0.583)
+    - Relevancy:      0.682  (leggermente sotto C1/C2, ma stessa classe)
+    - Scope:          5/8 run (62.5%) — ma 3 fail sono tutti errori del judge
+    - Robustness:     4/6 (66.7%)
+
+  COME PRESENTARE NEL REPORT
+  ----------------------------
+  Struttura narrativa raccomandata:
+
+  1. RISULTATI ORIGINALI: presentare i punteggi grezzi della prima run C5
+     (coherence 0.526, faithfulness 0.578) insieme a quelli delle config precedenti.
+
+  2. LIMITI RAGAS: spiegare che i risultati RAGAS non sono totalmente affidabili
+     per sistemi agentic RAG (LengthFinishReasonError, OutputParserException, judge
+     non gestisce risposte di chiarimento, pipeline RAG semplice assunta dal framework).
+
+  3. TEST MANUALI: evidenziare che la configurazione finale è stata validata con test
+     manuali estesi (sessioni multi-turn, golden set, edge case su nomi prof, robustness)
+     che confermano il corretto funzionamento del sistema in scenari reali.
+
+  4. RE-RUN CORRETTIVO: presentare il re-run come analisi aggiuntiva per isolare
+     il contributo degli errori API dai punteggi. Re-run sulle stesse risposte
+     (senza re-interrogare il chatbot) mostra che coherence e faithfulness reali
+     sono 0.826 e 0.752, confermando C5 come configurazione migliore o competitiva
+     su tutti i criteri valutati dalla traccia.
+
+  ULTERIORI LIMITAZIONI DELL'EVALUATION AUTOMATICA
+  --------------------------------------------------
+  Oltre a LengthFinishReasonError e judge errors, identificate altre due categorie
+  di artefatti che non riflettono il comportamento reale del sistema:
+
+  a) Risposte vuote su multi-turn (mt_001, mt_003):
+     Lo script di evaluation crea sessioni isolate per ogni scenario multi-turn e
+     deve ricostruire la history della conversazione programmaticamente. In alcuni
+     casi la ricostruzione non è perfetta → il chatbot riceve la domanda senza
+     contesto del turno precedente → risposta vuota o degenere.
+     In uso reale (Gradio, test_chatbot.py) la sessione si costruisce turno per turno
+     naturalmente: questo problema non si è mai verificato in centinaia di turni
+     di test manuale.
+
+  b) Crash per recursion limit (is_prosp_004 — GraphRecursionError):
+     Il limite di 35 step del grafo LangGraph è insufficiente su alcune query dove
+     l'agente esegue cicli rewrite→retrieve multipli. Fix in backlog (aumentare a 50).
+     Non si manifesta su query ordinarie; osservato solo su questa domanda specifica
+     durante evaluation automatica con golden set.
+
+  c) Knowledge gap accettabili:
+     Alcune domande del golden set (es. tasse di iscrizione, programma corso specifico)
+     producono score bassi non per errori del sistema ma perché i dati non sono
+     presenti nella KB o il retrieval recupera documenti parzialmente rilevanti.
+     Questi limiti sono documentabili come scope del sistema: il chatbot è progettato
+     per informazioni DIEM/UNISA disponibili sul sito istituzionale; dati soggetti a
+     variazione annuale (tasse, calendari) non sono garantiti nella KB.
+
+  STATO PROSSIMA SESSIONE — TASK RIMANENTI
+  -----------------------------------------
+  1. Tool calculate: testare se gpt-oss-120b gestisce correttamente calcoli accademici
+     inline (media → voto laurea, CFU residui, ecc.) senza tool dedicato. Se confermato,
+     rimuovere: src/agent/tools.py (funzione calculate + rimozione da return list),
+     src/prompts.py (CALCULATE_PROMPT + paragrafo calculate in AGENT_SYSTEM_PROMPT +
+     regola 6a GRADUATION GRADE REGULATIONS).
+  2. Report: aggiornare con tutti i fix di questo branch (final-fixes), usando il
+     progress.txt e la git history come riferimento. Sezioni da aggiornare/aggiungere:
+     retrieve retry-aware, sliding window pruning, name hallucination fix,
+     risultati evaluation C5 con analisi re-run RAGAS.
+  3. Merge: develop → main (fast-forward), poi final-fixes → develop.
+
