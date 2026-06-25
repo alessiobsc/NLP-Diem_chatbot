@@ -10,7 +10,7 @@ Provides four composable tools:
 import re
 from typing import Annotated
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedState
 
@@ -72,7 +72,31 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
         if query != user_query:
             logger.info(f"rewrite | ignoring agent-expanded query: '{query}'")
 
-        prompt = f"<history>\n{history_str}\n</history>\n<user_latest>{user_query}</user_latest>"
+        # detect if this is a retry: find last rewrite ToolMessage after the current HumanMessage
+        prior_rewrite = next(
+            (m.content for m in reversed(messages[last_human_idx:])
+             if isinstance(m, ToolMessage) and m.name == "rewrite"),
+            None,
+        )
+
+        if prior_rewrite:
+            prompt = (
+                f"<history>\n{history_str}\n</history>\n"
+                f"<user_latest>{user_query}</user_latest>\n"
+                f"<previous_query>{prior_rewrite}</previous_query>\n"
+                "<retry_instruction>The previous query returned insufficient results.\n"
+                "Strategy (apply in order):\n"
+                "1. If <previous_query> differs from <user_latest> (added terms, changed phrasing, "
+                "injected institutional scope): generate a query closer to <user_latest>, "
+                "removing added elements while preserving the user's original intent.\n"
+                "2. Only if <previous_query> is already nearly identical to <user_latest>: "
+                "try a semantically different angle or broader phrasing.\n"
+                "Do NOT output <previous_query> verbatim.</retry_instruction>"
+            )
+            logger.info(f"rewrite | retry detected | previous_query='{prior_rewrite[:80]}'")
+        else:
+            prompt = f"<history>\n{history_str}\n</history>\n<user_latest>{user_query}</user_latest>"
+
         result = generation_model.invoke([
             SystemMessage(content=REWRITE_PROMPT),
             HumanMessage(content=prompt),
