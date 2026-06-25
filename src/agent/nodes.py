@@ -190,7 +190,7 @@ class DiemNodes:
         if tool_calls and any(tc["name"] == "retrieve" for tc in tool_calls):
             current_turn_start = last_human_idx if last_human_idx >= 0 else 0
             rewrite_output = next(
-                (m.content for m in state["messages"][current_turn_start:]
+                (m.content for m in reversed(state["messages"][current_turn_start:])
                  if isinstance(m, ToolMessage) and m.name == "rewrite"),
                 None,
             )
