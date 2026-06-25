@@ -2428,11 +2428,78 @@ CRONOLOGIA AGGIORNAMENTI
   Fix nomi: feat(prompts): add verbatim proper noun rule to prevent hallucination
   Sliding window: feat(nodes): sliding window pruning — drop tool pairs older than 5 turns
 
+  COMMIT
+  ------
+  (commit separati per ogni task — messaggi forniti all'utente, commit eseguiti
+  manualmente)
+  Task 1: feat(tools): make rewrite() retry-aware with diversified query strategy
+  Task 2: fix(nodes): use last rewrite ToolMessage output for retrieve override
+  Task 3: feat(prompts): update STEP 1 to require rewrite() before every retrieve
+  Fix docstring: fix(tools): remove contradictory rewrite() docstring instruction
+  Fix nomi: feat(prompts): add verbatim proper noun rule to prevent hallucination
+  Sliding window: feat(nodes): sliding window pruning — drop tool pairs older than 5 turns
+
   BACKLOG AGGIORNATO
   ------------------
   - Chiuso: retrieve retry rewrite-aware
   - Chiuso: sliding window context pruning (>5 turni)
   - Rimasto aperto:
     * Rimozione tool calculate (alta latenza, risultati inesatti)
+    * Adjacent retrieval: valutare limitazione ai soli PDF se HTML introduce rumore
+
+2026-06-25 (seguito) - Fix sostituzione nomi prof in rewrite(), log sliding window
+
+  ROOT CAUSE SOSTITUZIONE NOMI (src/agent/tools.py, src/prompts.py)
+  ------------------------------------------------------------------
+  Bug identificato da log sessione (turno 15/20): rewrite() includeva fino a 3
+  coppie Human+AI nella history (history_lines[-6:]). Le risposte AI precedenti
+  contenevano nomi di docenti recuperati da retrieve() → modello 8b sostituiva il
+  nome nella query utente con quello dalla risposta AI del turno precedente.
+  Esempio: "orari prof Capuano" dopo turno su Situation Awareness (D'Aniello docente)
+  → rewrite produceva "orari prof D'Aniello".
+  Confermato che il bug si verificava anche su retry (previous_query già con nome
+  sbagliato → secondo rewrite replicava l'errore).
+
+  Fix 1 — src/agent/tools.py:
+  history_lines[-6:] → history_lines[-2:] (ultima coppia Human+AI).
+  Riduce esposizione a nomi da turni precedenti mantenendo pronoun resolution
+  per follow-up immediati (es. "e lui?" → vede ultima AI response).
+
+  Fix 2 — src/prompts.py (REWRITE_PROMPT):
+  Aggiunto esempio esplicito in testa agli <examples>:
+    history: User chiede prof Bianchi → AI risponde su Bianchi
+    user_latest: "orari prof Verdi"
+    output: "orari prof Verdi"  (non Bianchi)
+  Insegna al modello 8b a dare precedenza al nome in user_latest rispetto
+  ai nomi presenti nella AI response in history.
+
+  LOG SLIDING WINDOW (src/agent/nodes.py)
+  ----------------------------------------
+  Aggiunto log INFO quando pruning attivo:
+    "agent | sliding_window | kept_turns=5 | dropped_tool_msgs=N"
+  Verificato in sessione 20 turni: dropped cresce da 4 (turno 6) a 12 (turno 11+),
+  plateau corretto una volta che la finestra è stabile.
+
+  VERIFICA LOG POST-FIX (sessione test 20 turni)
+  -----------------------------------------------
+  - Gaeta → Capuano: rewrite usa "Capuano" ✓
+  - Greco → D'Aniello (esplicito): rewrite usa "D'Aniello" ✓
+  - D'Aniello → Luca Greco: rewrite usa "Luca Greco" ✓
+  - Nessun WARNING/ERROR in log ✓
+  - sliding_window log presente e crescita corretta ✓
+  - Pronome resolution: agente risponde da contesto cached (turni recenti in
+    finestra) senza chiamare rewrite — comportamento corretto, non regressione
+
+  COMMIT
+  ------
+  fix(rewrite): reduce history to last turn and add name-priority example;
+                add sliding window pruning log
+
+  BACKLOG AGGIORNATO
+  ------------------
+  - Chiuso: sostituzione nomi prof in rewrite()
+  - Chiuso: log sliding window
+  - Rimasto aperto:
+    * Rimozione tool calculate (alta latenza, risultati inesatti) — post evaluation
     * Adjacent retrieval: valutare limitazione ai soli PDF se HTML introduce rumore
 
