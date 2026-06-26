@@ -77,7 +77,7 @@ class DiemNodes:
         # the full resolved question instead of the raw fragment.
         has_prior = any(isinstance(m, HumanMessage) for m in state["messages"][:-1])
         check_query = question
-        if has_prior and len(question.split()) <= 4:
+        if has_prior:
             check_query = rewrite_query(question, state, self._lightweight_model) or question
             if check_query != question:
                 logger.debug(f"scope_guard | rewrote short follow-up for scope check: '{question}' → '{check_query}'")
@@ -236,16 +236,30 @@ class DiemNodes:
         receives valid context. Only triggered when tool_call_count==0 and
         retrieved_context=="" (i.e. agent skipped all tools on the very first call).
         """
-        question = next(
+        last_rewrite = next(
+            (m.content for m in reversed(state["messages"])
+             if isinstance(m, ToolMessage) and m.name == "rewrite"),
+            None,
+        )
+        question = last_rewrite or next(
             (extract_text(m.content) for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
             "",
         )
-        logger.warning(f"forced_retrieve | agent skipped tools, forcing retrieve | query='{question[:80]}'")
+        logger.warning(f"forced_retrieve | forcing retrieve | query='{question[:80]}' | from_rewrite={last_rewrite is not None}")
         docs = self._retriever.invoke(question)
         reranked = rerank(question, docs, top_n=CROSS_ENCODER_K) if docs else []
         self._last_docs = reranked
         context = format_context({"docs": reranked, "question": question, "history": []})["context"]
         logger.info(f"forced_retrieve | reranked={len(reranked)} | context_len={len(context)}")
+        # Stub pending tool_calls from last agent message (e.g. rewrite loop cap hit)
+        stubs = []
+        last_ai = state["messages"][-1]
+        for tc in getattr(last_ai, "tool_calls", []):
+            stubs.append(ToolMessage(
+                content="[Skipped — forcing retrieve]",
+                tool_call_id=tc["id"],
+                name=tc["name"],
+            ))
         tc_id = str(uuid.uuid4())
         ai_msg = AIMessage(
             content="",
@@ -253,8 +267,8 @@ class DiemNodes:
         )
         tool_msg = ToolMessage(content=context, tool_call_id=tc_id, name="retrieve")
         return {
-            "messages": [ai_msg, tool_msg],
-            "tool_call_count": 1,
+            "messages": stubs + [ai_msg, tool_msg],
+            "tool_call_count": state["tool_call_count"] + 1,
             "retrieved_context": context,
             "last_docs": reranked,
         }

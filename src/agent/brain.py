@@ -77,10 +77,24 @@ def _route_agent(state: DiemState) -> str:
         if not content and state["tool_call_count"] == 0 and not state["retrieved_context"]:
             return "forced_retrieve"
         return "output_guard"
-    # Cap only applies when agent wants to call retrieve again
+    # Cap retrieve calls
     wants_retrieve = any(tc["name"] == "retrieve" for tc in tool_calls)
     if wants_retrieve and state["tool_call_count"] >= MAX_RETRIEVE_CALLS:
         return "force_answer"
+    # Cap rewrite calls — loop guard (1 rewrite per retrieve expected)
+    if any(tc["name"] == "rewrite" for tc in tool_calls):
+        if state["tool_call_count"] >= MAX_RETRIEVE_CALLS:
+            return "force_answer"
+        msgs = state["messages"]
+        turn_start = next(
+            (i for i in range(len(msgs) - 1, -1, -1) if isinstance(msgs[i], HumanMessage)),
+            0,
+        )
+        rewrite_count = sum(
+            1 for m in msgs[turn_start:] if isinstance(m, ToolMessage) and m.name == "rewrite"
+        )
+        if rewrite_count >= MAX_RETRIEVE_CALLS:
+            return "forced_retrieve"
     return "tools"
 
 

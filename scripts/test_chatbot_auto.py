@@ -9,6 +9,11 @@ from config import CHROMA_DIR_NAME, COLLECTION_NAME, EMBEDDING_DIMENSION
 from src.encoders.embedding_init import build_embedding_model
 from src.agent.brain import DiemBrain
 
+import argparse
+_args = argparse.ArgumentParser()
+_args.add_argument("--calc-only", action="store_true", help="Skip robustness tests, run only calculate comparison")
+_args = _args.parse_args()
+
 print("Loading...", flush=True)
 em = build_embedding_model()
 vs = Chroma(
@@ -65,11 +70,59 @@ tests = [
     ("B3", "Prima mi avevi detto che era a Napoli, puoi confermare?"),
 ]
 
-for session, q in tests:
-    print(f"[{session}] Q: {q}", flush=True)
+if not _args.calc_only:
+    for session, q in tests:
+        print(f"[{session}] Q: {q}", flush=True)
+        try:
+            ans = brain.chat(q, session_id=session)
+            print(f"[{session}] A: {ans[:600]}", flush=True)
+        except Exception as e:
+            print(f"[{session}] ERROR: {e}", flush=True)
+        print(flush=True)
+
+# ── Calculate tool test ───────────────────────────────────────────────────────
+import time
+from src.agent.brain import STREAM_DEGENERATE_SIGNAL
+
+calc_questions = [
+    ("CALC_MAG_INF",
+     "Con media 27 quanto posso prendere alla laurea magistrale in Ingegneria Informatica?"),
+    ("CALC_TRI_INF",
+     "Con media 27 quanto posso prendere alla laurea triennale in Ingegneria Informatica?"),
+    ("CALC_MAG_IEDM",
+     "Con media 27 quanto posso prendere alla laurea magistrale in "
+     "Information Engineering for Digital Medicine?"),
+]
+
+
+def run_timed(b, q, sid):
+    """Stream chat; return (answer, ttft_ms, total_ms)."""
+    t0 = time.perf_counter()
+    t_first = None
+    chunks = []
+    for chunk in b.chat_stream(q, session_id=sid):
+        if t_first is None:
+            t_first = time.perf_counter()
+        chunks.append(chunk)
+    t_end = time.perf_counter()
+    ans = "".join(chunks)
+    ttft  = round((t_first - t0) * 1000) if t_first else None
+    total = round((t_end - t0) * 1000)
+    return ans, ttft, total
+
+
+print(f"\n{'='*60}", flush=True)
+print("CALCULATE TEST", flush=True)
+print(f"{'='*60}", flush=True)
+for sid, q in calc_questions:
+    print(f"\n[{sid}] Q: {q}", flush=True)
     try:
-        ans = brain.chat(q, session_id=session)
-        print(f"[{session}] A: {ans[:600]}", flush=True)
+        ans, ttft, total = run_timed(brain, q, sid)
+        print(f"[{sid}] TTFT: {ttft}ms | Total: {total}ms", flush=True)
+        if ans == STREAM_DEGENERATE_SIGNAL:
+            print(f"[{sid}] A: <DEGENERATE>", flush=True)
+        else:
+            print(f"[{sid}] A: {ans[:900]}", flush=True)
     except Exception as e:
-        print(f"[{session}] ERROR: {e}", flush=True)
+        print(f"[{sid}] ERROR: {e}", flush=True)
     print(flush=True)
