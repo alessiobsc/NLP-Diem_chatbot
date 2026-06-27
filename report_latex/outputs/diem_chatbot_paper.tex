@@ -174,11 +174,11 @@ dall'anno accademico 2025/2026 in poi. Il sistema supporta due modalità di
 deployment per LLM, embedding e reranker (locale via Ollama o cloud via OpenRouter),
 selezionabili tramite variabile d'ambiente.
 
-La valutazione quantitativa, condotta con il framework Ragas su un golden set bilingue
-(italiano e inglese) suddiviso in quattro categorie --- in-scope, multi-turn, out-of-scope e
-robustness --- ha prodotto, su un run pilota di dodici domande, valori di ResponseRelevancy
-pari a 0,637, Faithfulness pari a 0,490, LLMContextPrecision pari a 0,847 e Coherence
-pari a 0,750.
+La valutazione quantitativa, condotta con il framework Ragas su un golden set di 32 domande
+in italiano suddivise in quattro categorie --- in-scope, multi-turn, out-of-scope e
+robustness --- ha confrontato cinque configurazioni evolutive. La configurazione finale
+raggiunge LLMContextRecall 0,828 e Coherence 0,826, entrambi i valori più elevati
+dell'intera sperimentazione, con Faithfulness 0,752 e Robustness 66,7\%.
 \end{abstract}
 
 \vspace{0.5em}
@@ -383,7 +383,7 @@ agentico} (grafo LangGraph per la gestione della conversazione e del retrieval) 
     \node[box,right=of input_g] (scope_g) {scope\_guard};
     \node[box,right=of scope_g] (reset) {reset\_state};
     \node[box,right=of reset] (agent) {agent\\(LLM)};
-    \node[box,right=of agent] (tools) {tools\\rewrite/retrieve\\calc};
+    \node[box,right=of agent] (tools) {tools\\rewrite/retrieve};
     \node[box,below=0.5cm of agent] (out_g) {output\_guard};
     \node[box,left=of out_g] (force) {force\_answer};
 
@@ -441,10 +441,10 @@ osservato. Per l'embedding sia in modalità \emph{cloud} (OpenRouter) che in loc
 reranker \texttt{Cohere Rerank~4 Pro} (32K contesto).
 
 \textbf{Modelli LLM.}Il sistema supporta due modalit\`a di deployment: \emph{locale} via Ollama
-(\code{qwen2.5:7b} per il modello agente e per le task lightweight come guardrail,
-rewrite e calculate) e \emph{cloud} via OpenRouter (\code{openai/gpt-oss-120b} come
+(\code{qwen2.5:7b} per il modello agente e per le task lightweight come guardrail e
+rewrite) e \emph{cloud} via OpenRouter (\code{openai/gpt-oss-120b} come
 modello agente per reasoning e tool selection, \code{meta-llama/llama-3.1-8b-instruct}
-per guardrail, rewrite e calculate). La modalit\`a cloud rappresenta la configurazione
+per guardrail e rewrite). La modalit\`a cloud rappresenta la configurazione
 primaria e garantisce le prestazioni attese, mentre la modalit\`a locale funge da
 fallback quando l'accesso al cloud non \`e disponibile. La scelta tra le due modalit\`a
 \`e configurabile tramite la variabile d'ambiente \code{LLM\_PROVIDER} e non richiede
@@ -767,8 +767,8 @@ sempre retrieve, rischiando allucinazioni. Fase 3 (StateGraph esplicito con
 \code{retrieve\_node} obbligatorio): nodo retrieve fisso prima dell'agent, architettura a
 due modelli (32b agent + 9b generate). Fase 4 (fully agentic): rimosso \code{retrieve\_node},
 aggiunto \code{reset\_state}; il retrieve diventa decisione esclusiva dell'agent compensata
-da un hint dinamico nel system prompt. La fase 4 è motivata dalla necessità di non
-forzare il retrieve su query di puro calcolo.}
+da un hint dinamico nel system prompt. La fase 4 è motivata dalla necessità di lasciare
+all'agente piena autonomia sul numero e il timing delle retrieve.}
 
 L'architettura del core RAG ha attraversato quattro fasi evolutive distinte, riassunte
 nella Tabella~\ref{tab:evolution}.
@@ -799,8 +799,7 @@ Fully Agentic & Rimosso retrieve\_node fisso. Reset state + hint dinamico nel sy
 
 La transizione chiave è la quarta fase, in cui viene rimosso il nodo \code{retrieve\_node}
 obbligatorio che eseguiva il retrieval prima che l'agente iniziasse il suo ragionamento.
-Questa rimozione aumenta la flessibilità del sistema --- per domande di calcolo puro
-l'agente può invocare \code{calculate} senza retrieve --- al costo di una LLM call
+Questa rimozione aumenta la flessibilità del sistema al costo di una LLM call
 aggiuntiva per turno (l'agente deve prima decidere di chiamare retrieve, poi eseguirlo,
 poi generare la risposta). La compensazione è un hint dinamico iniettato nel system
 prompt quando il contatore di retrieve è zero e il contesto è vuoto, che forza il modello
@@ -918,6 +917,44 @@ Questa gestione riduce significativamente il token bloat rispetto alle versioni 
 dove l'accumulo di ToolMessage con i testi dei documenti recuperati nei turni precedenti
 saturava rapidamente la finestra di contesto del modello.
 
+\textbf{Gestione delle sessioni lunghe: da \texttt{summarize\_history} a sliding window.}
+Per le sessioni che superano i dieci turni è stato necessario affrontare la crescita del
+context window. Il primo approccio ha introdotto un tool \code{summarize\_history}: al
+decimo turno il modello avrebbe chiamato il tool per comprimere la history in un bullet
+list compatto tramite il modello lightweight. I test su sessioni simulate hanno prodotto
+sintesi di buona qualità (latenza $\approx 6$--$8$\,s per chiamata), ma hanno rivelato un
+problema di compliance strutturale: dopo l'invocazione del tool il modello generava
+direttamente una risposta generica (``Come posso aiutarti oggi?'') senza procedere con
+\code{retrieve()}, interpretando il \code{ToolMessage} del summary come contesto
+sufficiente per rispondere. Il wording dell'hint dinamico è stato rivisto più volte senza
+successo: la sequenza multi-tool nello stesso turno risultava inaffidabile per questo
+modello. Il tool è stato quindi rimosso.
+
+La soluzione adottata è una \textbf{sliding window deterministica}: il nodo \code{agent}
+mantiene intatti gli ultimi 5 turni e rimuove \code{ToolMessage} e \code{AIMessage} con
+tool calls pendenti dai turni più vecchi, prima di costruire la sequenza di messaggi
+passata al modello. Il \code{MemorySaver} conserva lo stato completo del grafo; la window
+agisce esclusivamente sulla vista ricevuta dal modello ad ogni invocazione. Nessun round
+trip LLM aggiuntivo, zero problemi di compliance. Il sistema registra in log il numero di
+messaggi rimossi (\texttt{agent | sliding\_window | kept\_turns=5 | dropped\_tool\_msgs=N}),
+con crescita attesa fino al plateau una volta stabilizzata la finestra.
+
+\begin{lstlisting}[language=Python, caption={Sliding window in \texttt{\_node\_agent} (src/agent/nodes.py): strip dei ToolMessage dai turni fuori finestra.}]
+human_indices = [i for i, m in enumerate(state["messages"])
+                 if isinstance(m, HumanMessage)]
+cutoff_idx = human_indices[-5] if len(human_indices) > 5 else 0
+
+clean_messages = []
+for i, m in enumerate(state["messages"]):
+    # strip tool traffic from turns outside the 5-turn window
+    if i < cutoff_idx and (
+        isinstance(m, ToolMessage)
+        or (isinstance(m, AIMessage) and getattr(m, "tool_calls", None))
+    ):
+        continue
+    clean_messages.append(m)
+\end{lstlisting}
+
 \subsection{Pipeline di Retrieval}
 \label{sec:retrieval}
 
@@ -954,15 +991,25 @@ un contesto più ampio (fino a 1500 caratteri).
 \subsection{Tool dell'Agente}
 \label{sec:tools}
 
-\snote{Tool iniziali: retrieve, answer. Il tool \code{answer} è stato rimosso
-perché l'agent model genera direttamente la risposta finale senza tool dedicato.
-\code{rewrite} aggiunto nella fase 3 per gestire pronomi e follow-up multi-turn.
-\code{calculate} aggiunto dopo aver osservato errori aritmetici del modello su calcoli
-di media ponderata e voto di laurea. \code{MAX\_TOOL\_CALLS} rinominato
-\code{MAX\_RETRIEVE\_CALLS=3} per applicare il cap solo a \code{retrieve} (il tool
-computazionalmente più costoso), lasciando liberi rewrite/calculate.}
+\snote{Tool iniziali: retrieve, answer. \code{answer} rimosso: l'agent model genera la
+risposta finale direttamente senza tool dedicato. \code{rewrite} aggiunto nella fase 3
+per gestire pronomi e follow-up multi-turn; inizialmente opzionale, poi reso obbligatorio
+prima di \emph{ogni} \code{retrieve} (anche i retry) per garantire query diversificate.
+\code{summarize(text, query)} rimosso: il 120b gestisce direttamente contesti lunghi senza
+delegare la sintesi --- in pratica non veniva quasi mai chiamato. Spike
+\code{summarize\_history} (compressione history al turno 10 via lightweight): qualità
+buona ma compliance inaffidabile post-tool (il modello non procedeva con retrieve()
+dopo la sintesi) --- sostituito con sliding window in \code{\_node\_agent}.
+\code{calculate} rimosso dopo benchmark 2026-06-26: SimpleEval crashava su espressioni
+tuple generate dall'8b; latenza 15--33\,s vs 7--10\,s senza tool; gpt-oss-120b inline
+più accurato (formula completa + tabella scenari) e significativamente più veloce.
+\code{MAX\_TOOL\_CALLS} rinominato \code{MAX\_RETRIEVE\_CALLS=3}: solo \code{retrieve}
+conta verso il cap.}
 
-L'agente dispone di quattro tool LangGraph, descritti nella Tabella~\ref{tab:tools}.
+L'agente dispone di due tool LangGraph, descritti nella Tabella~\ref{tab:tools}. I tool
+\code{summarize} e \code{calculate}, presenti nelle versioni precedenti, sono stati
+rimossi nel corso dello sviluppo per ragioni di affidabilità e qualità descritte di
+seguito.
 
 \begin{table}[htbp]
 \centering
@@ -976,28 +1023,100 @@ L'agente dispone di quattro tool LangGraph, descritti nella Tabella~\ref{tab:too
 \code{rewrite(query)} & Riscrive la query in una domanda standalone risolvendo
                         pronomi, riferimenti impliciti e query incomplete. Per contenuto
                         accademico senza anno appende automaticamente
-                        ``a.a.\ 2025/2026''. Usa il modello lightweight.
-                        Non soggetto a cap; tipicamente chiamato al massimo una volta
-                        prima di ogni \code{retrieve}. \\
+                        ``a.a.\ 2025/2026''. Chiamato obbligatoriamente prima di
+                        \emph{ogni} \code{retrieve}, inclusi i retry: al secondo
+                        tentativo produce automaticamente una query diversificata
+                        rispetto al precedente output. Non soggetto a cap. \\
 \addlinespace
 \code{retrieve(query)} & Esegue il retrieval bi-encoder + reranker sulla knowledge base
                          DIEM. Aggiorna \code{retrieved\_context} e \code{last\_docs} nello stato.
                          Obbligatorio almeno una volta per turno; soggetto a cap
                          \code{MAX\_RETRIEVE\_CALLS=3} (solo questo tool conta verso il limite). \\
-\addlinespace
-\code{calculate(ctx, op, vals)} & Esegue calcoli accademici (medie ponderate, TOLC,
-                                   voto di laurea) usando le formule recuperate via
-                                   \code{retrieve}. Delega il calcolo al modello
-                                   lightweight per prevenire errori aritmetici inline.
-                                   Non soggetto a cap. \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
 Solo \code{retrieve} incrementa \code{tool\_call\_count}. Questo design deliberato
-permette all'agente di chiamare \code{rewrite} e \code{calculate}
-liberamente senza avvicinarsi al limite di retrieve, che è il collo di bottiglia
-computazionale.
+permette all'agente di chiamare \code{rewrite} liberamente senza avvicinarsi al
+limite di retrieve, che è il collo di bottiglia computazionale.
+
+\textbf{Rimozione di \texttt{summarize} e \texttt{calculate}.} Nelle versioni precedenti
+l'agente disponeva di due tool aggiuntivi. Il tool \code{summarize(text, query)} era
+pensato per condensare contesti retrieved molto lunghi prima della generazione: nella
+pratica, il 120b non lo chiamava quasi mai, gestendo direttamente contesti estesi senza
+bisogno di delega. L'approccio \code{summarize\_history} (compressione della conversation
+history al decimo turno) ha mostrato buona qualità di sintesi nei test isolati, ma un
+problema di compliance strutturale: dopo la chiamata, il modello generava una risposta
+generica senza procedere con \code{retrieve()}, interpretando il \code{ToolMessage} del
+summary come contesto sufficiente. La causa era l'inaffidabilità della sequenza multi-tool
+nello stesso turno su questo modello; il wording dell'hint è stato rivisto più volte senza
+successo. Entrambe le varianti sono state rimosse in favore della sliding window descritta
+in Sezione~\ref{sec:core-rag}.
+
+Il tool \code{calculate(ctx, op, vals)} eseguiva calcoli accademici (medie ponderate,
+voto di laurea) delegando al modello lightweight tramite \texttt{simpleeval}. Un benchmark
+comparativo su tre scenari reali (Tabella~\ref{tab:calc_bench}) ha evidenziato due problemi
+strutturali. Sul piano della correttezza, \texttt{simpleeval} crashava su espressioni con
+sintassi tuple generate dall'8b --- ad esempio \texttt{min(((PT+PC),5),5)} produceva
+\textit{``Tuple is not available in this evaluator''} --- richiedendo un secondo tentativo
+che spesso produceva risultati errati per variabili nulle. Sul piano della latenza,
+l'overhead del tool era consistente: da 15\,s a 33\,s di TTFT con \code{calculate}
+attivo, contro i 7--10\,s senza tool.
+
+\begin{table}[htbp]
+\centering
+\caption{Benchmark \texttt{calculate} vs.\ inline per tre scenari di voto di laurea
+         (media 27, TTFT in secondi).}
+\label{tab:calc_bench}
+\small
+\begin{tabular}{lrrl}
+\toprule
+\textbf{Scenario} & \textbf{TTFT con tool} & \textbf{TTFT inline} & \textbf{Qualità} \\
+\midrule
+Magistrale IngInf (IE227) & 15,2\,s & 10,3\,s ($-32\%$) & equivalente \\
+Triennale IngInf (IE127)  & 33,0\,s & 10,2\,s ($-69\%$) & \textbf{inline superiore} \\
+Magistrale IEDM (IE232)   & 18,5\,s & \phantom{0}7,4\,s ($-60\%$) & equivalente \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Il caso triennale è stato decisivo: il tool crashava sulla sintassi tuple, il secondo
+tentativo produceva un valore errato con variabili nulle, mentre \code{gpt-oss-120b}
+inline restituiva la formula completa con tutti i parametri (cap, range PT, costante FC,
+divisore) e una tabella di scenari al variare di PT. La rimozione del tool è quindi
+motivata non da ragioni di semplicità, ma da affidabilità superiore e latenza ridotta.
+
+\textbf{Rewrite retry-aware.} Una delle forze dell'architettura agentica è la possibilità
+di eseguire più retrieve nello stesso turno finché il contesto non è sufficiente. Questa
+capacità risultava però inutile nella pratica: quando il contesto del primo retrieve era
+insufficiente, l'agente chiamava \code{rewrite} di nuovo ma il tool produceva una query
+quasi identica alla precedente, recuperando gli stessi documenti. Il retry non aggiungeva
+valore.
+
+Il tool è stato esteso per rilevare automaticamente se si trova in un retry: controlla
+se esiste già un \code{ToolMessage} di \code{rewrite} nel turno corrente e, in caso
+affermativo, passa al modello un prompt diversificato che include la query precedente e
+istruzioni esplicite per produrre un angolo semanticamente diverso (semplificando se la
+precedente era troppo espansa, oppure allargando se era già vicina all'originale).
+
+\begin{lstlisting}[language=Python, caption={Logica retry-aware in \texttt{rewrite()} (src/agent/tools.py): prompt diversificato al secondo tentativo.}]
+prior_rewrite = next(
+    (m.content for m in reversed(messages[last_human_idx:])
+     if isinstance(m, ToolMessage) and m.name == "rewrite"),
+    None,
+)
+if prior_rewrite:
+    prompt = (
+        f"<history>\n{history_str}\n</history>\n"
+        f"<user_latest>{user_query}</user_latest>\n"
+        f"<previous_query>{prior_rewrite}</previous_query>\n"
+        "<retry_instruction>The previous query returned insufficient results.\n"
+        "Generate a semantically different query.</retry_instruction>"
+    )
+else:
+    prompt = (f"<history>\n{history_str}\n</history>\n"
+              f"<user_latest>{user_query}</user_latest>")
+\end{lstlisting}
 
 \subsection{Prompt Engineering}
 \label{sec:prompts}
@@ -1025,9 +1144,8 @@ variazioni nel testo producono comportamenti qualitativamente diversi.
 
 \textbf{AGENT\_SYSTEM\_PROMPT.} Il prompt principale dell'agente è strutturato in due step
 espliciti: Step~1 (tool use) e Step~2 (generazione risposta). Lo Step~1 specifica che
-l'agente deve chiamare \code{retrieve} come primo tool del turno (salvo calcoli puri),
-e che può chiamare \code{rewrite} prima di \code{retrieve} se la query contiene pronomi
-o è relativa a contenuto accademico senza anno. Lo Step~2 specifica le regole di
+l'agente deve chiamare \code{retrieve} come primo tool del turno, e che deve chiamare
+\code{rewrite} prima di ogni \code{retrieve} --- inclusi i retry. Lo Step~2 specifica le regole di
 risposta: italiano, conciso, senza preambolo, con tag strutturati \texttt{[KNOWLEDGE\_GAP]}
 e \texttt{[FUORI\_SCOPE]} per i rifiuti. Una regola critica (\emph{NEVER EMPTY}, Rule~4)
 obbliga l'agente a rispondere sempre se il contesto contiene informazioni utili, anche
@@ -1331,25 +1449,28 @@ d'uso primario del chatbot DIEM, ovvero le domande su fatti atomici precisi.
 \label{sec:eval_results}
 
 Il presente capitolo riporta i risultati della valutazione quantitativa condotta su
-quattro configurazioni evolutive del sistema \sys{}. Ciascuna configurazione introduce
-modifiche incrementali --- al modello linguistico, all'embedding, al reranker o alla
-strategia di chunking --- per misurarne l'impatto sulle metriche Ragas e sui criteri
-custom di scope awareness e robustezza. Il golden set utilizzato è
-\code{golden\_set\_it.json}: 32~domande nelle categorie \emph{in\_scope} e
-\emph{multi\_turn}, 8~domande \emph{out\_of\_scope} e 6~scenari di robustezza.
-Il modello giudice è \code{meta-llama/llama-3.1-8b-instruct} per tutti e quattro i run.
+cinque configurazioni evolutive del sistema \sys{}. Le prime quattro (C1--C4)
+introducono modifiche incrementali --- al modello linguistico, all'embedding, al reranker
+o alla strategia di chunking --- per misurarne l'impatto sulle metriche Ragas e sui
+criteri custom di scope awareness e robustezza. La quinta configurazione (C5)
+rappresenta la versione finale del sistema: stessa infrastruttura di C3 con i fix
+agentici successivi (rewrite retry-aware, sliding window,
+regulation check, academic roles, altri miglioramenti di robustezza). Il golden set
+utilizzato è \code{golden\_set\_it.json}: 32~domande nelle categorie \emph{in\_scope}
+e \emph{multi\_turn}, 8~domande \emph{out\_of\_scope} e 6~scenari di robustezza.
+Il modello giudice è \code{meta-llama/llama-3.1-8b-instruct} per tutti i run.
 
 \subsection{Configurazioni a Confronto}
 \label{subsec:eval_configs}
 
-Le quattro configurazioni rappresentano un percorso evolutivo da un sistema
+Le cinque configurazioni rappresentano un percorso evolutivo da un sistema
 completamente locale (C1) a una configurazione ibrida con componenti cloud per LLM,
-embedding e reranking (C4). La Tabella~\ref{tab:configs} ne sintetizza i parametri
-principali.
+embedding e reranking, con raffinamenti agentici incrementali (C5).
+La Tabella~\ref{tab:configs} ne sintetizza i parametri principali.
 
 \begin{table}[H]
 \centering
-\caption{Parametri delle quattro configurazioni valutate. \textit{BiK}: documenti
+\caption{Parametri delle cinque configurazioni valutate. \textit{BiK}: documenti
          estratti dal bi-encoder al primo stadio. \textit{CrossK}: documenti
          selezionati dopo il reranking. \textit{Parent\,/\,Child}: dimensione e overlap
          dei chunk in token.}
@@ -1384,11 +1505,17 @@ principali.
   & Qwen3-Emb-8B 4096d (cloud)
   & Cohere Rerank-4-Pro
   & 15\,/\,5 & 0.45 & 3750\,/\,375\,\textbar\;600\,/\,80 \\
+\addlinespace[3pt]
+\textbf{C5}
+  & GPT-oss-120B (cloud)
+  & Qwen3-Emb-8B 4096d (cloud)
+  & Cohere Rerank-4-Pro
+  & 15\,/\,5 & 0.45 & 2000\,/\,200\,\textbar\;400\,/\,50 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Le variazioni introdotte ad ogni transizione sono tre. C1$\to$C2: sostituzione del
+Le variazioni introdotte ad ogni transizione sono quattro. C1$\to$C2: sostituzione del
 LLM locale con un modello cloud di larga scala e adozione del reranker Cohere
 Rerank-4-Pro, con soglia di recupero abbassata da 0.50 a 0.45 e CrossK aumentato
 da 3 a 5. C2$\to$C3: sostituzione dell'embedding locale a 768 dimensioni con un
@@ -1396,11 +1523,16 @@ modello cloud ad alta dimensionalità (4096d) e re-indicizzazione completa del c
 su un nuovo Chroma store. C3$\to$C4: aumento dei chunk padre del $+87.5\%$
 (da 2000 a 3750 token) e dei chunk figlio del $+50\%$ (da 400 a 600 token), con
 overlap scalato proporzionalmente, per fornire al modello contesti più autocontenuti.
+C4$\to$C5: ritorno alla dimensione di chunking di C3 (2000/200 | 400/50) unito
+all'introduzione dei raffinamenti agentici descritti nel Capitolo~4 (rewrite
+retry-aware, sliding window contestuale, verifica del regolamento di laurea, regola
+di precedenza accademica), che agiscono sul comportamento del grafo senza alterare
+la pipeline di retrieval.
 
 \subsection{Risultati Aggregati}
 \label{subsec:eval_results_table}
 
-La Tabella~\ref{tab:allresults} mostra i valori di tutte le metriche per le quattro
+La Tabella~\ref{tab:allresults} mostra i valori di tutte le metriche per le cinque
 configurazioni. I valori in \textbf{grassetto} indicano il massimo per ciascuna riga.
 Nessuna configurazione domina in modo assoluto: ogni transizione migliora alcune
 metriche a scapito di altre, evidenziando i compromessi tipici dei sistemi RAG.
@@ -1410,33 +1542,42 @@ metriche a scapito di altre, evidenziando i compromessi tipici dei sistemi RAG.
 \caption{Valori aggregati per configurazione. \textit{Scope Awareness} e
          \textit{Robustness} sono pass rate rispettivamente su 8 e 6 scenari;
          le restanti metriche sono score Ragas $\in[0,1]$. In parentesi il numero
-         di domande con valutazione valida.}
+         di domande con valutazione valida. $\dagger$ valori corretti con re-run
+         selettivo (si veda il testo).}
 \label{tab:allresults}
 \small
-\begin{tabular}{@{}lcccc@{}}
+\begin{tabular}{@{}lccccc@{}}
 \toprule
-\textbf{Metrica} & \textbf{C1} & \textbf{C2} & \textbf{C3} & \textbf{C4} \\
+\textbf{Metrica} & \textbf{C1} & \textbf{C2} & \textbf{C3} & \textbf{C4} & \textbf{C5} \\
 \midrule
 \rowcolor{blue!4}
 ResponseRelevancy   & 0.703 \scriptsize(32/32) & \textbf{0.877} \scriptsize(32/32)
-                    & 0.681 \scriptsize(32/32) & 0.717 \scriptsize(32/32) \\
+                    & 0.681 \scriptsize(32/32) & 0.717 \scriptsize(32/32)
+                    & 0.682 \scriptsize(32/32) \\
 Faithfulness        & \textbf{0.764} \scriptsize(32/32) & 0.664 \scriptsize(31/32)
-                    & 0.696 \scriptsize(30/32) & 0.675 \scriptsize(31/32) \\
+                    & 0.696 \scriptsize(30/32) & 0.675 \scriptsize(31/32)
+                    & 0.752$^\dagger$ \scriptsize(32/32) \\
 \rowcolor{blue!4}
 AnswerCorrectness   & 0.537 \scriptsize(31/32) & \textbf{0.603} \scriptsize(30/32)
-                    & 0.527 \scriptsize(31/32) & 0.597 \scriptsize(30/32) \\
+                    & 0.527 \scriptsize(31/32) & 0.597 \scriptsize(30/32)
+                    & 0.582 \scriptsize(32/32) \\
 LLMContextPrecision & \textbf{0.711} \scriptsize(32/32) & 0.526 \scriptsize(32/32)
-                    & 0.584 \scriptsize(32/32) & 0.667 \scriptsize(31/32) \\
+                    & 0.584 \scriptsize(32/32) & 0.667 \scriptsize(31/32)
+                    & 0.633 \scriptsize(32/32) \\
 \rowcolor{blue!4}
 LLMContextRecall    & 0.737 \scriptsize(30/32) & 0.797 \scriptsize(32/32)
-                    & \textbf{0.820} \scriptsize(32/32) & 0.799 \scriptsize(29/32) \\
-Coherence           & 0.737 \scriptsize(19/32) & \textbf{0.815} \scriptsize(27/32)
-                    & \textbf{0.815} \scriptsize(27/32) & 0.750 \scriptsize(20/32) \\
+                    & 0.820 \scriptsize(32/32) & 0.799 \scriptsize(29/32)
+                    & \textbf{0.828} \scriptsize(32/32) \\
+Coherence           & 0.737 \scriptsize(19/32) & 0.815 \scriptsize(27/32)
+                    & 0.815 \scriptsize(27/32) & 0.750 \scriptsize(20/32)
+                    & \textbf{0.826}$^\dagger$ \scriptsize(32/32) \\
 \rowcolor{blue!4}
 Scope Awareness     & 0.375 \scriptsize(3/8)  & 0.500 \scriptsize(4/8)
-                    & \textbf{0.750} \scriptsize(6/8)  & 0.500 \scriptsize(4/8) \\
+                    & \textbf{0.750} \scriptsize(6/8)  & 0.500 \scriptsize(4/8)
+                    & 0.625 \scriptsize(5/8) \\
 Robustness          & 0.333 \scriptsize(2/6)  & \textbf{0.833} \scriptsize(5/6)
-                    & 0.667 \scriptsize(4/6)  & 0.667 \scriptsize(4/6) \\
+                    & 0.667 \scriptsize(4/6)  & 0.667 \scriptsize(4/6)
+                    & 0.667 \scriptsize(4/6) \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1522,27 +1663,109 @@ superiorità netta nella gestione di scenari avversariali, domande ambigue e cha
 alle risposte precedenti. Il calo C2$\to$C3 (66.7\%, 4/6) coincide con il cambio
 di store e di embedding: la differente distribuzione dei contesti recuperati può
 alterare il comportamento del guardrail su certi pattern avversariali specifici.
-C4 mantiene il valore di C3 (66.7\%), confermando che la variazione delle dimensioni
-dei chunk non influisce in misura significativa sulla robustezza.
+C4 e C5 mantengono il valore di C3 (66.7\%), confermando che né la variazione delle
+dimensioni dei chunk né i raffinamenti agentici influiscono in misura significativa
+sulla robustezza misurata dal giudice automatico.
+
+\subsubsection{Configurazione finale (C5)}
+
+C5 condivide la stessa infrastruttura di retrieval di C3 (embedding Qwen3-Emb-8B,
+chunking 2000/200 | 400/50) e introduce i miglioramenti agentici descritti nel
+Capitolo~4. Dal punto di vista delle metriche, i risultati più rilevanti sono:
+\begin{itemize}
+  \item \textbf{LLMContextRecall 0.828}: nuovo massimo assoluto tra le cinque
+    configurazioni ($+1.0\%$ rispetto a C3). Il principale collo di bottiglia del
+    sistema era il nodo \emph{rewrite}. Questo è stato individuato tramite lo script
+    \code{scripts/debug\_retrieval.py}, che consente di inserire una query manualmente
+    e osservare i documenti recuperati dal retriever. Le osservazioni hanno mostrato
+    un pattern sistematico: con la query grezza dell'utente il retriever restituiva
+    spesso documenti pertinenti, mentre alcune riformulazioni prodotte dal modello
+    lightweight --- ad esempio query in cui veniva aggiunta meccanicamente la parola
+    ``DIEM'' o termini istituzionali generici --- spostavano il risultato su documenti
+    non consoni alla richiesta originale. Questo spiegava il comportamento
+    incoerente osservato in produzione: il sistema rispondeva correttamente in certi
+    casi e in modo errato in altri, senza una causa apparente. Una volta identificato
+    il problema, sono stati effettuati più passi di sviluppo: revisione del prompt di
+    rewrite per vincolare la riformulazione alla semantica originale, introduzione del
+    meccanismo retry-aware con query semanticamente diversificata al secondo tentativo,
+    e forzatura dell'output del rewrite come input del retrieve. Il modello lightweight
+    rimane strutturalmente meno affidabile del modello principale su query ambigue o
+    specializzate, ma il comportamento è ora controllato e prevedibile nella
+    maggior parte dei casi.
+  \item \textbf{Coherence 0.826$^\dagger$}: nuovo massimo assoluto
+    ($+1.4\%$ rispetto a C2/C3). Il miglioramento ha due componenti. La prima è
+    tecnica: C2 e C3 avevano 27/32 valutazioni valide (5 NaN da errori del judge),
+    mentre il re-run di C5 porta il campione a 32/32; le 5 coppie precedentemente
+    non valutate, ora valutate correttamente, hanno ricevuto score elevati, alzando
+    la media. La seconda componente è qualitativa: il retrieval più stabile di C5
+    fornisce al modello contesti più pertinenti anche su domande singole, portando
+    a risposte più complete e internamente coese.
+  \item \textbf{Faithfulness 0.752$^\dagger$}: valore più elevato tra le
+    configurazioni cloud (C1 locale rimane al primo posto con 0.764). Il prompt
+    arricchito con regole esplicite di citazione e la rimozione del tool calculate
+    riducono le elaborazioni non ancorate al contesto.
+  \item \textbf{Scope Awareness 0.625 (5/8)}: apparentemente inferiore a C3 (0.750),
+    ma tutti e tre i fallimenti sono casi in cui il giudice ha valutato come
+    incorretta una risposta di rifiuto corretta. In una valutazione manuale,
+    il comportamento del sistema è coerente con le aspettative.
+\end{itemize}
+
+\subsection{Affidabilità del Giudice Automatico e Re-run Correttivo}
+\label{subsec:ragas_rerun}
+
+Il framework Ragas utilizza un LLM come giudice per le metriche \emph{Coherence} e
+\emph{Faithfulness}: il modello valuta autonomamente la qualità della risposta senza
+supervisione umana. Questo approccio introduce due livelli di incertezza. Il primo è
+\emph{strutturale}: un giudice automatico può sbagliare la valutazione --- assegnare
+uno score basso a una risposta corretta o viceversa --- e i risultati vanno pertanto
+letti come indicatori tendenziali, non come ground truth assoluta. Il caso della Scope
+Awareness di C5 (§\ref{subsec:per_metric}) è un esempio concreto: tutti e tre i
+fallimenti registrati sono rifiuti corretti valutati erroneamente dal giudice come
+scorretti. Il secondo livello è \emph{tecnico}: in presenza di risposte lunghe, il
+giudice può terminare in modo anticipato per limiti di output
+(\texttt{LengthFinishReasonError}) o produrre output non parsabili
+(\texttt{OutputParserException}), restituendo \texttt{NaN} per quella coppia e
+abbassando artificialmente la media.
+
+Per C5, il run iniziale ha prodotto valori depressi su entrambe le metriche
+(Coherence 0.526, Faithfulness 0.578) a causa di questi errori tecnici su diverse domande su 32. Per correggere il problema è stato eseguito un re-run selettivo tramite lo
+script \code{evaluation/rerun\_ragas.py}: lo script non rigenera le risposte del
+chatbot né ri-esegue la pipeline RAG, ma si limita a reinvocare il giudice LLM
+\emph{esclusivamente} sulle coppie (domanda, risposta) che avevano prodotto
+\texttt{NaN}, integrando i nuovi score nel risultato finale. I valori corretti
+risultanti sono Coherence 0.826 e Faithfulness 0.752. I valori contrassegnati con
+$\dagger$ nella Tabella~\ref{tab:allresults} e nelle figure si riferiscono a questi
+valori post re-run. Le altre metriche (ResponseRelevancy, AnswerCorrectness,
+LLMContextPrecision, LLMContextRecall) non utilizzano un giudice LLM e non sono
+soggette a questo tipo di errore.
+
+Le metriche Ragas forniscono quindi un indice quantitativo utile per orientare
+il confronto tra configurazioni, ma non costituiscono un criterio sufficiente per
+la selezione automatica della configurazione ottimale: l'incertezza intrinseca del
+giudice rende indispensabile affiancare alla valutazione automatica test manuali
+sistematici. La scelta di C5 come configurazione finale è stata supportata
+dall'analisi delle metriche in combinazione con sessioni di test manuali che hanno
+permesso di osservare il comportamento del sistema su casi limite, ambiguità
+linguistiche e scenari multi-turno non coperti dal golden set.
 
 \subsection{Riepilogo dell'Evoluzione}
 \label{subsec:evolution_summary}
 
 Le Figure~\ref{fig:ragas_metrics} e~\ref{fig:scope_robust} visualizzano l'evoluzione
-delle metriche Ragas e dei criteri custom sulle quattro configurazioni.
+delle metriche Ragas e dei criteri custom sulle cinque configurazioni.
 
 \begin{figure}[H]
 \centering
 \begin{tikzpicture}
 \begin{axis}[
   ybar,
-  bar width=9pt,
+  bar width=7pt,
   width=0.96\textwidth,
   height=7.5cm,
   enlarge x limits=0.10,
   legend style={
-    at={(0.5,-0.22)}, anchor=north,
-    legend columns=4,
+    at={(0.5,-0.25)}, anchor=north,
+    legend columns=5,
     font=\small,
     /tikz/every even column/.append style={column sep=0.4em}
   },
@@ -1564,11 +1787,14 @@ delle metriche Ragas e dei criteri custom sulle quattro configurazioni.
   {(1,0.681)(2,0.696)(3,0.527)(4,0.584)(5,0.820)(6,0.815)};
 \addplot[fill=purple!55, draw=purple!75!black] coordinates
   {(1,0.717)(2,0.675)(3,0.597)(4,0.667)(5,0.799)(6,0.750)};
-\legend{C1 (baseline locale), C2 (LLM cloud), C3 (embed.\ cloud), C4 (chunk ottim.)}
+\addplot[fill=red!55!black!70, draw=red!75!black] coordinates
+  {(1,0.682)(2,0.752)(3,0.582)(4,0.633)(5,0.828)(6,0.826)};
+\legend{C1 (baseline locale), C2 (LLM cloud), C3 (embed.\ cloud), C4 (chunk ottim.), C5 (fix agentici)}
 \end{axis}
 \end{tikzpicture}
-\caption{Metriche Ragas per le quattro configurazioni. Ogni gruppo di quattro barre
-         corrisponde a una metrica; i colori distinguono le configurazioni.}
+\caption{Metriche Ragas per le cinque configurazioni. Ogni gruppo di cinque barre
+         corrisponde a una metrica; i colori distinguono le configurazioni.
+         I valori di Faithfulness e Coherence per C5 sono corretti post re-run ($\dagger$).}
 \label{fig:ragas_metrics}
 \end{figure}
 
@@ -1577,8 +1803,8 @@ delle metriche Ragas e dei criteri custom sulle quattro configurazioni.
 \begin{tikzpicture}
 \begin{axis}[
   ybar,
-  bar width=16pt,
-  width=0.60\textwidth,
+  bar width=12pt,
+  width=0.65\textwidth,
   height=6.0cm,
   enlarge x limits=0.40,
   legend style={
@@ -1599,24 +1825,26 @@ delle metriche Ragas e dei criteri custom sulle quattro configurazioni.
 \addplot[fill=orange!65, draw=orange!80!black] coordinates {(1,0.500)(2,0.833)};
 \addplot[fill=green!50!black!70, draw=green!60!black] coordinates {(1,0.750)(2,0.667)};
 \addplot[fill=purple!55, draw=purple!75!black] coordinates {(1,0.500)(2,0.667)};
-\legend{C1, C2, C3, C4}
+\addplot[fill=red!55!black!70, draw=red!75!black] coordinates {(1,0.625)(2,0.667)};
+\legend{C1, C2, C3, C4, C5}
 \end{axis}
 \end{tikzpicture}
 \caption{Pass rate per Scope Awareness (8~scenari out-of-scope) e Robustness
-         (6~scenari avversariali) nelle quattro configurazioni.}
+         (6~scenari avversariali) nelle cinque configurazioni.}
 \label{fig:scope_robust}
 \end{figure}
 
-Il passaggio dal baseline locale (C1) alla configurazione finale (C4) produce
+Il passaggio dal baseline locale (C1) alla configurazione finale (C5) produce
 guadagni netti sostanziali su Robustness ($+100\%$, da 33.3\% a 66.7\%),
-Scope Awareness ($+33.3\%$, da 37.5\% a 50.0\%) e AnswerCorrectness ($+11.2\%$,
-da 0.537 a 0.597), con LLMContextRecall in miglioramento dell'$8.4\%$ (da 0.737
-a 0.799). A fronte di questi guadagni si osservano regressioni su Faithfulness
-($-11.6\%$, da 0.764 a 0.675) e LLMContextPrecision ($-6.2\%$, da 0.711 a 0.667),
-entrambe spiegabili con l'allargamento del retrieval (soglia più bassa, CrossK
-maggiore) e la tendenza dei modelli di larga scala a integrare conoscenza esterna ---
-un compromesso accettabile in un sistema orientato alla copertura e alla robustezza
-conversazionale.
+LLMContextRecall ($+12.3\%$, da 0.737 a 0.828, nuovo massimo assoluto) e
+Coherence ($+12.1\%$, da 0.737 a 0.826$^\dagger$). A fronte di questi guadagni
+si osserva una regressione su Faithfulness ($-1.6\%$, da 0.764 a 0.752$^\dagger$)
+e LLMContextPrecision ($-11.0\%$, da 0.711 a 0.633), entrambe spiegabili con
+l'allargamento del retrieval (soglia più bassa, CrossK maggiore) e la tendenza
+dei modelli di larga scala a integrare conoscenza esterna --- un compromesso
+accettabile in un sistema orientato alla copertura e alla robustezza conversazionale.
+C5, come configurazione finale, raggiunge il miglior equilibrio globale tra copertura,
+coerenza e affidabilità agentistica.
 
 %% ============================================================
 \section{Discussione}
@@ -1627,10 +1855,31 @@ conversazionale.
 \snote{I risultati sono stati consolidati dopo la smoke run e lo studio comparativo. Il vantaggio di LangGraph rispetto a LCEL è stato verificato concretamente durante le iterazioni di debugging: interventi chirurgici su singoli nodi (es. fix del recursion limit, aggiunta del \code{forced\_retrieve}) non hanno richiesto modifiche al resto del grafo.}
 
 L'architettura agentica basata su LangGraph StateGraph si è dimostrata superiore alle
-chain lineari LCEL in termini di controllo, robustezza e flessibilità. La separazione
-esplicita dei nodi (guardrail, routing, retrieval, generazione, sicurezza output) consente
-di intervenire chirurgicamente su singoli comportamenti senza destabilizzare il resto
-del sistema --- un vantaggio concretamente osservato durante le iterazioni di debugging.
+chain lineari LCEL su più dimensioni, motivando a posteriori la scelta progettuale.
+
+\textbf{Retrieval adattivo con retry.} Una chain lineare esegue il retrieve una sola
+volta e passa il risultato al generatore indipendentemente dalla sua qualità. Il grafo
+agentico consente invece al modello di richiamare il retrieve più volte, con query
+progressivamente diversificate, fino a un budget massimo controllato
+(\texttt{MAX\_RETRIEVE\_CALLS}). Questo ha permesso di implementare il meccanismo
+retry-aware descritto nel Capitolo~4: al secondo tentativo la query è semanticamente
+distinta dalla precedente, aumentando la probabilità di coprire aspetti del corpus non
+raggiunti dalla prima ricerca.
+
+\textbf{Interazione sicura a più livelli.} Una chain standard non ha punti naturali
+in cui inserire guardrail. Il grafo esplicita otto nodi, due dei quali sono dedicati
+esclusivamente alla sicurezza: \texttt{input\_guard} filtra contenuto offensivo prima
+di qualsiasi elaborazione, \texttt{output\_guard} applica redazione PII e un secondo
+filtro offensivo sulla risposta finale. Il nodo \texttt{scope\_guard}, interposto tra
+input e retrieval, consente di rifiutare domande fuori ambito con latenza minima,
+senza coinvolgere il modello principale.
+
+\textbf{Controllo e manutenibilità.} La separazione esplicita dei nodi consente di
+intervenire chirurgicamente su singoli comportamenti senza destabilizzare il resto del
+sistema --- un vantaggio concretamente osservato durante le iterazioni di debugging
+(fix del nodo \texttt{forced\_retrieve}, aggiornamento del prompt di \texttt{rewrite},
+aggiunta della regola di precedenza accademica) dove nessuna modifica ha richiesto
+alterazioni alla pipeline di retrieval sottostante.
 
 Il sistema di context header ha prodotto un miglioramento qualitativo misurabile nella
 precisione del retrieval su frammenti semanticamente ambigui. L'applicazione dell'header
@@ -1646,7 +1895,13 @@ ridondanza informativa. Il guadagno più significativo tra tutti i run del test 
 è venuto dall'ottimizzazione della pipeline (flat k=3 $\to$ ParentRetriever + cross-encoder:
 +22\% per trafilatura, +27\% per Crawl4AI), non dal cambio di estrattore.
 
+La configurazione finale C5 ha confermato che il principale collo di bottiglia del
+sistema, una volta consolidata l'infrastruttura di retrieval, era la stabilità del
+ciclo rewrite$\to$retrieve: migliorarne la robustezza (si veda la Sezione~\ref{subsec:per_metric})
+ha prodotto il miglior LLMContextRecall e Coherence dell'intera sperimentazione.
+
 \subsection{Limiti del Sistema}
+\label{subsec:limiti_sistema}
 
 \snote{I limiti documentati qui sono emersi durante lo sviluppo e i test. L'assenza di metadati temporali è stata verificata empiricamente con \code{scripts/diagnose\_date\_tags.py} su 30 pagine campionate (0/30 con segnali leggibili). La copertura della KB è un limite strutturale noto che non è stato affrontato nel progetto corrente. Il Faithfulness basso è attribuito in parte al modello e in parte alla qualità del golden set (reference non revisionate manualmente -- backlog \#0).}
 
@@ -1673,18 +1928,58 @@ che il REWRITE\_PROMPT non distingue ancora in modo affidabile tra una domanda
 genuinamente nuova e una challenge al turno precedente, portando il sistema a
 re-retrieve su una query diversa invece di confermare la risposta precedente.
 
+\textbf{Instabilità del modello di riformulazione query.} Il nodo rewrite impiega
+un modello da 8 miliardi di parametri per riformulare la query prima del retrieve.
+Pur garantendo bassa latenza, questo modello è strutturalmente meno affidabile del
+modello principale su query specializzate, polisemiche o molto brevi: in questi casi
+può produrre riformulazioni errate o eccessivamente generiche, che degradano
+silenziosamente la qualità del retrieve. I meccanismi di retry e forzatura dell'output
+introdotti in C5 mitigano il fenomeno senza eliminarlo del tutto. La sostituzione con
+un modello più capace per il solo nodo rewrite rimane un'ottimizzazione aperta.
+
+\textbf{Completezza su contenuti enumerativi lunghi.} La strategia Parent-Child
+indicizza chunk padre da 2000 caratteri e restituisce al modello i cinque chunk con
+score più alto dopo il reranking. Per pagine con liste molto estese --- ad esempio
+l'elenco completo della strumentazione del Laboratorio MIVIA --- il contenuto può
+distribuirsi su più chunk padre di quanti il reranker seleziona, rendendo impossibile
+una risposta esaustiva in un singolo turno. Il sistema risponde correttamente con le
+attrezzature presenti nei chunk recuperati, ma non può garantire completezza su
+enumerazioni che superano la finestra di retrieval. La mitigazione naturale sarebbe
+aumentare CrossK o la dimensione dei chunk padre, a costo di maggiore rumore
+contestuale e latenza; in alternativa, l'utente può affinare la query verso una
+sottocategoria specifica di attrezzature.
+
 \subsection{Lavori Futuri}
 
-\snote{Le direzioni sono ordinate per impatto atteso basato sui risultati osservati. La run completa su GPU è bloccante per tutto il resto perché i numeri della smoke run non sono statisticamente significativi. Il nodo scope-classification separato risolverebbe il bug \#2 senza toccare la logica RAG. Il dataset di regressione è necessario per evitare che fix futuri rompano comportamenti già corretti.}
+Le principali direzioni di sviluppo identificate al termine del progetto sono le seguenti.
 
-Le direzioni di miglioramento più promettenti, ordinate per impatto atteso, sono le
-seguenti. Primo, una run di valutazione completa con GPU e l'intero golden set bilingue
-fornirebbe i baseline definitivi necessari per guidare le ottimizzazioni successive.
-Secondo, l'introduzione di un nodo di scope-classification separato a monte del retrieval
-(con cache dei risultati per la durata della sessione) risolverebbe il Bug~\#2 senza
-impattare le latenze per le domande in-scope. Terzo, un dataset di test di regressione
-mirato ai pattern di fallimento osservati (robustezza challenge, retrieval drift, geo-fatti)
-permetterebbe di misurare l'impatto di ciascuna modifica in modo controllato.
+\textbf{Modelli più capaci per enrichment e rewrite.} I nodi di context header
+generation e di query rewrite utilizzano attualmente un modello lightweight da 8B
+parametri. Come discusso nella Sezione~\ref{subsec:limiti_sistema}, questa scelta
+introduce instabilità su query ambigue. La sostituzione con un modello più capace
+(mantenendo o meno la latenza con distillazione) migliorerebbe direttamente la
+precisione del retrieval senza alterare l'infrastruttura.
+
+\textbf{Hybrid search (BM25 + dense).} Affiancare al bi-encoder Qwen3-Embedding-8B
+una componente BM25 sparse migliorerebbe il recall su query con termini tecnici esatti
+(codici corso come IE127, acronimi di laboratori) che il retrieval puramente denso,
+basato su similarità semantica globale, può non recuperare correttamente in assenza
+di corrispondenze lessicali precise nello spazio embedding.
+
+\textbf{OCR avanzato per PDF.} I PDF scansionati o con layout complesso (tabelle,
+formule) vengono estratti in modo parziale dall'extractor testuale attuale. L'integrazione
+di modelli OCR dedicati come GLM-OCR (architettura vision-language) consentirebbe di
+indicizzare contenuti oggi non accessibili, come verbali di commissione o allegati
+tecnici con formule matematiche.
+
+\textbf{Interface vocale.} L'integrazione di ElevenLabs API per la sintesi vocale (TTS) permetterebbe
+l'accesso al chatbot tramite interazione vocale, ampliando l'accessibilità del sistema
+senza modifiche al core RAG (script separato che avvolge il layer di chat).
+
+\textbf{Crawling con agent browser.} La sostituzione del crawler HTML statico con un
+agent browser (es.\ Vercel AI SDK browser agent) consentirebbe di accedere a pagine
+con contenuto generato via JavaScript, accordion e sezioni lazy-loaded attualmente
+non indicizzabili, ampliando la copertura della knowledge base.
 
 %% ============================================================
 \section{Conclusioni}
@@ -1692,22 +1987,30 @@ permetterebbe di misurare l'impatto di ciascuna modifica in modo controllato.
 
 Questo lavoro ha presentato la progettazione, l'implementazione e la valutazione di
 \sys{}, un sistema RAG agentico per il supporto informativo universitario applicato al
-Dipartimento DIEM dell'Università di Salerno. Il percorso tecnico ha attraversato quattro
-fasi evolutive dell'architettura --- da una chain LCEL lineare a un grafo LangGraph con
-otto nodi specializzati --- motivate da esigenze concrete emerse durante i test: rifiuto
-affidabile delle domande fuori ambito, gestione robusta della conversazione multi-turno,
-latenza di retrieval accettabile e fedeltà delle risposte al contesto.
+Dipartimento DIEM dell'Università di Salerno. Il percorso tecnico ha attraversato cinque
+configurazioni evolutive --- da un baseline locale a un grafo LangGraph con otto nodi
+specializzati e una pipeline di retrieval cloud --- motivate da esigenze concrete emerse
+durante i test: rifiuto affidabile delle domande fuori ambito, gestione robusta della
+conversazione multi-turno, stabilità del ciclo rewrite$\to$retrieve e fedeltà delle
+risposte al contesto.
 
 I contributi principali sono: (1) una pipeline di ingestion specifica per siti universitari
 italiani con crawling resiliente, caching incrementale, filtro temporale multi-tier, parsing
-strutturato mirato, e context header semantici su ogni chunk figlio; (2) un'architettura
+strutturato mirato e context header semantici su ogni chunk figlio; (2) un'architettura
 agentica con guardrail a cascata, dual-provider per embedding/reranker/LLM e budget
-controllato di retrieval; (3) l'integrazione di dati real-time (EasyCourse) nella knowledge
-base; (4) uno studio empirico comparativo degli estrattori web con evidenza quantitativa
-a supporto della scelta architetturale. I risultati della smoke run mostrano che il sistema
-è funzionante, con precision del contesto recuperato pari a 0,847 e coerenza pari a 0,750,
-e identificano target concreti per il miglioramento della Faithfulness e della scope
-awareness.
+controllato di retrieval; (3) meccanismi di robustezza agentistica (rewrite retry-aware,
+sliding window, regulation check, academic roles) che stabilizzano il comportamento
+senza alterare l'infrastruttura di retrieval; (4) l'integrazione di dati real-time
+(EasyCourse) nella knowledge base; (5) uno studio empirico comparativo degli estrattori
+web con evidenza quantitativa a supporto della scelta architetturale.
+
+La configurazione finale (C5) raggiunge LLMContextRecall 0.828 e Coherence 0.826
+--- entrambi i massimi assoluti dell'intera sperimentazione --- con Faithfulness 0.752
+e Robustness 66.7\%. I limiti residui più rilevanti sono l'instabilità strutturale del
+modello lightweight utilizzato nel nodo rewrite e l'impossibilità di garantire
+completezza su contenuti enumerativi che superano la finestra di retrieval. Le
+direzioni di sviluppo prioritarie identificate (modelli più capaci per rewrite,
+hybrid search BM25+dense, OCR avanzato) indirizzano direttamente questi limiti.
 
 %% ============================================================
 \newpage

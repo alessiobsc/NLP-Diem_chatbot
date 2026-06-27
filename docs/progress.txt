@@ -2961,3 +2961,96 @@ CRONOLOGIA AGGIORNAMENTI
 
   File modificato: src/prompts.py
 
+--------------------------------------------------------------------------------
+2026-06-27 — Edge case documentato: query multi-topic
+--------------------------------------------------------------------------------
+
+  LIMITAZIONE NOTA: QUERY MULTI-TOPIC
+  ------------------------------------
+  Domande che combinano due richieste distinte in una sola query (es. "Quali
+  laboratori sono disponibili al DIEM e quali attrezzature ci sono nel
+  Laboratorio di Robotica?") mettono in difficoltà la pipeline di rewrite:
+  il tool rewrite() tende a semplificare la query schiacciandola sulla parte
+  più generica (es. "Dipartimento | Strutture Laboratori"), perdendo la
+  seconda sottoquestion più specifica.
+
+  Conseguenza: il retrieve recupera contesto per la parte generica; la parte
+  specifica (es. attrezzature LabROB) non viene cercata e resta senza risposta
+  o viene ammessa come knowledge gap.
+
+  Osservato durante test pool traccia esame (2026-06-27):
+  - Domanda singola "Quali attrezzature ci sono nel Laboratorio di Robotica?"
+    → risposta corretta ✓
+  - Domanda combinata → rewrite perde la parte LabROB, 3 rewrite + 2 retrieve
+    + forced_retrieve, 30s totali, attrezzature non trovate.
+
+  Mitigazione suggerita all'utente: suddividere domande complesse in più
+  domande separate. Non richiede fix lato sistema per scope del progetto.
+
+--------------------------------------------------------------------------------
+2026-06-27 — Sviluppi futuri identificati
+--------------------------------------------------------------------------------
+
+  1. VOICE INTERFACE
+     Integrazione TTS/STT tramite ElevenLabs API per interazione vocale con
+     il chatbot (script separato, non modifica il core RAG).
+
+  2. OCR PDF AVANZATO
+     Uso di modelli OCR dedicati (es. GLM-OCR) per PDF scansionati o con
+     layout complesso (tabelle, formule) attualmente estratti in modo parziale
+     dall'extractor testuale.
+
+  3. MODELLI PIÙ PESANTI PER ENRICHMENT E REWRITE
+     Context header generation e query rewrite attualmente usano
+     llama-3.1-8b (lightweight). Modelli più capaci migliorerebbero la
+     qualità degli header contestuali e delle query riscritte, con impatto
+     diretto su retrieval precision. Stesso ragionamento per il judge RAGAS.
+
+  4. HYBRID SEARCH (BM25 + DENSE)
+     Affiancare al bi-encoder qwen3-embedding-8b una componente BM25 sparse
+     (es. BGE-M3 in modalità hybrid) per migliorare il recall su query con
+     termini tecnici esatti (codici corso, acronimi) che il dense retriever
+     può sottovalutare.
+
+  5. CRAWLING AVANZATO CON AGENT BROWSER
+     Sostituzione del crawler custom con un agent browser (es. Vercel AI SDK
+     browser agent) per gestire pagine con JavaScript dinamico, accordion e
+     contenuti lazy-loaded non accessibili al crawler HTML statico attuale.
+
+--------------------------------------------------------------------------------
+2026-06-27 — Fix bug forced_retrieve + aggiornamento report §7 e §Conclusioni
+--------------------------------------------------------------------------------
+
+  BUG FIX: forced_retrieve usa stub come query (src/agent/nodes.py)
+  ------------------------------------------------------------------
+  Sintomo: _node_forced_retrieve cercava l'output dell'ultimo tool rewrite
+  ma trovava il ToolMessage stub "[Skipped — forcing retrieve]" (name="rewrite")
+  generato dallo stesso nodo al turno precedente, usando quella stringa come
+  query → 0 documenti recuperati → loop.
+  Fix: aggiunto filtro `not m.content.startswith("[Skipped")` nella ricerca
+  del messaggio rewrite precedente.
+  File: src/agent/nodes.py, funzione _node_forced_retrieve.
+
+  AGGIORNAMENTO REPORT (report_latex/outputs/diem_chatbot_paper.tex)
+  ------------------------------------------------------------------
+  §7 Valutazione:
+  - Aggiunta configurazione C5 in tab:configs (stessa infra C3 + fix agentici).
+  - Aggiunta colonna C5 in tab:allresults con valori corretti post re-run
+    (Coherence 0.826†, Faithfulness 0.752†); aggiornati bold per nuovi massimi
+    (LLMContextRecall 0.828 e Coherence 0.826 ora massimi assoluti).
+  - Nuova subsubsection "Configurazione finale (C5)" con analisi per metrica
+    e spiegazione del collo di bottiglia rewrite→retrieve.
+  - Nuova subsection "Affidabilità del Giudice Automatico e Re-run Correttivo"
+    che documenta LengthFinishReasonError/OutputParserException e il re-run
+    selettivo tramite evaluation/rerun_ragas.py.
+  - Figure aggiornate (5 barre per gruppo, colore rosso per C5).
+  - Riepilogo evoluzione aggiornato: C1→C5 con nuovi delta.
+  §8 Discussione:
+  - §Principali Risultati: aggiunto paragrafo su C5 come configurazione finale
+    e contributo del fix rewrite.
+  - §Limiti: aggiunto limite "Instabilità del modello di riformulazione query".
+  - §Lavori Futuri: sostituiti con le 5 direzioni reali identificate
+    (modelli più pesanti, hybrid search, GLM-OCR, ElevenLabs TTS/STT,
+    Vercel AI SDK browser agent).
+  §9 Conclusioni: aggiornato per citare C5, i risultati finali e i limiti residui.
+

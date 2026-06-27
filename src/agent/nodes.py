@@ -238,7 +238,8 @@ class DiemNodes:
         """
         last_rewrite = next(
             (m.content for m in reversed(state["messages"])
-             if isinstance(m, ToolMessage) and m.name == "rewrite"),
+             if isinstance(m, ToolMessage) and m.name == "rewrite"
+             and not m.content.startswith("[Skipped")),
             None,
         )
         question = last_rewrite or next(
