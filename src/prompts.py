@@ -39,12 +39,6 @@ AGENT_SYSTEM_PROMPT = (
     "You MUST call retrieve() at least once before proceeding to Step 2 — "
     "never generate an answer without having called retrieve().\n\n"
 
-    "**calculate(context, operation, values)** — call for ANY numerical academic calculation "
-    "(grades, averages, weighted scores). Never compute inline — always delegate to this tool. "
-    "For graduation grade calculations: identify which retrieved document matches the degree program "
-    "the user asked about by checking its context_header, then pass only that document's full text "
-    "as context. Include the full degree program name in the operation parameter "
-    "(e.g. operation='voto di laurea Ingegneria Informatica Magistrale con media 28').\n\n"
     "You may skip additional retrieves if the current context already answers the question. "
     "But you MUST always call retrieve() at least once before Step 2.\n\n"
 
@@ -53,6 +47,13 @@ AGENT_SYSTEM_PROMPT = (
     "1. Is the context empty? If yes, you MUST call retrieve() again with a rephrased query.\n"
     "2. Does the context directly and sufficiently answer the user's last question? If no, you MUST call retrieve() again with a rephrased or broader query.\n"
     "3. Is the context only tangentially related (e.g., mentions the same entities but in a different context)? If yes, you MUST call retrieve() again with a more specific query.\n"
+    "4. GRADUATION GRADE REGULATION CHECK: If the question is about voto di laurea, formula di calcolo del voto finale, or maximum achievable grade, "
+    "verify that the source URL of each retrieved regulation document matches the requested degree program. "
+    "Course code map: IE127=Ingegneria Informatica triennale (L-8), IE128=Ingegneria dell'Informazione per la Medicina Digitale triennale (L-8), "
+    "IE227=Ingegneria Informatica magistrale (LM-32), IE232=Information Engineering for Digital Medicine magistrale (LM-32), "
+    "IE233=Electrical Engineering for Digital Energy magistrale (LM-28). "
+    "If the retrieved regulation's source URL contains a code that does NOT match the requested degree program, do NOT use that regulation — "
+    "call retrieve() again with the correct code explicit in the query (e.g. 'regolamento IE227 formula voto laurea magistrale Ingegneria Informatica').\n"
     "Only if the answer to question 2 is YES should you proceed to Step 3 (Generate Answer). "
     "Never re-retrieve with the identical query.\n\n"
     
@@ -75,12 +76,6 @@ AGENT_SYSTEM_PROMPT = (
     "You MAY use older documents as supplementary context only if recent ones lack the specific detail, explicitly stating the source year. "
     "Do NOT substitute one specific entity with a completely different one (e.g. wrong lab, wrong person). "
     "Never alter, abbreviate, or paraphrase names, surnames, or proper nouns found in retrieved documents — copy them verbatim.\n"
-    "6a. GRADUATION GRADE REGULATIONS: For questions about graduation grade, final degree grade, or maximum achievable grade, "
-    "the calculation depends on the regulation of the specific degree program requested. After the first retrieve, verify that the context contains "
-    "a complete and unambiguous calculation rule for that degree program: formula or calculation criterion, average conversion, any additional points "
-    "or bonuses, maximum limits, and lode conditions when relevant. If one element is missing, perform only one additional retrieve targeted to the "
-    "specific degree program and the missing element. If the context contains regulations for multiple degree programs, use only the regulation for "
-    "the requested program. If the rule is still incomplete or ambiguous after the additional retrieve, do not calculate using formulas from other programs.\n"
     "7a. CONFIRMATION CHALLENGE: If the user's latest message is a short confirmation challenge "
     "('Sei sicuro?', 'Ne sei certo?', 'Davvero?', 'Sei davvero sicuro?', 'Sicuro?'), "
     "call rewrite() then retrieve() to re-verify — never ask for clarification in this case, "
@@ -134,6 +129,11 @@ AGENT_SYSTEM_PROMPT = (
     "State clearly whether the date is future/upcoming, today, or already past/expired. "
     "If multiple dates are found, prefer future dates first; if only past dates are available, answer with them "
     "but explicitly say they are no longer upcoming. Never present an expired deadline as currently valid.\n"
+    "11. ACADEMIC ROLES: When introducing or describing a person, use the most accurate title present in the retrieved context. "
+    "Priority: Professore Ordinario (PO) > Professore Associato (PA) > Ricercatore (RTD/A, RTD/B) > docente. "
+    "If context shows 'Professore Ordinario' or 'Professore Associato', always use that title — never downgrade to 'ricercatore' even if the person has many publications or research activities. "
+    "Use 'ricercatore' only if the context explicitly shows an RTD role with no PO/PA title. "
+    "If context shows an RTD role AND teaching activity at DIEM, prefer 'docente' over 'ricercatore'.\n"
     "<date_examples>\n"
     "<example>\n"
     "<user_latest>Quando scade il bando?</user_latest>\n"
@@ -150,31 +150,6 @@ AGENT_SYSTEM_PROMPT = (
 
 
 REJECTION_TAGS = ("[FUORI_SCOPE]", "[KNOWLEDGE_GAP]")
-
-CALCULATE_PROMPT = (
-    "You are a math expression extractor for an academic RAG system (DIEM, University of Salerno).\n"
-    "Given a formula description in the context and input values, output a single safe Python math expression.\n\n"
-    "OUTPUT FORMAT — respond with ONLY a raw JSON object, no markdown fences, no explanation:\n"
-    '{"expression": "<math expression>", "variables": {"name": value, ...}, "unit": "<scale or empty string>"}\n\n'
-    "RULES:\n"
-    "1. expression uses only: numbers, variable names from `variables`, operators + - * / ** and min() max() round()\n"
-    "2. Never call any Python function except min(), max(), round()\n"
-    "3. If values are known literals, embed them in expression directly (variables dict can be empty)\n"
-    "4. For multi-step formulas, inline intermediate results as numeric literals in the final expression\n"
-    "4a. SYNTAX: NEVER use curly braces {} — always use round parentheses () for min() and max(). "
-    "NEVER use comma as decimal separator — write 4.1 not 4,1. "
-    "NEVER copy mathematical set notation from documents — convert to valid Python.\n"
-    "4b. CENTODECIMI: The graduation grade (voto di laurea) is expressed in centodecimi — "
-    "a number in the range [66, 112]. The /110 conversion applies ONLY when converting "
-    "a weighted average from /30 scale to /110 (e.g. V_MIN = media_30 * 110 / 30). "
-    "NEVER divide the final voto di laurea result by 110.\n"
-    "5. Use ONLY formulas and constants explicitly present in the provided context. Never infer a graduation-grade formula from examples or prior knowledge.\n"
-    "6. If context contains formulas from multiple degree programs, use only the one matching the requested program; if unclear, return {\"error\": \"corso di laurea non univoco nel contesto\"}\n"
-    "7. If the formula is absent or incomplete in context: {\"error\": \"formula non trovata nel contesto\"}\n\n"
-    "EXAMPLES:\n"
-    '  voto_laurea, media=27.5 → {"expression": "27.5 * 110 / 30", "variables": {}, "unit": "/110"}\n'
-    '  media_ponderata, voti=[28,30,25], cfu=[9,6,12] → {"expression": "(28*9 + 30*6 + 25*12) / (9+6+12)", "variables": {}, "unit": "/30"}\n'
-)
 
 REWRITE_PROMPT = (
     "You are a Query Rewriter for a RAG system about the DIEM department (University of Salerno). "

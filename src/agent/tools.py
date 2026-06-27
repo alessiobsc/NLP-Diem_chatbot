@@ -1,10 +1,9 @@
 """
 RAG tools for the agentic DIEM Chatbot.
 
-Provides four composable tools:
+Provides two composable tools:
 - rewrite: Rewrite ambiguous query into standalone question using history
 - retrieve: Search the DIEM knowledge base
-- calculate: Apply academic calculations using retrieved formulas
 """
 
 import re
@@ -24,7 +23,7 @@ logger = get_logger(__name__)
 
 
 def build_tools(retriever, generation_model, brain_ref) -> list:
-    """Build the 4 RAG tools. brain_ref._last_docs is updated by retrieve()."""
+    """Build the RAG tools. brain_ref._last_docs is updated by retrieve()."""
 
     @tool
     def rewrite(query: str, state: Annotated[dict, InjectedState]) -> str:
@@ -150,63 +149,4 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
         )
         return context
 
-    @tool
-    def calculate(context: str, operation: str, values: dict) -> str:
-        """Apply an academic calculation using the official DIEM formula from retrieved context.
-        Always call retrieve() FIRST to fetch the formula, then pass its output as context.
-        Use for ANY numeric academic calculation: graduation grade, weighted average, TOLC thresholds.
-        Never compute inline — always delegate to this tool.
-        Parameters: context (retrieved formula text), operation (what to compute), values (input dict)."""
-        import json
-        from simpleeval import simple_eval
-        from src.prompts import CALCULATE_PROMPT
-
-        logger.info(f"calculate | operation='{operation}' | values={values}")
-        user_content = (
-            f"Operation: {operation}\n"
-            f"Values: {values}\n\n"
-            f"Context:\n{context}"
-        )
-        raw = generation_model.invoke([
-            SystemMessage(content=CALCULATE_PROMPT),
-            HumanMessage(content=user_content),
-        ]).content.strip()
-
-        # Strip markdown fences if model wraps the JSON
-        if "```" in raw:
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-            raw = raw.split("```")[0].strip()
-
-        try:
-            data = json.loads(raw)
-        except Exception as e:
-            logger.error(f"calculate | JSON parse failed: {e} | raw={raw}")
-            return f"Errore nel parsing della risposta del modello: {raw}"
-
-        if "error" in data:
-            return data["error"]
-
-        expression = data.get("expression", "")
-        # Sanitize common LLM mistakes: Italian decimal comma and curly-brace math notation
-        expression = re.sub(r'(\d),(\d)', r'\1.\2', expression)
-        expression = expression.replace('{', '(').replace('}', ')')
-        variables = {k: float(v) for k, v in data.get("variables", {}).items()}
-        unit = data.get("unit", "")
-
-        try:
-            result = float(simple_eval(
-                expression,
-                names=variables,
-                functions={"round": round, "min": min, "max": max, "abs": abs},
-            ))
-            result_str = str(round(result, 2))
-            unit_str = f" {unit}" if unit else ""
-            logger.info(f"calculate | expr={expression} vars={variables} result={result_str}")
-            return f"Risultato: {result_str}{unit_str}\n(Espressione valutata: {expression})"
-        except Exception as e:
-            logger.error(f"calculate | eval failed: {e} | expr={expression} vars={variables}")
-            return f"Errore nel calcolo: {e}"
-
-    return [rewrite, retrieve, calculate]
+    return [rewrite, retrieve]

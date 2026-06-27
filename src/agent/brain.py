@@ -151,7 +151,7 @@ class DiemBrain(DiemNodes):
         def tools_node(state: DiemState) -> dict:
             result = tool_node.invoke(state)
 
-            # Only retrieve calls count toward the cap; rewrite/summarize/calculate are free
+            # Only retrieve() calls count toward the cap
             last_ai = state["messages"][-1]
             tool_calls = getattr(last_ai, "tool_calls", [])
             retrieve_call = next(

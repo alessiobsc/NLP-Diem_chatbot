@@ -2676,3 +2676,288 @@ CRONOLOGIA AGGIORNAMENTI
      risultati evaluation C5 con analisi re-run RAGAS.
   3. Merge: develop → main (fast-forward), poi final-fixes → develop.
 
+--------------------------------------------------------------------------------
+2026-06-26 - Fix rewrite loop, scope guard, forced_retrieve; baseline calculate
+--------------------------------------------------------------------------------
+
+  COMMIT: d45c815 (branch final-fixes)
+
+  FIX 1 — Rewrite loop cap (brain.py, _route_agent)
+  ---------------------------------------------------
+  Problema: agent chiamava rewrite() in loop senza mai eseguire retrieve(), causando
+  GraphRecursionError (A3 Q2 "Sei sicuro di quello che hai detto?" su sessione con
+  tesi CFU). rewrite() non conta verso MAX_RETRIEVE_CALLS → nessun backstop esisteva.
+
+  Fix: in _route_agent, se tool_calls include rewrite:
+    - se tool_call_count >= MAX_RETRIEVE_CALLS → force_answer
+    - se rewrite_count nel turno corrente >= MAX_RETRIEVE_CALLS → forced_retrieve
+  Soglia: MAX_RETRIEVE_CALLS (=3), coerente con il cap su retrieve.
+
+  FIX 2 — forced_retrieve usa last rewrite output come query (nodes.py)
+  -----------------------------------------------------------------------
+  Problema: forced_retrieve usava la query utente raw (es. "Sei sicuro di quello
+  che hai detto?") → 0 doc recuperati → loop infinito.
+
+  Fix: forced_retrieve legge l'ultimo ToolMessage.name=="rewrite" nello stato;
+  usa quello come query se disponibile, fallback alla domanda utente.
+  Aggiunto: stub dei tool_calls pendenti (ToolMessage "[Skipped]") per non
+  lasciare dangling tool_calls nella history del modello.
+  Aggiunto: tool_call_count incrementato correttamente (era hardcoded a 1).
+
+  FIX 3 — Scope guard rimuove threshold 4 parole (nodes.py, _node_scope_guard)
+  ------------------------------------------------------------------------------
+  Problema: "Sei sicuro di quello che hai detto?" (7 parole) non veniva riscritta
+  prima della verifica scope → LLM vedeva query raw senza keyword DIEM → OOS.
+  Il vecchio codice faceva rewrite solo se has_prior AND len(question.split()) <= 4.
+
+  Fix: rimossa la threshold — rewrite SEMPRE se has_prior, indipendentemente dalla
+  lunghezza della domanda.
+
+  FIX 4 — REWRITE_PROMPT rule 5: esempio negativo anti-contaminazione entità
+  ---------------------------------------------------------------------------
+  Problema: in sessioni multi-turn (>10 turni), il modello 8b sostituiva entità
+  esplicitamente nominate dall'utente con entità simili presenti nella storia.
+  Es: "Chi è il Delegato al Web?" → rewrite → "Chi è il Delegato per la Terza
+  Missione?" (contaminazione da risposta precedente che menzionava quel delegato).
+
+  Fix: rule 5 di REWRITE_PROMPT rafforzata con esempio negativo esplicito:
+  WRONG/CORRECT example per il caso Delegato. L'8b risponde meglio a esempi
+  concreti che a regole astratte.
+
+  NOTA — Limiti strutturali accettabili (da documentare nel report)
+  -----------------------------------------------------------------
+  Scope guard e rewrite usano llama-3.1-8b per contenere latenza e costi.
+  Conseguenza: edge case di falsi OOS e contaminazione entità in sessioni molto
+  lunghe rimangono possibili — non eliminabili senza sostituire il modello lightweight
+  con uno più capace (e più lento/costoso). Workaround utente: riformulare la domanda.
+  Questi sono limiti strutturali deliberati, accettabili per il progetto.
+
+  BASELINE TOOL CALCULATE — TEST (scripts/test_chatbot_auto.py --calc-only)
+  --------------------------------------------------------------------------
+  Test eseguito con calculate tool attivo (situazione pre-rimozione).
+  Risultati:
+
+    MAG_INF  TTFT 15185ms | Total 15222ms | Risultato: 107.9 → 108/110 ✅
+    TRI_INF  TTFT 24580ms | Total 33032ms | calculate crashato (tuple syntax) → retry
+             secondo calcolo: 104.0 (formula diversa ma accettabile) ⚠️
+    MAG_IEDM TTFT 18480ms | Total 18566ms | V=99 + spiega PT/PC IE128 vs IE232 ✅
+
+  Problema rilevato: calculate TRI_INF genera expr con sintassi invalida
+  (min(((PT+PC),5),5) → Tuple non gestita da SimpleEval) → retry necessario → +8s.
+  Latenza complessiva: 15-33s TTFT, pesante per interfaccia chat.
+
+  Confronto con NO_CALC precedente (modello inline, run 2026-06-25):
+    MAG_INF: 15185ms → 8339ms (1.8x più veloce senza tool)
+    TRI_INF: 33032ms → 9817ms (3.4x più veloce senza tool)
+  → Rimozione calculate giustificata: riduce latenza, elimina crash per sintassi
+    invalida, gpt-oss-120b calcola correttamente inline senza tool dedicato.
+
+  PROSSIMI PASSI
+  --------------
+  1. Rimuovere tool calculate (tools.py + prompts.py) e testare con --calc-only
+  2. Report: documentare fix di questa sessione e limiti strutturali
+  3. Merge final-fixes → develop → main
+
+--------------------------------------------------------------------------------
+2026-06-26 — Rimozione tool calculate + test post-rimozione
+--------------------------------------------------------------------------------
+
+  RIMOZIONE TOOL CALCULATE (tools.py + prompts.py)
+  -------------------------------------------------
+  Rimosso definitivamente il tool `calculate` dopo conferma baseline:
+  - `src/agent/tools.py`: eliminata funzione `calculate()` (~60 righe, SimpleEval)
+    return list cambiato da [rewrite, retrieve, calculate] a [rewrite, retrieve]
+  - `src/prompts.py`: rimosso paragrafo calculate da AGENT_SYSTEM_PROMPT,
+    rimossa regola 6a GRADUATION GRADE REGULATIONS, rimossa CALCULATE_PROMPT
+
+  MOTIVAZIONE: SimpleEval crashava su espressioni con tuple syntax
+  (es. min(((PT+PC),5),5) → "Tuple is not available in this evaluator").
+  gpt-oss-120b gestisce calcoli accademici inline con qualità superiore
+  (formula + range table vs singolo numero potenzialmente sbagliato).
+
+  TEST POST-RIMOZIONE (scripts/test_chatbot_auto.py --calc-only)
+  ---------------------------------------------------------------
+  Risultati NO_CALC (gpt-oss-120b inline, senza tool calculate):
+
+    MAG_INF  TTFT  10290ms | Total 10315ms
+             V=99, formula IE127 (max +5) e IE227 (max +6), FC breakdown ✅
+
+    TRI_INF  TTFT  10242ms | Total 10282ms
+             V=99, formula con PT/PC/FC, tabella con scenario PT=0 → 99 ✅
+
+    MAG_IEDM TTFT   7392ms | Total  7429ms
+             V=99, IE128 (max +5) vs IE232 (max +6), tabella range ✅
+
+  CONFRONTO WITH_CALC vs NO_CALC:
+    MAG_INF  15185ms → 10290ms  (-32%, nessun crash)
+    TRI_INF  33032ms → 10242ms  (-58%, fix definitivo crash tuple syntax)
+    MAG_IEDM 18480ms →  7392ms  (-60%)
+
+  Qualità: NO_CALC più informativa (formula + range) vs singolo numero spesso
+  approssimato. Rimozione confermata, nessun revert necessario.
+
+  PROSSIMI PASSI
+  --------------
+  1. Report: documentare fix sessione 2026-06-26 e rimozione calculate
+  2. Merge: final-fixes → develop → main
+  3. Backlog: recursion limit → aumentare a 50 in brain.py:_invoke_config
+
+--------------------------------------------------------------------------------
+2026-06-27 — Verifica correttezza formule voto laurea: WITH vs WITHOUT calculate
+--------------------------------------------------------------------------------
+
+  OBIETTIVO
+  ---------
+  Verificare la correttezza delle risposte del chatbot sulle formule voto di laurea
+  confrontandole con i regolamenti ufficiali UniSa (IE127, IE227, IE232), e valutare
+  la qualità comparativa WITH calculate tool vs NO calculate.
+
+  FORMULE UFFICIALI ESTRATTE DAI PDF (Art. 16)
+  ---------------------------------------------
+  Triennale IngInf — IE127 (L-8, 2025):
+    Voto = V_MIN + min{(PT + PC_P), 5} + FC_P
+    V_MIN = (media × 110) / 30
+    PT ∈ [0, 2]; PC_P = carriera × (PT/2)
+    FC_P = (4.1 × media − 7.8 − V_MIN) × (PT/2)
+    Carriera: tempo=2 (entro 3° a.a. senza f.c.), estero=1 (≥12 CFU), eccellenza=1
+    Cap = 5; Lode se voto ≥ 112
+
+  Magistrale IngInf — IE227 (LM-32, 2025):
+    Voto = V_MIN + min{(PT + PC_P), 6} + FC_P
+    V_MIN = (media × 110) / 30
+    PT ∈ [0, 4]; PC_P = carriera × (PT/4)
+    FC_P = (4.1 × media − 8.8 − V_MIN) × (PT/4)
+    Carriera: tempo=1 (entro 2° a.a. senza f.c.), estero=1 (doppio titolo) o 0.5
+              (≥15 CFU), eccellenza=1
+    Cap = 6; Lode se voto ≥ 112
+
+  Magistrale IEDM — IE232 (struttura identica a IE227):
+    Stessi parametri e costanti (8.8, cap=6, PT∈[0,4], divisore PT/4)
+
+  Differenze chiave triennale vs magistrale:
+    - costante FC: 7.8 (triennale) vs 8.8 (magistrale)
+    - PT range: [0,2] (triennale) vs [0,4] (magistrale)
+    - divisore: PT/2 (triennale) vs PT/4 (magistrale)
+    - cap: 5 (triennale) vs 6 (magistrale)
+
+  CONFRONTO QUALITÀ RISPOSTE (media=27, V_MIN=99)
+  ------------------------------------------------
+
+  Caso MAG_INF (magistrale IngInf → IE227):
+    WITH calculate   TTFT 15.2s  — risultato 107.9 (corretto), ma usa carriera=4
+                                    (sbagliato per magistrale, max=3). Corretto per
+                                    caso perché il cap=6 è communque raggiunto.
+    NO calculate     TTFT 10.3s  — formula corretta (cap=6, costante 8.8), ma presenta
+                                    IE127 (triennale) accanto a IE227 senza disambiguare.
+                                    "divisore" non esplicitato (dovrebbe essere PT/4).
+    Giudizio: entrambi parzialmente corretti. NO_CALC 32% più veloce.
+
+  Caso TRI_INF (triennale IngInf → IE127):
+    WITH calculate   TTFT 24.6s  — calculate fallisce su sintassi tuple
+                                    ("Tuple is not available in this evaluator").
+                                    Secondo tentativo: risultato 104 (formula errata,
+                                    PT=0, PC=0, variabili nulle). SBAGLIATO.
+    NO calculate     TTFT 10.2s  — V=99 ✓, cap=5 ✓, PT∈[0,2] ✓, divisore PT/2 ✓,
+                                    FC=3.9×(PT/2) ✓. Formula completamente corretta
+                                    con tabella PT→voto. RISPOSTA MIGLIORE.
+    Giudizio: caso decisivo — WITH produce risultato errato (crash + formula sbagliata),
+    NO_CALC è corretto e 3× più veloce.
+
+  Caso MAG_IEDM (magistrale IEDM → IE232):
+    WITH calculate   TTFT 18.5s  — V=99 corretto, cita IE128 + IE232 senza commettere
+                                    a una sola formula.
+    NO calculate     TTFT  7.4s  — stessa ambiguità IE128/IE232. V=99 corretto.
+    Giudizio: equivalenti nella qualità, NO_CALC 60% più veloce.
+    Problema comune: retrieval recupera IE128 (altro corso, cap=5, PT∈[0,2]) insieme
+    a IE232 (IEDM, cap=6, PT∈[0,4]). Chatbot presenta entrambe senza identificare
+    quale si applica alla domanda. Problema di retrieval preesistente, non legato
+    alla rimozione del tool.
+
+  TABELLA RIASSUNTIVA
+  -------------------
+  | Caso     | WITH calc   | NO calc    | TTFT with | TTFT no | Delta   |
+  |----------|-------------|------------|-----------|---------|---------|
+  | MAG_INF  | ✅ num. ok  | ⚠️ parz.  | 15.2s     | 10.3s   | -32%    |
+  | TRI_INF  | ❌ sbagliato| ✅ OTTIMO | 33.0s     | 10.2s   | -69%    |
+  | MAG_IEDM | ⚠️ ambiguo | ⚠️ ambiguo| 18.5s     | 7.4s    | -60%    |
+
+  CONCLUSIONE
+  -----------
+  Rimozione calculate confermata definitivamente:
+  - TRI_INF (caso più comune) produce risposta SBAGLIATA con calculate, CORRETTA
+    senza (tool crasha su espressione tuple, secondo tentativo usa variabili nulle).
+  - Latenza migliorata del 32-69% su tutti e tre i casi.
+  - Qualità MAG_IEDM identica nelle due versioni.
+  - Qualità MAG_INF: numericamente equivalente; NO_CALC mostra formula completa
+    invece di singolo numero, più utile per studenti che devono calcolare da soli
+    con i propri dati di carriera.
+
+  PROBLEMA RETRIEVAL RESIDUO (non bloccante, da documentare nel report)
+  ----------------------------------------------------------------------
+  Per domande su IEDM magistrale, il retriever porta IE128 (altro corso con
+  cap=5, PT∈[0,2]) accanto a IE232 (IEDM, cap=6, PT∈[0,4]). Il chatbot
+  correttamente elenca entrambe le fonti ma non disambigua quale si applica
+  alla domanda specifica. Issue di retrieval preesistente — non introdotto
+  dalla rimozione di calculate né dai fix di questo branch.
+
+--------------------------------------------------------------------------------
+2026-06-27 — Cleanup residui calculate + fix regulation check voto di laurea
+--------------------------------------------------------------------------------
+
+  CLEANUP RESIDUI TOOL CALCULATE
+  --------------------------------
+  Rimossi tutti i riferimenti residui a calculate e summarize da commenti e
+  docstring (tool già rimosso in sessione precedente):
+  - src/agent/tools.py: docstring build_tools "4 RAG tools" → "RAG tools"
+  - config.py: commento cap retrieve aggiornato
+  - src/agent/brain.py: commento cap retrieve aggiornato
+  - src/agent/init_models.py: docstring build_lightweight_model aggiornata
+
+  FIX — AGENT_SYSTEM_PROMPT STEP 2: graduation grade regulation check
+  -------------------------------------------------------------------
+  Problema: per domande su voto di laurea, il retriever portava regolamenti
+  di corsi diversi da quello richiesto (es. IE127 triennale per query su
+  magistrale IE227). Il chatbot usava il regolamento sbagliato producendo
+  parametri errati (cap, PT range, costante FC, divisore).
+
+  Root cause: bi-encoder trova IE127 e IE227 con score simili (stesso topic,
+  testo simile). La source URL (IE127.pdf vs IE227.pdf) è in metadata —
+  visibile all'agente nel formatted context ma non usata per discriminare.
+
+  Fix: aggiunto punto 4 in STEP 2 — CONTEXT VALIDATION di AGENT_SYSTEM_PROMPT:
+  l'agente verifica che la source URL del regolamento recuperato contenga il
+  codice corrispondente al corso richiesto. Mappa codici:
+    IE127 = Ingegneria Informatica triennale (L-8)
+    IE128 = Ingegneria dell'Informazione per la Medicina Digitale triennale (L-8)
+    IE227 = Ingegneria Informatica magistrale (LM-32)
+    IE232 = Information Engineering for Digital Medicine magistrale (LM-32)
+    IE233 = Electrical Engineering for Digital Energy magistrale (LM-28)
+  Se mismatch → retry retrieve() con codice esplicito nella query.
+
+  TEST POST-FIX (media 27,3 — tutti e 3 i casi)
+  -----------------------------------------------
+  MAG_INF  (IE227): cap=6, PT∈[0,4], costante 8,8, fonte IE227.pdf ✓
+  TRI_INF  (IE127): cap=5, PT∈[0,2], costante 7,8, fonte IE127.pdf ✓
+  MAG_IEDM (IE232): cap=6, PT∈[0,4], costante 8,8, fonte IE232.pdf ✓
+             (precedentemente portava IE128 senza disambiguare)
+
+  File modificato: src/prompts.py
+
+  FIX — AGENT_SYSTEM_PROMPT STEP 3: ruoli accademici (rule 11)
+  -------------------------------------------------------------
+  Problema: professori con curriculum denso di pubblicazioni e attività di
+  ricerca (es. RTD/B con molti paper) venivano introdotti come "ricercatori"
+  anche se il contesto mostrava titolo Professore Ordinario o Associato.
+  La regola precedente (2026-05-21) copriva solo RTD vs docente ed era andata
+  persa nelle riscritture successive del prompt.
+
+  Fix: aggiunta rule 11 ACADEMIC ROLES in STEP 3 con priorità esplicita:
+    Professore Ordinario (PO) > Professore Associato (PA) > Ricercatore RTD > docente
+  Se contesto mostra PO o PA → usare sempre quel titolo, mai "ricercatore".
+  Se contesto mostra RTD + attività didattica → preferire "docente".
+
+  Test: Antonio Greco (PA con curriculum RTD/A→RTD/B + MIVIA Lab + 8 corsi)
+  → introdotto correttamente come "Professore Associato" ✓
+
+  File modificato: src/prompts.py
+

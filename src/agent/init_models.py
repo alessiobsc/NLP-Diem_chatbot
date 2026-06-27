@@ -15,7 +15,7 @@ logger = get_logger(__name__)
 
 
 def build_lightweight_model():
-    """Lightweight model: guardrails, rewrite, summarize, calculate — latency-sensitive tasks."""
+    """Lightweight model: guardrails, rewrite — latency-sensitive tasks."""
     if LLM_PROVIDER == "openrouter":
         try:
             logger.info(f"Lightweight model: OpenRouter {OPENROUTER_LIGHTWEIGHT_MODEL}")
