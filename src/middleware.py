@@ -33,6 +33,13 @@ _BADWORDS_PATTERN: re.Pattern | None = (
 
 # ── Scope keywords: any match → in scope without LLM call ─────────────────────
 
+_OTHER_UNI_SIGNALS = {
+    "napoli", "torino", "milano", "roma", "bologna", "firenze",
+    "pisa", "padova", "venezia", "bari", "palermo", "catania",
+    "messina", "genova", "perugia", "lecce",
+    "bocconi", "sapienza", "luiss", "cattolica", "bicocca", "federico",
+}
+
 _SCOPE_KEYWORDS = {
     "diem", "unisa", "università", "universita", "salerno", "corso", "corsi",
     "esame", "esami", "laurea", "professore", "prof", "docente", "ricerca",
@@ -135,8 +142,13 @@ class ScopeGuardrail:
     def check(self, question: str) -> bool:
         """Returns True if in scope, False if out of scope."""
         tokens = set(question.lower().split())
-        # Fast path: academic keyword match → in scope
-        if tokens & _SCOPE_KEYWORDS:
+        # Block directly if other-university signal detected with no DIEM-specific keyword
+        force_llm = bool(tokens & _OTHER_UNI_SIGNALS)
+        if force_llm and not (tokens & {"diem", "unisa", "salerno"}):
+            logger.info(f"ScopeGuardrail: other-university detected, rejected: '{question[:60]}'")
+            return False
+        # Fast path: academic keyword match → in scope (unless other-uni forces LLM)
+        if not force_llm and tokens & _SCOPE_KEYWORDS:
             logger.debug("ScopeGuardrail: keyword match, in scope")
             return True
 
