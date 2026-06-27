@@ -181,9 +181,6 @@ raggiunge LLMContextRecall 0,828 e Coherence 0,826, entrambi i valori più eleva
 dell'intera sperimentazione, con Faithfulness 0,752 e Robustness 66,7\%.
 \end{abstract}
 
-\vspace{0.5em}
-\noindent\textbf{Parole chiave:} Retrieval-Augmented Generation, LangGraph, chatbot universitario,
-Parent-Child chunking, Ragas, agentic RAG, NLP italiano, guardrail conversazionale.
 
 \newpage
 \tableofcontents
@@ -988,6 +985,33 @@ chunk con score più alto vengono selezionati. Per ogni chunk figlio viene poi r
 il chunk padre corrispondente dal \code{LocalFileStore}, fornendo al modello generativo
 un contesto più ampio (fino a 1500 caratteri).
 
+\textbf{Recency boost.} Dopo il reranking viene applicato un piccolo bonus di
+rilevanza basato sull'anno accademico estratto dal context header del documento.
+Il bonus è applicato esclusivamente ai PDF --- i cui anni accademici sono
+significativi e distinguibili --- e ha un'entità intenzionalmente trascurabile:
+agisce come tiebreaker tra documenti con score di reranking quasi identico,
+privilegiando la versione più recente di un regolamento o di un programma senza
+alterare l'ordinamento generale.
+
+\begin{lstlisting}[language=Python, caption={Recency boost applicato dopo il reranking (\texttt{reranker.py}).}]
+_YEAR_RE = re.compile(r'\[AY (\d{4})|\[(\d{4})\]')
+
+def _apply_recency_boost(docs):
+    for doc in docs:
+        year = _extract_year(doc.metadata.get("context_header", ""))
+        is_pdf = doc.metadata.get("source", "").lower().endswith(".pdf")
+        bonus = max(0.0, (year - 2020) * 0.001) if (year and is_pdf) else 0.0
+        base = doc.metadata.get("relevance_score", 0.0)
+        doc.metadata["relevance_score_boosted"] = round(base + bonus, 6)
+    return sorted(docs, key=lambda d: d.metadata["relevance_score_boosted"],
+                  reverse=True)
+\end{lstlisting}
+
+L'anno viene estratto tramite espressione regolare dai tag \texttt{[AY 2025/2026]}
+o \texttt{[2021]} già presenti nel context header: nessuna chiamata aggiuntiva al
+modello è necessaria. Il bonus massimo è $0{,}005$ per anno 2025, trascurabile
+rispetto agli score del reranker ($\in [0,1]$).
+
 \subsection{Tool dell'Agente}
 \label{sec:tools}
 
@@ -1140,24 +1164,55 @@ riflettono la configurazione finale; le configurazioni intermedie sono documenta
 \texttt{docs/progress.txt}.}
 
 La progettazione dei prompt ha richiesto un'iterazione significativa, poiché piccole
-variazioni nel testo producono comportamenti qualitativamente diversi.
+variazioni nel testo producono comportamenti qualitativamente diversi. Le tecniche
+utilizzate coprono un ampio spettro del prompt engineering moderno.
 
-\textbf{AGENT\_SYSTEM\_PROMPT.} Il prompt principale dell'agente è strutturato in due step
-espliciti: Step~1 (tool use) e Step~2 (generazione risposta). Lo Step~1 specifica che
-l'agente deve chiamare \code{retrieve} come primo tool del turno, e che deve chiamare
-\code{rewrite} prima di ogni \code{retrieve} --- inclusi i retry. Lo Step~2 specifica le regole di
-risposta: italiano, conciso, senza preambolo, con tag strutturati \texttt{[KNOWLEDGE\_GAP]}
-e \texttt{[FUORI\_SCOPE]} per i rifiuti. Una regola critica (\emph{NEVER EMPTY}, Rule~4)
-obbliga l'agente a rispondere sempre se il contesto contiene informazioni utili, anche
-parziali.
+\textbf{AGENT\_SYSTEM\_PROMPT.} Il prompt principale adotta \emph{role prompting}:
+l'agente riceve un'identità esplicita (assistente virtuale del DIEM) e un contesto
+istituzionale che vincolano il tono, la lingua e l'ambito delle risposte. La struttura
+in step numerati (\emph{Step~1: tool use}, \emph{Step~2: context validation},
+\emph{Step~3: generate answer}) è una forma di \emph{instruction following} con
+regole esplicite e ordinate: lo Step~2 include un sotto-protocollo di verifica del
+contesto che il modello deve eseguire prima di procedere alla risposta, simile a un
+pattern di \emph{self-verification}. I tag strutturati \texttt{[KNOWLEDGE\_GAP]} e
+\texttt{[FUORI\_SCOPE]} sono un'applicazione di \emph{structured output prompting}:
+forzare output lessicalmente determinati consente al layer applicativo di rilevare
+programmaticamente i rifiuti senza parsing euristico sul testo libero.
 
-\textbf{REWRITE\_PROMPT.} Il prompt di riscrittura enumera sei regole esplicite: (0) non
-sostituire la domanda corrente con contenuto dalla history; (1) lasciare inalterata la
-query se è auto-contenuta; (2) risolvere i pronomi; (3) preservare la struttura originale
-della domanda senza parafrasi; (4) usare la history solo per follow-up incompleti, non
-per domande indipendenti; (5) non sostituire le entità nominate dall'utente con entità
-diverse dalla history; (6) aggiungere l'anno accademico per query su contenuto
-accademico.
+\textbf{REWRITE\_PROMPT.} Il prompt di riscrittura combina \emph{instruction following}
+con \emph{few-shot prompting}: sei regole esplicite vincolano il comportamento del
+modello sui casi edge (non sostituire la domanda corrente, risolvere i pronomi,
+preservare le entità nominate, iniettare l'anno accademico per query su contenuto
+datato), seguite da esempi input/output annotati che illustrano ogni caso limite.
+Il few-shot è fondamentale qui: le regole in linguaggio naturale non sono sufficienti
+a guidare il modello su casi sottili come la distinzione tra un follow-up ambiguo e
+una nuova domanda indipendente; gli esempi aggiuntivi rendono il confine operativo.
+
+\textbf{Gestione del voto di laurea.} Il calcolo del voto di laurea richiede
+parametri specifici per ciascun corso --- formula FC, costanti, punteggio massimo di
+tesi e bonus carriera differiscono tra triennale e magistrale e tra i cinque corsi
+DIEM (IE127, IE128, IE227, IE232, IE233). Per gestire correttamente questo dominio,
+il prompt include tre meccanismi distinti.
+
+Il primo è un \emph{cancello di chiarimento} allo Step~1: se la domanda riguarda il
+voto di laurea ma non specifica il corso, l'agente deve chiedere chiarimento
+\emph{prima} di chiamare qualsiasi tool, perché recuperare il regolamento sbagliato
+produrrebbe un calcolo errato e non rilevabile.
+
+Il secondo è un \emph{controllo del regolamento} allo Step~2: dopo il retrieve,
+l'agente deve verificare che l'URL sorgente del documento recuperato contenga il
+codice del corso richiesto. Se il regolamento recuperato appartiene a un corso
+diverso, deve effettuare un nuovo retrieve con il codice esplicito nella query
+(es.\ \texttt{regolamento IE127 formula voto laurea}).
+
+Il terzo è una regola di \emph{chain-of-thought} applicata allo Step~3: per ogni
+formula accademica multi-stadio, l'agente deve esplicitare ogni fattore intermedio
+(V, FC, bonus) prima di produrre il risultato finale. La tecnica del
+chain-of-thought \cite{wei2022chain} obbliga il modello a ragionare passo per passo
+anziché collassare la computazione in un unico salto, riducendo gli errori aritmetici
+su calcoli concatenati. Questa regola è stata introdotta dopo aver osservato che il
+modello tendeva a produrre direttamente il voto finale, con errori sull'FC non
+immediatamente rilevabili dall'utente.
 
 \textbf{Tag di rifiuto.} I tag \texttt{[FUORI\_SCOPE]} e \texttt{[KNOWLEDGE\_GAP]} sono
 usati come marcatori strutturati nell'output dell'agente. Un dizionario \code{\_TAG\_FALLBACKS}
@@ -1297,7 +1352,7 @@ risposte non è direttamente ancorata al contesto recuperato: questo segnala un 
 di allucinazione su fatti non presenti nella knowledge base, coerente con i casi di
 KNOWLEDGE\_GAP osservati. La LLMContextPrecision alta (0,847) indica invece che il
 retrieval, quando eseguito, porta contesti pertinenti. Il gap tra Scope Awareness strict
-(33,3\%) e soft (100,0\%) conferma il bug~\#2 del backlog: il sistema tende a rispondere
+(33,3\%) e soft (100,0\%) evidenzia un comportamento critico: il sistema tende a rispondere
 con un fallback da knowledge-gap invece di rifiutare esplicitamente le domande
 out-of-scope.
 
@@ -1308,29 +1363,29 @@ soli 5--6 campioni con reference. Una run completa su GPU con l'intero golden se
 bilingue è necessaria per risultati definitivi.
 \end{tcolorbox}
 
-\subsection{Backlog di Valutazione}
+\subsection{Criticità Identificate}
 
 \snote{Il backlog deriva direttamente dall'analisi della smoke run e dai test manuali. Bug \#2 (scope vs knowledge gap) e \#3 (retrieval drift su challenge) sono i più impattanti sulla qualità percepita dell'interazione. Bug \#4 (rewrite come affermazione) e \#5 (retrieval incompleto geo-fatti) sono stati scoperti guardando i \texttt{per\_question.json} della smoke run.}
 
-L'analisi dei risultati della smoke run ha identificato quattro bug confermati nel sistema,
-riportati nel backlog attivo del progetto.
+L'analisi dei risultati della smoke run ha identificato quattro criticità nel sistema.
 
-\textbf{Bug \#2 --- Scope rejection vs.\ knowledge gap.} Il sistema conflate rifiuto
-per ambito con fallback da knowledge gap: aggiunge uno stadio di scope-classification
-a monte del retrieval, oppure un sistema più rigido nel SYSTEM\_PROMPT.
+\textbf{Scope rejection vs.\ knowledge gap.} Il sistema tende a rispondere con un
+fallback da knowledge-gap invece di rifiutare esplicitamente le domande fuori ambito.
+La soluzione è l'introduzione di uno stadio di scope-classification esplicito a monte
+del retrieval, o un vincolo più rigido nel system prompt.
 
-\textbf{Bug \#3 --- Retrieval drift al secondo turno.} Dopo una challenge ``Sei sicuro?'',
-il retrieval nel secondo turno cita fonti diverse rispetto al primo. Il REWRITE\_PROMPT
-deve essere raffinato per riconoscere le challenge brevi come query di conferma, non
-come nuove query da riscrivere.
+\textbf{Retrieval drift al secondo turno.} Dopo una challenge ``Sei sicuro?'', il
+retrieval nel secondo turno cita fonti diverse rispetto al primo. Il prompt di
+riscrittura deve riconoscere le challenge brevi come query di conferma, non come nuove
+query da riscrivere da zero.
 
-\textbf{Bug \#4 --- Rewrite come affermazione.} Il rewrite di domande multi-turn con
-framing ``Sì, questo è corretto...'' produce un'affermazione invece di una domanda,
+\textbf{Rewrite come affermazione.} Il rewrite di domande multi-turn con framing
+``Sì, questo è corretto\ldots'' produce un'affermazione invece di una domanda,
 compromettendo la qualità del retrieval.
 
-\textbf{Bug \#5 --- Retrieval incompleto su fatti geografici.} La domanda ``Dove si trova
-il DIEM?'' non recupera l'indirizzo esatto (Via Giovanni Paolo II, 132), suggerendo un
-gap di ingestion o una soglia di retrieval troppo alta.
+\textbf{Retrieval incompleto su fatti geografici.} La domanda ``Dove si trova il
+DIEM?'' non recupera l'indirizzo esatto (Via Giovanni Paolo II, 132), suggerendo un
+gap di ingestion o una soglia di retrieval troppo selettiva.
 
 %% ============================================================
 \section{Studio Comparativo: Trafilatura vs.\ Crawl4AI}
@@ -1920,11 +1975,11 @@ studenti, portale esse3) non sono indicizzabili.
 delle aspettative. Parte del problema è strutturale: su domande senza risposta nella
 knowledge base, il modello tende a produrre risposte plausibili invece di restituire
 KNOWLEDGE\_GAP, generando affermazioni non ancorate al contesto. L'architettura
-agentica con il tag KNOWLEDGE\_GAP e la regola NEVER EMPTY riduce il fenomeno,
-ma non lo elimina.
+agentica con il tag \texttt{[KNOWLEDGE\_GAP]} e la regola di output obbligatorio
+riduce il fenomeno, ma non lo elimina.
 
 \textbf{Robustezza multi-turno.} Il retrieval drift al secondo turno (Bug~\#3) indica
-che il REWRITE\_PROMPT non distingue ancora in modo affidabile tra una domanda
+che il prompt di riscrittura non distingue ancora in modo affidabile tra una domanda
 genuinamente nuova e una challenge al turno precedente, portando il sistema a
 re-retrieve su una query diversa invece di confermare la risposta precedente.
 
@@ -2078,6 +2133,11 @@ Zheng, L., Chiang, W.-L., Sheng, Y., Zhuang, S., Wu, Z., Zhuang, Y., Lin, Z.,
   Li, Z., Li, D., Xing, E.~P., Zhang, H., Gonzalez, J.~E., and Stoica, I. (2023).
 \newblock Judging LLM-as-a-judge with MT-bench and chatbot arena.
 \newblock \emph{arXiv preprint arXiv:2306.05685}.
+
+\bibitem[Wei et al., 2022]{wei2022chain}
+Wei, J., Wang, X., Schuurmans, D., Bosma, M., Ichter, B., Xia, F., Chi, E., Le, Q., and Zhou, D. (2022).
+\newblock Chain-of-thought prompting elicits reasoning in large language models.
+\newblock In \emph{Advances in Neural Information Processing Systems}, volume~35.
 
 \end{thebibliography}
 
