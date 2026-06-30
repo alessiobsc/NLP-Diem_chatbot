@@ -3054,3 +3054,46 @@ CRONOLOGIA AGGIORNAMENTI
     Vercel AI SDK browser agent).
   §9 Conclusioni: aggiornato per citare C5, i risultati finali e i limiti residui.
 
+2026-06-30 — Fix prompt agent e rewrite retry: context validation, rewrite terminal, retry diversification
+--------------------------------------------------------------------------------
+
+  CONTEXT VALIDATION — STEP 2 rule 2 (src/prompts.py)
+  -----------------------------------------------------
+  Chiarito il significato di "sufficiently": il contesto deve rispondere
+  all'esatto qualificatore specificato dall'utente (livello laurea, persona,
+  anno). Contesto topic-corretto ma con qualificatore sbagliato non è sufficiente
+  e deve triggerare un retry. Aggiornato anche il docstring del tool retrieve
+  con lo stesso principio.
+
+  REWRITE TERMINAL ACTION FIX (src/prompts.py)
+  ---------------------------------------------
+  Aggiunta istruzione esplicita in STEP 1: rewrite() non è mai un'azione
+  terminale — deve essere sempre immediatamente seguita da retrieve().
+  Corregge il comportamento in cui l'agente chiamava rewrite() e poi
+  generava la risposta finale senza eseguire il retrieve successivo.
+
+  REWRITE RETRY DIVERSIFICATION (src/agent/tools.py)
+  ---------------------------------------------------
+  Rinforzato il retry prompt sostituendo la logica strategy 1/2 ambigua con:
+  - "CRITICAL: output MUST differ from <previous_query>"
+  - Strategy 1 (avvicinarsi a user_latest) con fallback esplicito a strategy 2
+    se produrrebbe lo stesso output
+  - Strategy 2 con metodi concreti: sinonimi, keyword vs question form,
+    specificità diversa
+  Motivazione: i log mostravano che l'8b produceva query identiche verbatim
+  anche con "Do NOT output verbatim" — il constraint non era abbastanza esplicito
+  e strategy 2 era troppo vaga per essere seguita.
+
+  REWRITE HISTORY (src/agent/tools.py)
+  -------------------------------------
+  Aumentata history da 1 a 2 QA pair (history_lines[-2:] → [-4:]) per
+  permettere la risoluzione di riferimenti a 2 domande fa nei follow-up.
+  Rischio name-confusion monitorato: se ricompare si torna a [-2:].
+
+  NOTE REPORT (docs/report_additions.md)
+  ---------------------------------------
+  Creato file con le aggiunte da fare al report:
+  - Documentare crawling EasyCourse
+  - Tool calculate: implementazione e rimozione con snippet da git history
+  - Sviluppi futuri: fine-tuning e human feedback
+

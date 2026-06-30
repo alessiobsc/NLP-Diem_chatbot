@@ -64,7 +64,7 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
                 # to a failed/rejected turn.
                 if text and not any(text.startswith(p) for p in _GUARDRAIL_PREFIXES):
                     history_lines.append(f"AI: {text}")
-        history_str = "\n".join(history_lines[-2:])
+        history_str = "\n".join(history_lines[-4:])
 
         if query != user_query:
             logger.info(f"rewrite | ignoring agent-expanded query: '{query}'")
@@ -81,14 +81,16 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
                 f"<history>\n{history_str}\n</history>\n"
                 f"<user_latest>{user_query}</user_latest>\n"
                 f"<previous_query>{prior_rewrite}</previous_query>\n"
-                "<retry_instruction>The previous query returned insufficient results.\n"
+                "<retry_instruction>The previous query returned insufficient results. "
+                "CRITICAL: your output MUST differ from <previous_query>.\n"
                 "Strategy (apply in order):\n"
                 "1. If <previous_query> differs from <user_latest> (added terms, changed phrasing, "
                 "injected institutional scope): generate a query closer to <user_latest>, "
-                "removing added elements while preserving the user's original intent.\n"
-                "2. Only if <previous_query> is already nearly identical to <user_latest>: "
-                "try a semantically different angle or broader phrasing.\n"
-                "Do NOT output <previous_query> verbatim.</retry_instruction>"
+                "removing added elements while preserving entities resolved from history. "
+                "Skip to strategy 2 if this would still produce the same output as <previous_query>.\n"
+                "2. Use a genuinely different formulation: replace key terms with synonyms, "
+                "switch between question form and keyword form, or change the specificity level. "
+                "Do NOT output <previous_query> verbatim or with only minor wording changes.</retry_instruction>"
             )
             logger.info(f"rewrite | retry detected | previous_query='{prior_rewrite[:80]}'")
         else:
@@ -106,7 +108,9 @@ def build_tools(retriever, generation_model, brain_ref) -> list:
     def retrieve(query: str) -> str:
         """Search the DIEM knowledge base and return relevant document excerpts.
         ALWAYS call this before generating any answer — context is mandatory.
-        If the returned context is empty or off-topic, call rewrite() again then retry retrieve().
+        If the returned context is empty, off-topic, or does not address the exact qualifier
+        in the user's question (correct topic but wrong degree level, wrong person, or wrong
+        year also counts as insufficient), call rewrite() then retry retrieve().
         Returns formatted document excerpts as a string."""
         from src.agent.brain import rerank, format_context
 
