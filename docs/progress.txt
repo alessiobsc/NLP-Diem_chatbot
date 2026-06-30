@@ -3097,3 +3097,34 @@ CRONOLOGIA AGGIORNAMENTI
   - Tool calculate: implementazione e rimozione con snippet da git history
   - Sviluppi futuri: fine-tuning e human feedback
 
+2026-06-30 — Fix rewrite rule 10 + analisi limiti context validation
+--------------------------------------------------------------------------------
+
+  FIX REWRITE RULE 10 (src/prompts.py)
+  -------------------------------------
+  Rimosso esempio errato che insegnava al modello a riscrivere
+  "Qual è il programma del corso di Ingegneria del Software?" →
+  "Programma corso Ingegneria del Software anno accademico 2025/2026"
+  (keyword form che attirava schede SUA/piano di studi invece delle
+  schede insegnamento nei PDF di regolamento).
+  Corretti anche i trigger examples di rule 10: rimosso
+  "'programma di Ingegneria del Software'" (esame, non corso di laurea),
+  sostituito con "'piano di studi di Ingegneria Informatica'" (corretta
+  intent di curriculum). Gli altri corsi funzionavano già senza esempio
+  specifico — l'esempio errato era la root cause del bug.
+  Verificato con debug_retrieval.py: query question-form trova
+  __regolamenti-cds/ al rank #1-2, keyword-form non trova nemmeno
+  __regolamenti-cds/ nel bi-encoder (0 hits stage 1).
+
+  LIMITI DOCUMENTATI (docs/report_additions.md)
+  -----------------------------------------------
+  Aggiunto al file report_additions.md:
+  - Limite strutturale: auto-valutazione pertinenza contesto da parte
+    dello stesso LLM è inaffidabile (topic-adjacent ≠ risposta specifica).
+    Il prompt ha un tetto massimo di efficacia senza segnali strutturati
+    dalla KB (context headers più specifici).
+  - Collegato a sviluppo futuro "modelli più forti per enrichment"
+    già citato nel report.
+  - Esempio PDF tabellare (Vincenzo Auletta / DESIGN AND ANALYSIS OF
+    ALGORITHMS) documentato come limite lettura PDF.
+
