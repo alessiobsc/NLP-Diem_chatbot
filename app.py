@@ -1,5 +1,8 @@
 import os
 import sys
+import uuid
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="starlette")
 from config import CHROMA_DIR_NAME, COLLECTION_NAME, DEFAULT_SESSION_ID, EMBEDDING_DIMENSION
 from dotenv import load_dotenv
 from langchain_chroma import Chroma
@@ -60,11 +63,13 @@ brain = DiemBrain(vectorstore)
 # ─────────────────────────────────────────────────────────────────────────────
 _DEGENERATE_FALLBACK = "Mi dispiace, non sono riuscito a trovare informazioni sufficienti per rispondere a questa domanda."
 
-def chat_fn(message: str, history: list):
+def chat_fn(message: str, history: list, session_id: str = DEFAULT_SESSION_ID):
+    turn = len(history) + 1
+    logger.info(f"chat_fn | session={session_id} | turn={turn}")
     accumulated = ""
     emitted = False
     try:
-        for chunk in brain.chat_stream(message, DEFAULT_SESSION_ID):
+        for chunk in brain.chat_stream(message, session_id):
             if chunk == STREAM_DEGENERATE_SIGNAL:
                 # Answer was degenerate (<30 chars): replace entire display with fallback.
                 yield _DEGENERATE_FALLBACK
@@ -83,33 +88,44 @@ def chat_fn(message: str, history: list):
         yield "Mi dispiace, non sono riuscito a generare una risposta."
 
 
-demo = gr.ChatInterface(
-    fn=chat_fn,
-    title="DIEM Chatbot",
-    description=(
-        "Ask questions about the DIEM department (University of Salerno): "
-        "degree programs, faculty, research, courses, regulations, and more."
-    ),
-    examples=[
-        "Quali corsi di laurea offre il DIEM?",
-        "Dove si trova il DIEM?",
-        "Quali sono le aree di ricerca attive al DIEM?",
-        "Chi è responsabile dell'internazionalizzazione al DIEM?",
-        "Quali laboratori sono disponibili al DIEM?",
-        "Ho preso 18 al TOLC. Posso iscrivermi?",
-        "Qual è il programma del corso di Ingegneria del Software?",
-        "Quali sono gli orari di ricevimento del professore Capuano?"
-    ],
-    chatbot=gr.Chatbot(
-        height=500,
-        latex_delimiters=[
-            {"left": "$$", "right": "$$", "display": True},
-            {"left": "$", "right": "$", "display": False},
-            {"left": "\\(", "right": "\\)", "display": False},
-            {"left": "\\[", "right": "\\]", "display": True},
+with gr.Blocks(title="DIEM Chatbot") as demo:
+    session_id_state = gr.State(lambda: str(uuid.uuid4()))
+
+    chat = gr.ChatInterface(
+        fn=chat_fn,
+        additional_inputs=[session_id_state],
+        title="DIEM Chatbot",
+        description=(
+            "Ask questions about the DIEM department (University of Salerno): "
+            "degree programs, faculty, research, courses, regulations, and more."
+        ),
+        examples=[
+            ["Quali corsi di laurea offre il DIEM?"],
+            ["Dove si trova il DIEM?"],
+            ["Quali sono le aree di ricerca attive al DIEM?"],
+            ["Chi è responsabile dell'internazionalizzazione al DIEM?"],
+            ["Quali laboratori sono disponibili al DIEM?"],
+            ["Ho preso 18 al TOLC. Posso iscrivermi?"],
+            ["Qual è il programma del corso di Ingegneria del Software?"],
+            ["Quali sono gli orari di ricevimento del professore Capuano?"],
         ],
-    ),
-)
+        chatbot=gr.Chatbot(
+            height=500,
+            latex_delimiters=[
+                {"left": "$$", "right": "$$", "display": True},
+                {"left": "$", "right": "$", "display": False},
+                {"left": "\\(", "right": "\\)", "display": False},
+                {"left": "\\[", "right": "\\]", "display": True},
+            ],
+        ),
+    )
+
+    def on_clear():
+        new_id = str(uuid.uuid4())
+        logger.info(f"new_chat | session reset | new_session={new_id}")
+        return new_id
+
+    chat.chatbot.clear(fn=on_clear, outputs=[session_id_state])
 
 if __name__ == "__main__":
     logger.info("Launching Gradio interface")
