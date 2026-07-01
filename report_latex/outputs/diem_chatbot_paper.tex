@@ -714,7 +714,7 @@ La pipeline di retrieval segue uno schema a due stadi comunemente chiamato
 
 \textbf{Primo stadio --- Bi-encoder.} Il \code{ParentDocumentRetriever} LangChain cerca per
 similarità coseno nel vector store Chroma sui chunk figli, con $k=15$ candidati e soglia
-0,50 (\code{RETRIEVER\_SCORE\_THRESHOLD}, alcune run C2--C5 con 0,45 per l'ablation). Il
+0,50 (\code{RETRIEVER\_SCORE\_THRESHOLD}). Il
 bi-encoder finale è \texttt{qwen/qwen3-embedding-8b} via OpenRouter, con fallback locale
 \texttt{multilingual-e5-base}; \texttt{baai/bge-m3} è stato valutato ma non scelto perché
 il sistema non usa ricerca ibrida sparse+dense.
@@ -1078,36 +1078,34 @@ La Tabella~\ref{tab:configs} ne sintetizza i parametri principali.
   & GPT-oss-120B (cloud)
   & e5-base 768d (locale)
   & Cohere Rerank-4-Pro
-  & 15\,/\,5 & 0.45 & 2000\,/\,200\,\textbar\;400\,/\,50 \\
+  & 15\,/\,5 & 0.50 & 2000\,/\,200\,\textbar\;400\,/\,50 \\
 \addlinespace[3pt]
 \textbf{C3}
   & GPT-oss-120B (cloud)
   & Qwen3-Emb-8B 4096d (cloud)
   & Cohere Rerank-4-Pro
-  & 15\,/\,5 & 0.45 & 2000\,/\,200\,\textbar\;400\,/\,50 \\
+  & 15\,/\,5 & 0.50 & 2000\,/\,200\,\textbar\;400\,/\,50 \\
 \addlinespace[3pt]
 \textbf{C4}
   & GPT-oss-120B (cloud)
   & Qwen3-Emb-8B 4096d (cloud)
   & Cohere Rerank-4-Pro
-  & 15\,/\,5 & 0.45 & 3750\,/\,375\,\textbar\;600\,/\,80 \\
+  & 15\,/\,5 & 0.50 & 3750\,/\,375\,\textbar\;600\,/\,80 \\
 \addlinespace[3pt]
 \textbf{C5}
   & GPT-oss-120B (cloud)
   & Qwen3-Emb-8B 4096d (cloud)
   & Cohere Rerank-4-Pro
-  & 15\,/\,5 & 0.45 & 2000\,/\,200\,\textbar\;400\,/\,50 \\
+  & 15\,/\,5 & 0.50 & 2000\,/\,200\,\textbar\;400\,/\,50 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\noindent La soglia indicata in Tabella~\ref{tab:configs} descrive gli snapshot
-usati nei run di valutazione. Nel codice corrente il parametro è controllato da
-\code{RETRIEVER\_SCORE\_THRESHOLD}; in assenza di override nell'ambiente, il default
-rimane 0,50.
+\noindent La soglia \code{RETRIEVER\_SCORE\_THRESHOLD} è rimasta invariata a 0,50 in
+tutte le configurazioni.
 
 Le transizioni sono quattro. C1$\to$C2: LLM locale sostituito da un modello cloud di
-larga scala, con reranker Cohere Rerank-4-Pro, soglia abbassata a 0.45 e CrossK aumentato
+larga scala, con reranker Cohere Rerank-4-Pro e CrossK aumentato
 a 5. C2$\to$C3: embedding locale a 768d sostituito da un modello cloud ad alta
 dimensionalità (4096d), con re-indicizzazione completa su un nuovo Chroma store.
 C3$\to$C4: chunk padre $+87.5\%$ (2000$\to$3750 caratteri) e chunk figlio $+50\%$
