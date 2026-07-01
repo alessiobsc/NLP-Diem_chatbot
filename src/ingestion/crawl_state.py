@@ -3,7 +3,7 @@ import os
 import sqlite3
 import threading
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 from requests import Response
 
@@ -90,6 +90,27 @@ class CrawlStateManager:
                 conn.commit()
         except Exception as e:
             logger.warning(f"Could not update URL state for {url} in DB: {e}")
+
+    def get_all_urls(self) -> List[str]:
+        """Retrieves all crawled URLs from the database."""
+        try:
+            conn = self._get_conn()
+            cursor = conn.cursor()
+            cursor.execute("SELECT url FROM crawled_pages")
+            return [row['url'] for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Failed to get all URLs from state DB: {e}")
+            return []
+
+    def remove_url(self, url: str):
+        """Removes a URL's state from the database."""
+        try:
+            with self._get_conn() as conn:
+                conn.execute("DELETE FROM crawled_pages WHERE url = ?", (url,))
+                conn.commit()
+                logger.info(f"Removed URL state for {url} from the database.")
+        except Exception as e:
+            logger.error(f"Failed to remove URL state for {url}: {e}")
 
     @staticmethod
     def close():
