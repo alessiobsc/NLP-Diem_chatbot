@@ -381,12 +381,10 @@ supporta profondità di reasoning interno configurabile e tool use
 nativo (function calling, structured output) \citep{openrouter2026gptoss120b} --- la combinazione di potenza di un
 modello di larga scala e latenza da modello molto più piccolo ha motivato la scelta come
 agente unico. La selezione del modello agente è stata comunque iterativa: da
-\code{qwen2.5:7b} locale, a una fase intermedia con due modelli distinti (32B routing
-$+$ 9B risposta), fino al singolo \code{gpt-oss-120b} finale, più stabile nel ciclo
-rewrite--retrieve--answer. L'enrichment (context header) usa \code{mistralai/mistral-nemo}
-via OpenRouter come modello primario storico, reso configurabile tramite
-\code{OPENROUTER\_CONTEXT\_HEADER\_MODEL} per allineare le run finali su
-\code{llama-3.1-8b-instruct}.
+\code{qwen2.5:7b} locale, a una fase intermedia \emph{planner-executor} (32B routing
+$+$ 9B risposta), fino al singolo \code{gpt-oss-120b} finale in configurazione
+\emph{single-agent} (il modello lightweight resta comunque separato per rewrite/guardrail,
+mai per il routing dei tool), più stabile nel ciclo rewrite--retrieve--answer.
 
 \textbf{UI.} Gradio~6 (\code{gr.ChatInterface}) con streaming token-per-token; l'indice
 Chroma è caricato lazy all'avvio o ricostruito con il flag \code{--reindex}.
@@ -889,6 +887,10 @@ esempi input/output annotati, perché la riscrittura è un task più ambiguo e p
 I casi su voto di laurea, aree di ricerca, laboratori e piano di studi sono stati aggiunti
 empiricamente. Tag XML-like in \code{AGENT\_SYSTEM\_PROMPT}/\code{REWRITE\_PROMPT}
 strutturano i few-shot examples e separano dati da istruzioni.
+La regola 7 (voto di laurea) applica \emph{step-back prompting} \citep{zheng2023stepback}:
+la query specifica (``con media 27...'') è riscritta in una domanda astratta (``qual è la
+formula...''), il retrieve recupera il regolamento generale, e l'agente ricompone il
+risultato specifico nello Step~3.
 
 \textbf{Temperature.} Il modello agente usa temperatura 0,1 per mantenere una minima
 flessibilità nel reasoning su task fattuali; il modello lightweight usa temperatura 0,
@@ -1584,6 +1586,11 @@ Zheng, L., Chiang, W.-L., Sheng, Y., Zhuang, S., Wu, Z., Zhuang, Y., Lin, Z.,
   Li, Z., Li, D., Xing, E.~P., Zhang, H., Gonzalez, J.~E., and Stoica, I. (2023).
 \newblock Judging LLM-as-a-judge with MT-bench and chatbot arena.
 \newblock \emph{arXiv preprint arXiv:2306.05685}.
+
+\bibitem[Zheng et al., 2024]{zheng2023stepback}
+Zheng, H., Mishra, S., Chen, X., Cheng, H.-T., Chi, E.~H., Le, Q.~V., and Zhou, D. (2024).
+\newblock Take a step back: Evoking reasoning via abstraction in large language models.
+\newblock \emph{International Conference on Learning Representations (ICLR)}.
 
 \end{thebibliography}
 
