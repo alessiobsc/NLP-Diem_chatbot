@@ -49,9 +49,9 @@
 \emergencystretch=2em
 
 %% --- Section styling ---
-\titleformat{\section}{\large\bfseries\color{blue!70!black}}{}{0em}{\thesection\quad}
-\titleformat{\subsection}{\normalsize\bfseries\color{blue!50!black}}{}{0em}{\thesubsection\quad}
-\titleformat{\subsubsection}{\normalsize\itshape}{}{0em}{\thesubsubsection\quad}
+\titleformat{\section}{\large\bfseries\color{blue!70!black}}{\thesection}{0.8em}{}
+\titleformat{\subsection}{\normalsize\bfseries\color{blue!50!black}}{\thesubsection}{0.8em}{}
+\titleformat{\subsubsection}{\normalsize\itshape}{\thesubsubsection}{0.8em}{}
 \titlespacing*{\section}{0pt}{12pt}{4pt}
 \titlespacing*{\subsection}{0pt}{8pt}{3pt}
 \titlespacing*{\subsubsection}{0pt}{6pt}{2pt}
@@ -208,12 +208,12 @@ Il lavoro presenta i seguenti contributi originali.
         dell'anno accademico e ciclo di retrieval iterativo controllato da un contatore di
         stato.
 
-  \item Uno studio empirico comparativo tra due estrattori di contenuto web (trafilatura
-        vs.\ Crawl4AI) con analisi a tre livelli (qualità estrattore, valore del rendering JS,
-        prestazioni end-to-end Q/A su golden set di 30 domande), che fornisce evidenza
-        quantitativa a supporto della scelta architetturale finale.
+  \item Una validazione sperimentale intermedia che ha guidato la stabilizzazione del
+        sistema, trasformando errori osservati nelle prime run (retrieval saltato,
+        drift multi-turno, rewrite generico, knowledge gap) in interventi mirati su grafo,
+        prompt e valutazione.
 
-  \item Un framework di valutazione su golden set bilingue con sei metriche Ragas e due
+  \item Un framework di valutazione su golden set italiano con sei metriche Ragas e due
         criteri custom (scope-awareness e robustness).
 \end{enumerate}
 
@@ -222,10 +222,12 @@ Il lavoro presenta i seguenti contributi originali.
 La Sezione~\ref{sec:background} introduce i concetti fondamentali e il lavoro correlato.
 La Sezione~\ref{sec:architettura} descrive l'architettura generale del sistema. Le
 Sezioni~\ref{sec:ingestion} e~\ref{sec:core-rag} dettagliano rispettivamente la pipeline
-di ingestion e il core RAG agentico. La Sezione~\ref{sec:evaluation} presenta il framework
-di valutazione e i risultati. La Sezione~\ref{sec:migration} riporta lo studio comparativo
-degli estrattori. Le Sezioni~\ref{sec:discussion} e~\ref{sec:conclusioni} discutono i
-risultati e concludono il lavoro.
+di ingestion e il core RAG agentico, inclusi tool, prompt engineering e raffinamenti
+del ciclo rewrite--retrieve. La Sezione~\ref{sec:evaluation} presenta il framework di
+valutazione, mentre la Sezione~\ref{sec:stabilization} descrive la validazione intermedia
+e le decisioni di stabilizzazione. La Sezione~\ref{sec:eval_results} analizza i risultati
+quantitativi sulle configurazioni C1--C5. Le Sezioni~\ref{sec:discussion}
+e~\ref{sec:conclusioni} discutono i limiti, i lavori futuri e le conclusioni del lavoro.
 
 %% ============================================================
 \section{Background e Lavori Correlati}
@@ -364,13 +366,10 @@ e ha ridotto l'accoppiamento tra guardrail, retrieval e generazione.
 \sys{} è costruito su LangChain (loader, splitter, retriever, embedding), LangGraph per
 l'orchestrazione del grafo agentico e Chroma come vector store.
 
-\textbf{Embedding e Reranking.} Due modalità selezionabili via \code{EMBEDDING\_PROVIDER}:
-locale con \texttt{intfloat/multilingual-e5-base} (prefissi \texttt{query:}/\texttt{passage:})
-o cloud con \texttt{qwen/qwen3-embedding-8b} via OpenRouter (4096 dimensioni, query
-instruction esplicita). \texttt{baai/bge-m3} è stato valutato ma scartato perché Chroma
-usa ricerca densa pura, senza sfruttare le componenti sparse/ColBERT del modello. Il
-reranking è dual-provider: \texttt{BAAI/bge-reranker-v2-m3} locale (singleton) o
-\texttt{Cohere Rerank~4 Pro} (32K contesto) via OpenRouter.
+\textbf{Embedding e Reranking.} Due modalità via \code{EMBEDDING\_PROVIDER}: locale
+(\texttt{multilingual-e5-base}) o cloud (\texttt{qwen/qwen3-embedding-8b});
+\texttt{baai/bge-m3} è stato incluso tra le alternative. Il reranking è locale
+(\texttt{BAAI/bge-reranker-v2-m3}) o cloud (\texttt{Cohere Rerank~4 Pro}).
 
 \textbf{Modelli LLM.} Due modalità via \code{LLM\_PROVIDER}: locale via Ollama
 (\code{qwen2.5:7b} per agente e task lightweight) o cloud via OpenRouter
@@ -378,8 +377,8 @@ reranking è dual-provider: \texttt{BAAI/bge-reranker-v2-m3} locale (singleton) 
 quest'ultima la configurazione primaria. \code{gpt-oss-120b} è un modello open-weight a
 117B parametri con architettura \emph{Mixture-of-Experts}: attiva solo 5,1B parametri
 per forward pass, girando su una singola GPU H100 con quantizzazione MXFP4 nativa, e
-supporta profondità di reasoning configurabile, chain-of-thought completo e tool use
-nativo (function calling, structured output) --- la combinazione di potenza di un
+supporta profondità di reasoning interno configurabile e tool use
+nativo (function calling, structured output) \citep{openrouter2026gptoss120b} --- la combinazione di potenza di un
 modello di larga scala e latenza da modello molto più piccolo ha motivato la scelta come
 agente unico. La selezione del modello agente è stata comunque iterativa: da
 \code{qwen2.5:7b} locale, a una fase intermedia con due modelli distinti (32B routing
@@ -398,12 +397,12 @@ Chroma è caricato lazy all'avvio o ricostruito con il flag \code{--reindex}.
 
 La pipeline di ingestion converte le pagine web del sito DIEM in chunk testuali
 arricchiti, pronti per l'indicizzazione vettoriale. È composta da quattro fasi sequenziali:
-crawling, parsing/filtraggio, arricchimento contestuale e indicizzazione. Un'analisi
-manuale preliminare ha identificato i tre domini che costituiscono la knowledge base:
+crawling, parsing/filtraggio, arricchimento contestuale e indicizzazione. La traccia del
+progetto definiva tre domini come perimetro della knowledge base:
 \texttt{www.diem.unisa.it} (informazioni istituzionali, strutture, ricerca),
 \texttt{docenti.unisa.it} (profili, pubblicazioni, ricevimento) e \texttt{corsi.unisa.it}
-(programmi, materiale didattico), con strutture di navigazione e CMS eterogenei che
-richiedono strategie di crawling differenziate.
+(programmi, materiale didattico). L'implementazione ha quindi dovuto gestire strutture di
+navigazione e CMS eterogenei con strategie di crawling differenziate.
 
 \subsection{Web Crawling Multi-Strategia}
 \label{sec:crawling}
@@ -435,9 +434,10 @@ pagine in inglese/cinese. Il crawler usa una \code{RateLimitedSession} Token Buc
 per saltare, tramite HTTP~304, il ri-download di contenuti invariati nelle re-ingestion.
 
 La pipeline integra fonti supplementari: il modulo \code{easycourse.py} interroga le API
-di EasyCourse per calendario esami e orario lezioni dei cinque corsi DIEM, un documento
-per coppia (CDL, insegnamento) che evita la frammentazione per singolo appello; vengono
-inoltre generati gli URL dei bandi DIEM (8 categorie) e scaricate le sottopagine
+di EasyCourse per calendario esami e orario lezioni dei cinque corsi DIEM, producendo un
+documento per coppia (CDL, insegnamento). Le risposte JSON vengono normalizzate e
+raggruppate per insegnamento, così un singolo retrieve restituisce appelli o lezioni
+rilevanti senza frammentazione. Vengono inoltre generati gli URL dei bandi DIEM (8 categorie) e scaricate le sottopagine
 \texttt{/focus?id=\ldots} non raggiungibili con \code{max\_depth=1}; una sorgente statica
 reinietta dati amministrativi (P.IVA, sede) rimossi dal parser come boilerplate ma
 richiesti da domande atomiche.
@@ -446,8 +446,7 @@ richiesti da domande atomiche.
 \label{sec:parser}
 
 Il testo è estratto con \textbf{trafilatura} \citep{barbaresi2021trafilatura} (filtro
-\code{favor\_precision=True}), scelta supportata dallo studio comparativo con Crawl4AI
-(Sezione~\ref{sec:migration}: $+$0,097 di overlap lessicale su fatti atomici). I PDF usano
+\code{favor\_precision=True}). I PDF usano
 \texttt{pdfplumber}, con le pagine dello stesso documento unite prima dello split per
 abilitare chunk cross-page su regolamenti multi-pagina.
 
@@ -460,16 +459,15 @@ trafilatura primario con fallback BeautifulSoup generico. Un parser BeautifulSou
 stato scartato perché la funzione di rimozione boilerplate troncava le biografie dei
 docenti: la whitelist mirata contiene questo rischio.
 
-Poiché i CMS non espongono metadati temporali (zero segnali su 30 pagine campionate), il
-filtro \code{should\_skip\_url\_by\_year} applica regole differenziate per categoria,
-sostituendo un cutoff fisso a 2020 rivelatosi sia troppo permissivo (contenuto 2022--2023
-obsoleto) sia troppo aggressivo (scartava PDF recenti privi di alternative). URL
-accumulativi (pubblicazioni, premi): cutoff 2020, ogni anno distinto. PDF versionati per
-anno (schede SUA, regolamenti, piani di studio): logica \emph{latest-version} a due
-passate, mantiene solo l'anno massimo $\ge 2020$. URL HTML generici (docenti, corsi,
-bandi): cutoff 2025 con riconoscimento pattern \texttt{YYYY-YY}. PDF individuali: cutoff
-2020 con delega a latest-version. I documenti scartati sono salvati in
-\texttt{dropped\_temporal\_filter.json} per audit.
+Poiché i CMS non espongono sempre metadati temporali strutturati, il filtro
+\code{filter\_recent\_documents} applica un cutoff minimo al 2020: se un documento contiene
+un anno esplicito in URL, metadati o testo analizzato, e l'anno più recente trovato è
+$<2020$, il documento viene scartato; in assenza di segnali temporali espliciti viene
+mantenuto per evitare falsi negativi su pagine istituzionali stabili. Il crawling introduce
+inoltre vincoli mirati a monte: gli URL dei bandi DIEM sono generati solo per anno corrente
+e anno precedente (nella run 2026: 2026 e 2025), mentre le pubblicazioni dei docenti sono
+crawlate esplicitamente per tutti gli anni dal 2020 all'anno corrente. I documenti scartati
+sono salvati in \texttt{dropped\_temporal\_filter.json} per audit.
 
 \subsection{Arricchimento Contestuale: Context Header}
 \label{sec:enrichment}
@@ -549,7 +547,9 @@ versione finale usa \texttt{qwen/qwen3-embedding-8b}: il wrapper applica alle qu
 prefisso \texttt{Instruct: Retrieve relevant passages that answer the user's query} seguito
 da \texttt{Query: \ldots}, mentre i documenti sono indicizzati senza prefisso, seguendo il
 comportamento instruction-tuned del modello. In modalità locale, \code{E5HuggingFaceEmbeddings}
-mantiene la codifica simmetrica di E5 (\texttt{query:}/\texttt{passage:}). L'evoluzione
+mantiene la codifica simmetrica di E5 (\texttt{query:}/\texttt{passage:}); \texttt{e5-base}
+è stato usato come baseline locale perché multilingue, leggero e riproducibile senza API
+esterne, con embedding a 768 dimensioni gestibili in Chroma. L'evoluzione
 dell'embedding ha attraversato \texttt{multilingual-e5-small/base} (locale) e
 \texttt{baai/bge-m3} (cloud) prima di convergere su Qwen3. BGE-M3 è stato scartato non per
 scarsa qualità ma perché il progetto usa Chroma dense-only (senza BM25/ColBERT che ne
@@ -715,9 +715,8 @@ La pipeline di retrieval segue uno schema a due stadi comunemente chiamato
 \textbf{Primo stadio --- Bi-encoder.} Il \code{ParentDocumentRetriever} LangChain cerca per
 similarità coseno nel vector store Chroma sui chunk figli, con $k=15$ candidati e soglia
 0,50 (\code{RETRIEVER\_SCORE\_THRESHOLD}). Il
-bi-encoder finale è \texttt{qwen/qwen3-embedding-8b} via OpenRouter, con fallback locale
-\texttt{multilingual-e5-base}; \texttt{baai/bge-m3} è stato valutato ma non scelto perché
-il sistema non usa ricerca ibrida sparse+dense.
+bi-encoder finale, come anticipato nella Sezione~\ref{sec:ingestion}, è
+\texttt{qwen/qwen3-embedding-8b} via OpenRouter.
 
 \textbf{Secondo stadio --- Reranker.} I 15 chunk figli vengono re-scored da un secondo
 modello sulla coppia (query, chunk). Il reranker è dual-provider: localmente il
@@ -800,14 +799,12 @@ limite di retrieve, che è il collo di bottiglia computazionale.
 
 \textbf{Rimozione di \texttt{summarize} e \texttt{calculate}.} Il tool
 \code{summarize(text, query)}, pensato per condensare contesti retrieved lunghi, non
-veniva quasi mai chiamato dal 120b, che gestiva direttamente contesti estesi. La sua
-variante \code{summarize\_history} (compressione della history al decimo turno) mostrava
-buona qualità di sintesi ma un problema di compliance: dopo la chiamata il modello
-generava una risposta generica senza procedere con \code{retrieve()}, interpretando il
-summary come contesto sufficiente --- la sequenza multi-tool nello stesso turno risultava
-inaffidabile per questo modello. Entrambe le varianti sono state rimosse in favore della
-sliding window (Sezione~\ref{sec:core-rag}).
+veniva quasi mai chiamato dal 120b, che gestiva direttamente contesti estesi. La variante
+\code{summarize\_history} è stata rimossa per le ragioni discusse nella gestione della
+storia conversazionale; entrambe le forme di sintesi sono state sostituite da una gestione
+deterministica della finestra di contesto.
 
+\newpage
 Il tool \code{calculate(ctx, op, vals)} eseguiva calcoli accademici (medie ponderate, voto
 di laurea) delegando al modello lightweight tramite \texttt{simpleeval}. Un benchmark su
 tre scenari reali (Tabella~\ref{tab:calc_bench}) ha evidenziato due problemi: sulla
@@ -872,25 +869,30 @@ rispondeva senza recuperare contesto.
 
 La progettazione dei prompt ha richiesto iterazione significativa, poiché piccole
 variazioni producono comportamenti qualitativamente diversi.
+Il sistema combina quindi più tecniche di prompting (role prompting, structured prompting
+via XML, few-shot e meta-prompting), ciascuna introdotta per mitigare un problema
+osservato empiricamente.
 
-\textbf{AGENT\_SYSTEM\_PROMPT.} Il prompt adotta \emph{role prompting} (identità esplicita
-di assistente DIEM) e una struttura in step numerati (\emph{Step~1: tool use},
-\emph{Step~2: context validation}, \emph{Step~3: generate answer}), con un sotto-protocollo
-di self-verification del contesto allo Step~2. I tag strutturati \texttt{[KNOWLEDGE\_GAP]}
-e \texttt{[FUORI\_SCOPE]} (\emph{structured output prompting}) permettono al layer
-applicativo di rilevare i rifiuti senza parsing euristico. Diverse regole derivano da
-comportamenti osservati empiricamente: ``NEVER EMPTY'' dopo che il modello emetteva il
-solo tag senza spiegazione; soglia del tag knowledge-gap allentata per ridurre falsi
-negativi su contesto parziale; regola sui ruoli accademici dopo aver osservato docenti
-RTD/B introdotti erroneamente come ``ricercatori''.
+\textbf{AGENT\_SYSTEM\_PROMPT.} Il prompt è prevalentemente \emph{zero-shot}: usa
+\emph{role prompting}, step procedurali (\emph{tool use}, \emph{context validation},
+\emph{generate answer}) e tag strutturati \texttt{[KNOWLEDGE\_GAP]}/\texttt{[FUORI\_SCOPE]},
+con esempi limitati a casi di ambiguità o date. Le regole operative, incluse quelle su
+date, ruoli accademici e calcoli multi-step, restano istruzioni nude: per il comportamento
+agentico procedurale è sufficiente il meta-prompting, senza esempi numerici specifici.
+Alcune regole derivano da errori osservati: ``NEVER EMPTY'' per evitare soli tag senza
+spiegazione, soglia knowledge-gap più morbida su contesto parziale e regola sui ruoli
+accademici dopo downgrade errati di docenti PO/PA a ricercatori.
 
-\textbf{REWRITE\_PROMPT.} Combina \emph{instruction following} con \emph{few-shot
-prompting}: regole esplicite sui casi edge (non sostituire la domanda corrente, risolvere
-pronomi, preservare entità, iniettare l'anno accademico) seguite da esempi input/output
-annotati, necessari perché le regole in linguaggio naturale non bastano a distinguere un
-follow-up ambiguo da una domanda indipendente. Il prompt finale estende le regole iniziali
-con casi mirati (voto di laurea, aree di ricerca, laboratori, piano di studi, challenge di
-conferma) emersi empiricamente, riducendo la variabilità del modello lightweight.
+\textbf{REWRITE\_PROMPT.} Il rewrite è invece \emph{few-shot}: regole sui casi edge
+(pronomi, entità da preservare, anno accademico, challenge di conferma) sono seguite da
+esempi input/output annotati, perché la riscrittura è un task più ambiguo e pattern-based.
+I casi su voto di laurea, aree di ricerca, laboratori e piano di studi sono stati aggiunti
+empiricamente. Tag XML-like in \code{AGENT\_SYSTEM\_PROMPT}/\code{REWRITE\_PROMPT}
+strutturano i few-shot examples e separano dati da istruzioni.
+
+\textbf{Temperature.} Il modello agente usa temperatura 0,1 per mantenere una minima
+flessibilità nel reasoning su task fattuali; il modello lightweight usa temperatura 0,
+rendendo deterministici guardrail, classificazione e riscrittura.
 
 \textbf{Gestione del voto di laurea.} Il calcolo richiede parametri specifici per corso
 (formula FC, costanti, bonus, differenti tra i cinque corsi DIEM), gestiti con tre
@@ -898,9 +900,11 @@ meccanismi: un \emph{cancello di chiarimento} allo Step~1 (se il corso non è sp
 l'agente chiede chiarimento prima di ogni tool, per evitare un calcolo su regolamento
 sbagliato); un \emph{controllo del regolamento} allo Step~2 (verifica che l'URL del
 documento recuperato contenga il codice del corso richiesto, altrimenti nuovo retrieve
-mirato); una regola di \emph{chain-of-thought} \cite{wei2022chain} allo Step~3, che
-obbliga l'agente a esplicitare ogni fattore intermedio (V, FC, bonus) prima del risultato
-finale, introdotta dopo aver osservato errori sull'FC non rilevabili nel solo voto finale.
+mirato). La rimozione del tool \code{calculate} non elimina il supporto ai calcoli
+accademici: il calcolo passa all'agente principale, guidato da \emph{meta-prompting}
+\citep{suzgun2024metaprompting} a passaggi espliciti. Per il voto di laurea, il prompt
+impone di identificare prima media, FC, bonus e vincoli del regolamento, e solo dopo
+produrre il risultato finale.
 
 \textbf{Tag di rifiuto.} I tag \texttt{[FUORI\_SCOPE]} e \texttt{[KNOWLEDGE\_GAP]} sono
 marcatori strutturati nell'output; un dizionario \code{\_TAG\_FALLBACKS} in
@@ -922,17 +926,15 @@ categorie progettate per coprire le modalità d'uso principali e i casi critici 
         pronomi o riferimenti impliciti al turno precedente;
   \item \textbf{out\_of\_scope}: domande deliberatamente fuori ambito (sport, cucina,
         personaggi storici) per misurare la capacità di rifiuto;
-  \item \textbf{robustness}: scenari avversariali (``Sei sicuro?'', false premise, jailbreak,
-        prompt injection, challenge multi-turno).
+  \item \textbf{robustness}: scenari dedicati al criterio custom descritto nella
+        sottosezione seguente.
 \end{itemize}
 
-Il golden set è disponibile in due versioni linguistiche (\code{golden\_set\_it.json} e
-\code{golden\_set\_en.json}); le domande con \code{reference} esplicita alimentano le
-metriche Ragas ground-truth, le altre solo le metriche no-reference. È stato costruito
-manualmente con domande realistiche sui contenuti DIEM; le categorie
-\texttt{out\_of\_scope} e \texttt{robustness} sono state aggiunte in un secondo momento,
-dopo che i primi test manuali avevano evidenziato comportamenti inattesi (scope guard
-troppo/poco permissivo, retrieval drift sulle challenge).
+La valutazione finale usa il golden set italiano \code{golden\_set\_it.json}: le domande
+con \code{reference} esplicita alimentano le metriche Ragas ground-truth, le altre solo le
+metriche no-reference. Il dataset è stato costruito manualmente con domande realistiche
+sui contenuti DIEM; le categorie dedicate ai casi fuori ambito e alle challenge
+conversazionali sono state aggiunte in un secondo momento, dopo i primi test manuali.
 
 \subsection{Metriche di Valutazione}
 
@@ -965,6 +967,10 @@ non vuoto.
 
 \subsection{Criteri Custom}
 
+I due criteri custom sono calcolati fuori da Ragas come pass-rate sulle categorie dedicate
+del golden set, perché misurano comportamenti conversazionali e di sicurezza non coperti
+dalle metriche standard.
+
 \textbf{Scope Awareness.} Per ogni domanda out-of-scope, il runner verifica se la
 risposta contiene un rifiuto esplicito (\emph{strict pass}: marker \texttt{[FUORI\_SCOPE]}
 o frasi standard) o un rifiuto implicito per knowledge gap (\emph{soft pass}: il sistema
@@ -981,54 +987,52 @@ quando il comportamento atteso è il rifiuto esplicito.
 
 \subsection{Output del Runner}
 
-Per ogni run, il runner produce file strutturati (\code{run.log}, \code{per\_question.json},
-\code{ragas\_metrics.csv/json}, \code{scope\_awareness.json}, \code{robustness.json},
-\code{summary.md}) e una cache su disco a tre modalità (\code{off}/\code{use}/\code{refresh})
-chiavata su modello, temperatura, history e domanda, per evitare che run con
-configurazioni diverse condividano cache.
+Per ogni run, il runner produce file strutturati (\code{run.log},
+\code{per\_question.json}, metriche Ragas/custom e \code{summary.md}) e una cache
+\code{off}/\code{use}/\code{refresh} indicizzata su schema, modello, temperatura,
+sessione, history e domanda, evitando condivisioni tra configurazioni diverse.
 
 %% ============================================================
-\section{Studio Comparativo: Trafilatura vs.\ Crawl4AI}
-\label{sec:migration}
+\section{Validazione Intermedia e Decisioni di Stabilizzazione}
+\label{sec:stabilization}
 
-A valle della prima run di valutazione (Faithfulness 0,490--0,504) è stata formulata
-l'ipotesi che trafilatura perdesse contenuto significativo sulle pagine JavaScript-heavy
-del sito DIEM, inducendo il modello ad allucinare. Lo studio comparativo con Crawl4AI si
-è articolato su tre livelli (Tabella~\ref{tab:migration}): qualità di estrazione su 10 URL
-rappresentativi, valore del rendering JS (Playwright vs.\ fetch statico) e prestazioni
-Q/A end-to-end sull'intera pipeline RAG con golden set esteso a 30 domande.
+Le prime valutazioni hanno avuto soprattutto una funzione diagnostica: non servivano a
+scegliere la configurazione finale, ma a individuare i punti in cui il comportamento del
+sistema non era ancora stabile. Una smoke run iniziale con modello locale mostrava valori
+di Faithfulness nell'intervallo 0,490--0,504, incompatibili con l'obiettivo di un
+assistente universitario affidabile; il divario Scope Awareness strict/soft (33,3\% vs
+100\%) indicava knowledge gap riconosciuti ma fuori ambito non marcati esplicitamente.
+L'analisi manuale delle
+risposte e dei log ha ricondotto il problema a quattro criticità principali.
 
-Al Livello A, Crawl4AI estrae il 39\% di testo in più (2319 vs.\ 3231 caratteri), ma il
-gap è trainato quasi interamente da due pagine JS-heavy dove trafilatura ricade in un
-fallback quasi nullo; su pagine statiche i due estrattori sono comparabili, e Crawl4AI
-presenta un noise ratio leggermente superiore per boilerplate residuo. Al Livello B, il
-rendering dinamico aggiunge solo il 9\% di contenuto sulla homepage (la pagina più
-dinamica del corpus), non giustificando la complessità operativa di un browser headless.
-Al Livello C, trafilatura ottiene un overlap lessicale medio di 0,384 contro 0,288 di
-Crawl4AI (distribuzione 18-9-3, test binomiale $p\approx1{,}5\%$), trainato dalle domande
-su fatti atomici precisi (numeri, codici, P.IVA) dove Crawl4AI introduce più rumore.
+\textbf{Retrieve non garantito e knowledge gap.} Nelle prime architetture agentiche il
+modello poteva rispondere senza richiamare il retrieval, oppure usare un contesto parziale
+come se fosse sufficiente. Per questo il grafo finale introduce un hint dinamico quando il
+contatore di retrieve è zero, il safety net \code{forced\_retrieve}, tag strutturati
+\code{[KNOWLEDGE\_GAP]}/\code{[FUORI\_SCOPE]} e regole di citazione più esplicite nel
+prompt.
 
-\begin{table}[htbp]
-\centering
-\caption{Riepilogo dello studio comparativo trafilatura vs.\ Crawl4AI.}
-\label{tab:migration}
-\small
-\begin{tabularx}{\textwidth}{lX}
-\toprule
-\textbf{Livello} & \textbf{Esito} \\
-\midrule
-A --- Qualità estrazione & Crawl4AI $+$39\% testo, ma trainato da 2 pagine JS-heavy; comparabili su pagine statiche. \\
-B --- Rendering JS & $+$9\% contenuto su homepage; non giustifica un browser headless. \\
-C --- Q/A end-to-end (30 domande) & Trafilatura 0,384 vs.\ Crawl4AI 0,288 overlap lessicale ($p\approx1{,}5\%$), superiore su fatti atomici. \\
-\bottomrule
-\end{tabularx}
-\end{table}
+\textbf{Drift nei follow-up e rewrite generico.} Nei turni multi-turno, messaggi brevi
+come ``Sei sicuro?'' o domande con pronomi potevano generare un nuovo retrieve su query
+troppo generiche. In altri casi il modello lightweight aggiungeva meccanicamente termini
+istituzionali come ``DIEM'', spostando il retrieval verso documenti non pertinenti. La
+stabilizzazione ha portato al rewrite obbligatorio prima di ogni retrieve, al
+retry-aware rewrite e alla risoluzione dei follow-up sulla history prima dello scope check.
 
-Lo studio porta alla decisione di non migrare: il sistema continua a usare
-\texttt{beautifulsoup4 + trafilatura + requests}. Il vantaggio di Crawl4AI sulle pagine
-JS-heavy non si trasferisce al Q/A end-to-end perché il corpus ampio fornisce ridondanza
-informativa, mentre trafilatura resta superiore per il caso d'uso primario del chatbot:
-domande su fatti atomici precisi.
+\textbf{Tool e alternative non adottate.} Alcune soluzioni inizialmente promettenti sono
+state scartate perché introducevano più fragilità che benefici: i tool ausiliari di
+sintesi rendevano meno prevedibile il ciclo di retrieval, \code{calculate} aumentava la
+latenza e dipendeva comunque da espressioni generate dal modello lightweight, mentre chunk
+più grandi miglioravano l'autocontenimento ma aggiungevano rumore. Anche Crawl4AI è stato
+testato come alternativa a trafilatura: poiché
+le sorgenti DIEM sono esposte quasi sempre come HTML già renderizzato, il browser headless
+estraeva poco contenuto realmente aggiuntivo e le prestazioni end-to-end restavano
+comparabili, senza giustificare la maggiore complessità operativa.
+
+Questa fase ha quindi orientato lo sviluppo verso interventi meno visibili ma più
+determinanti: stabilità del ciclo rewrite$\to$retrieve, controllo della history,
+prompting più vincolante e valutazione più robusta. Le configurazioni C1--C5 della
+Sezione~\ref{sec:eval_results} misurano l'effetto cumulativo di queste decisioni.
 
 %% ============================================================
 \section{Valutazione Metriche e Risultati}
@@ -1041,10 +1045,10 @@ o alla strategia di chunking --- per misurarne l'impatto sulle metriche Ragas e 
 criteri custom di scope awareness e robustezza. La quinta configurazione (C5)
 rappresenta la versione finale del sistema: stessa infrastruttura di C3 con i fix
 agentici successivi (rewrite retry-aware, sliding window,
-regulation check, academic roles, altri miglioramenti di robustezza). Il golden set
-utilizzato è \code{golden\_set\_it.json}: 32~domande nelle categorie \emph{in\_scope}
-e \emph{multi\_turn}, 8~domande \emph{out\_of\_scope} e 6~scenari di robustezza.
-Il modello giudice è \code{meta-llama/llama-3.1-8b-instruct} per tutti i run.
+regulation check, academic roles, altri miglioramenti di robustezza). La valutazione usa
+il golden set italiano descritto nella Sezione~\ref{sec:evaluation}: 32~domande
+\emph{in\_scope}/\emph{multi\_turn}, 8~domande \emph{out\_of\_scope} e 6~scenari di
+robustezza. Il modello giudice è \code{meta-llama/llama-3.1-8b-instruct} per tutti i run.
 
 \subsection{Configurazioni a Confronto}
 \label{subsec:eval_configs}
@@ -1110,9 +1114,10 @@ a 5. C2$\to$C3: embedding locale a 768d sostituito da un modello cloud ad alta
 dimensionalità (4096d), con re-indicizzazione completa su un nuovo Chroma store.
 C3$\to$C4: chunk padre $+87.5\%$ (2000$\to$3750 caratteri) e chunk figlio $+50\%$
 (400$\to$600), per contesti più autocontenuti. C4$\to$C5: ritorno al chunking di C3
-(2000/200 | 400/50) con i raffinamenti agentici del Capitolo~4 (rewrite retry-aware,
-sliding window, verifica del regolamento di laurea, precedenza accademica), che agiscono
-sul comportamento del grafo senza alterare il retrieval.
+(2000/200 | 400/50) con i raffinamenti agentici descritti nella
+Sezione~\ref{sec:core-rag} (rewrite retry-aware, sliding window, verifica del regolamento
+di laurea, precedenza accademica), che agiscono sul comportamento del grafo senza
+alterare il retrieval.
 
 \subsection{Risultati Aggregati}
 \label{subsec:eval_results_table}
@@ -1203,7 +1208,8 @@ metrica.
 
 C5 condivide la stessa infrastruttura di retrieval di C3 (embedding Qwen3-Emb-8B,
 chunking 2000/200 | 400/50) e introduce i miglioramenti agentici descritti nel
-Capitolo~4. Dal punto di vista delle metriche, i risultati più rilevanti sono:
+core RAG della Sezione~\ref{sec:core-rag}. Dal punto di vista delle metriche, i risultati
+più rilevanti sono:
 \begin{itemize}
   \item \textbf{LLMContextRecall 0.828}: nuovo massimo assoluto ($+1.0\%$ su C3). Il
     principale collo di bottiglia era il nodo \emph{rewrite}: analizzando i retrieval
@@ -1243,9 +1249,12 @@ depressi (Coherence 0.526, Faithfulness 0.578) per questo secondo motivo; lo scr
 \code{evaluation/rerun\_ragas.py} ha corretto il problema reinvocando il giudice solo
 sulle coppie \texttt{NaN} (senza rigenerare risposte o ri-eseguire la pipeline), portando
 i valori a Coherence 0.826 e Faithfulness 0.752 ($\dagger$ in Tabella~\ref{tab:allresults}).
-Le altre metriche non usano un giudice LLM. L'incertezza intrinseca del giudice rende
-comunque indispensabile affiancare test manuali sistematici: la scelta di C5 come
-configurazione finale è stata supportata da entrambi.
+Il re-run correttivo è stato applicato solo a queste due metriche perché lì si sono
+manifestati errori tecnici di parsing/terminazione; le altre metriche sono state mantenute
+come prodotte dal runner originale. Poiché diverse metriche Ragas dipendono comunque da
+valutazione automatica, i risultati vanno letti come indicatori comparativi e non come
+ground truth assoluta: la scelta di C5 come configurazione finale è stata quindi
+supportata anche da test manuali sistematici.
 
 \subsection{Riepilogo dell'Evoluzione}
 \label{subsec:evolution_summary}
@@ -1260,13 +1269,13 @@ delle metriche Ragas e dei criteri custom sulle cinque configurazioni.
   ybar,
   bar width=7pt,
   width=0.96\textwidth,
-  height=5.8cm,
+  height=5.5cm,
   enlarge x limits=0.10,
   legend style={
-    at={(0.5,-0.25)}, anchor=north,
+    at={(0.5,1.03)}, anchor=south,
     legend columns=5,
-    font=\small,
-    /tikz/every even column/.append style={column sep=0.4em}
+    font=\scriptsize,
+    /tikz/every even column/.append style={column sep=0.25em}
   },
   ylabel={Punteggio},
   ymin=0, ymax=1.05,
@@ -1358,7 +1367,7 @@ chain lineari LCEL su più dimensioni, motivando a posteriori la scelta progettu
 volta indipendentemente dalla qualità del risultato; il grafo agentico consente invece
 al modello di richiamare il retrieve più volte con query progressivamente diversificate,
 fino a un budget controllato (\texttt{MAX\_RETRIEVE\_CALLS}), abilitando il meccanismo
-retry-aware del Capitolo~4.
+retry-aware descritto nella Sezione~\ref{sec:core-rag}.
 
 \textbf{Interazione sicura a più livelli.} Una chain standard non ha punti naturali per
 i guardrail. Il grafo esplicita otto nodi, due dedicati esclusivamente alla sicurezza
@@ -1374,12 +1383,10 @@ sottostante.
 
 Il sistema di context header ha prodotto un miglioramento qualitativo misurabile nella
 precisione del retrieval su frammenti semanticamente ambigui, applicando l'header a ogni
-chunk figlio senza duplicarlo nei parent restituiti al modello. Lo studio comparativo
-trafilatura/Crawl4AI ha inoltre mostrato che i miglioramenti di qualità dell'estrattore a
-livello di singola pagina non si trasferiscono necessariamente al Q/A end-to-end quando
-la pipeline include ridondanza informativa: il guadagno più significativo è venuto
-dall'ottimizzazione della pipeline stessa (flat k=3 $\to$ ParentRetriever + cross-encoder:
-+22\% per trafilatura, +27\% per Crawl4AI), non dal cambio di estrattore.
+chunk figlio senza duplicarlo nei parent restituiti al modello. La validazione intermedia
+ha inoltre mostrato che i guadagni più rilevanti non venivano dal cambio di estrattore,
+ma dalla stabilizzazione della pipeline RAG: retrieval più controllato, rewrite meno
+generico, history più pulita e prompt più vincolanti.
 
 La configurazione finale C5 ha confermato che il principale collo di bottiglia del
 sistema, una volta consolidata l'infrastruttura di retrieval, era la stabilità del ciclo
@@ -1428,10 +1435,11 @@ prodotto il miglior LLMContextRecall e Coherence dell'intera sperimentazione.
     MIVIA), rendendo impossibile una risposta esaustiva in un turno. Mitigabile
     aumentando CrossK/dimensione chunk (a costo di rumore e latenza) o affinando la
     query verso una sottocategoria.
-  \item \textbf{Limiti di lettura dei PDF.} Estrazione testuale, non OCR visuale: nei
-    PDF tabellari il testo può essere letto per colonne invece che per righe (es.\
-    campi di una riga tabellare mescolati), e i PDF manoscritti/scansionati restano
-    illeggibili --- motiva il lavoro futuro su OCR dedicato.
+  \item \textbf{Latenza di risposta.} In uso interattivo la media è circa 30 secondi, con
+    tempi maggiori per retrieval multiplo e ragionamento numerico (es.\ voto di laurea).
+  \item \textbf{Limiti di lettura dei PDF.} Estrazione testuale, non OCR visuale: tabelle
+    e PDF scansionati possono produrre testo disordinato o illeggibile, motivando OCR
+    dedicato.
   \item \textbf{Query multi-topic.} Domande che combinano due richieste distinte (es.\
     elenco laboratori + attrezzature di uno specifico) portano \code{rewrite()} a
     privilegiare la parte più generale, con retrieve insufficiente per la seconda
@@ -1462,9 +1470,9 @@ prodotto il miglior LLMContextRecall e Coherence dell'intera sperimentazione.
     non accessibili all'estrattore testuale.
   \item \textbf{Interfaccia vocale.} L'integrazione di TTS (es.\ ElevenLabs API)
     amplierebbe l'accessibilità senza modifiche al core RAG.
-  \item \textbf{Crawling con agent browser.} Un agent browser al posto del crawler HTML
-    statico accederebbe a contenuto JavaScript, accordion e sezioni lazy-loaded oggi non
-    indicizzabili.
+  \item \textbf{Crawling con agent browser.} Qualora venissero incluse nuove sorgenti
+    realmente dinamiche, un agent browser potrebbe integrare il crawler HTML statico per
+    accedere a contenuto JavaScript, accordion e sezioni lazy-loaded non indicizzabili.
 \end{itemize}
 
 %% ============================================================
@@ -1487,8 +1495,8 @@ agentica con guardrail a cascata, dual-provider per embedding/reranker/LLM e bud
 controllato di retrieval; (3) meccanismi di robustezza agentistica (rewrite retry-aware,
 sliding window, regulation check, academic roles) che stabilizzano il comportamento
 senza alterare l'infrastruttura di retrieval; (4) l'integrazione di dati real-time
-(EasyCourse) nella knowledge base; (5) uno studio empirico comparativo degli estrattori
-web con evidenza quantitativa a supporto della scelta architetturale.
+(EasyCourse) nella knowledge base; (5) una validazione intermedia che ha trasformato
+criticità osservate nelle prime run in decisioni architetturali mirate.
 
 La configurazione finale (C5) raggiunge LLMContextRecall 0.828 e Coherence 0.826
 --- entrambi i massimi assoluti dell'intera sperimentazione --- con Faithfulness 0.752
@@ -1500,6 +1508,8 @@ hybrid search BM25+dense, OCR avanzato) indirizzano direttamente questi limiti.
 
 %% ============================================================
 \newpage
+\phantomsection
+\addcontentsline{toc}{section}{Riferimenti bibliografici}
 \bibliographystyle{plainnat}
 \begin{thebibliography}{99}
 
@@ -1559,16 +1569,21 @@ Smutny, P. and Schreiberova, P. (2020).
   Messenger.
 \newblock \emph{Computers \& Education}, 151:103862.
 
+\bibitem[OpenRouter, 2026]{openrouter2026gptoss120b}
+OpenRouter (2026).
+\newblock OpenAI: gpt-oss-120b -- API pricing \& benchmarks.
+\newblock \url{https://openrouter.ai/openai/gpt-oss-120b}.
+
+\bibitem[Suzgun \& Kalai, 2024]{suzgun2024metaprompting}
+Suzgun, M. and Kalai, A.~T. (2024).
+\newblock Meta-prompting: Enhancing language models with task-agnostic scaffolding.
+\newblock \emph{arXiv preprint arXiv:2401.12954}.
+
 \bibitem[Zheng et al., 2023]{zheng2023judging}
 Zheng, L., Chiang, W.-L., Sheng, Y., Zhuang, S., Wu, Z., Zhuang, Y., Lin, Z.,
   Li, Z., Li, D., Xing, E.~P., Zhang, H., Gonzalez, J.~E., and Stoica, I. (2023).
 \newblock Judging LLM-as-a-judge with MT-bench and chatbot arena.
 \newblock \emph{arXiv preprint arXiv:2306.05685}.
-
-\bibitem[Wei et al., 2022]{wei2022chain}
-Wei, J., Wang, X., Schuurmans, D., Bosma, M., Ichter, B., Xia, F., Chi, E., Le, Q., and Zhou, D. (2022).
-\newblock Chain-of-thought prompting elicits reasoning in large language models.
-\newblock In \emph{Advances in Neural Information Processing Systems}, volume~35.
 
 \end{thebibliography}
 
