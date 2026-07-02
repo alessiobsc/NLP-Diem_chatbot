@@ -98,6 +98,7 @@ class DocumentIndexer:
             embedding_model (Embeddings): The model to generate embeddings.
         """
         self._embedding_model = embedding_model
+        self.last_indexed_parent_ids_by_source: dict[str, list[str]] = {}
         self._setup_storage()
         self._setup_splitters()
         
@@ -155,6 +156,49 @@ class DocumentIndexer:
         except Exception as e:
             logger.warning(f"Could not retrieve collection count: {e}")
             return None
+
+    def delete_sources(self, sources: Iterable[str], known_parent_ids: Optional[dict[str, list[str]]] = None) -> None:
+        """
+        Delete child chunks from Chroma and matching parent documents from the docstore.
+
+        This is used by incremental updates before re-indexing changed source URLs.
+        Parent IDs are primarily recovered from Chroma child metadata ("doc_id");
+        stored IDs from crawl_state are used as a fallback.
+        """
+        known_parent_ids = known_parent_ids or {}
+
+        for source in sorted(set(s for s in sources if s)):
+            child_ids: list[str] = []
+            parent_ids: set[str] = set(known_parent_ids.get(source, []))
+
+            try:
+                existing = self._child_vectorstore.get(
+                    where={"source": source},
+                    include=["metadatas"],
+                )
+                child_ids = list(existing.get("ids") or [])
+                for metadata in existing.get("metadatas") or []:
+                    if not isinstance(metadata, dict):
+                        continue
+                    parent_id = metadata.get("doc_id") or metadata.get("chunk_id")
+                    if parent_id:
+                        parent_ids.add(parent_id)
+            except Exception as e:
+                logger.warning(f"Could not inspect existing Chroma chunks for {source}: {e}")
+
+            if child_ids:
+                try:
+                    self._child_vectorstore.delete(ids=child_ids)
+                    logger.info(f"Deleted {len(child_ids)} child chunks from Chroma for {source}")
+                except Exception as e:
+                    logger.warning(f"Could not delete Chroma chunks for {source}: {e}")
+
+            if parent_ids:
+                try:
+                    self._parent_doc_store.mdelete(list(parent_ids))
+                    logger.info(f"Deleted {len(parent_ids)} parent docs for {source}")
+                except Exception as e:
+                    logger.warning(f"Could not delete parent docs for {source}: {e}")
 
     @staticmethod
     def _add_context_headers_to_parent_documents(docs: List[Document]) -> tuple[int, int]:
@@ -286,6 +330,13 @@ class DocumentIndexer:
 
         self._assign_chunk_indices(parent_docs)
         logger.info("  -> chunk_index/chunk_id assigned to all parent documents")
+        parent_ids_by_source: dict[str, list[str]] = defaultdict(list)
+        for doc in parent_docs:
+            source = doc.metadata.get("source", "")
+            chunk_id = doc.metadata.get("chunk_id")
+            if source and chunk_id:
+                parent_ids_by_source[source].append(chunk_id)
+        self.last_indexed_parent_ids_by_source = dict(parent_ids_by_source)
 
         headers_generated, parents_without_header = self._add_context_headers_to_parent_documents(parent_docs)
         logger.info(f"  -> Context headers generated for {headers_generated} parent documents")

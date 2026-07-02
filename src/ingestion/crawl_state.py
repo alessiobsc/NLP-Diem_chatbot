@@ -46,9 +46,23 @@ class CrawlStateManager:
                         etag TEXT,
                         last_modified TEXT,
                         crawled_at TEXT NOT NULL,
-                        metadata_json TEXT
+                        metadata_json TEXT,
+                        content_hash TEXT,
+                        indexed_parent_ids_json TEXT,
+                        indexed_at TEXT
                     )
                 """)
+                existing_columns = {
+                    row["name"]
+                    for row in conn.execute("PRAGMA table_info(crawled_pages)").fetchall()
+                }
+                for column_name, column_type in {
+                    "content_hash": "TEXT",
+                    "indexed_parent_ids_json": "TEXT",
+                    "indexed_at": "TEXT",
+                }.items():
+                    if column_name not in existing_columns:
+                        conn.execute(f"ALTER TABLE crawled_pages ADD COLUMN {column_name} {column_type}")
                 conn.commit()
         except Exception as e:
             logger.error(f"Failed to initialize crawl state database: {e}")
@@ -111,6 +125,62 @@ class CrawlStateManager:
                 logger.info(f"Removed URL state for {url} from the database.")
         except Exception as e:
             logger.error(f"Failed to remove URL state for {url}: {e}")
+
+    def update_index_state(self, url: str, content_hash: str, parent_ids: List[str]):
+        """Stores the indexed content hash and parent docstore IDs for a source URL."""
+        indexed_at = datetime.now(timezone.utc).isoformat()
+        parent_ids_json = json.dumps(parent_ids)
+
+        try:
+            with self._get_conn() as conn:
+                conn.execute("""
+                    INSERT INTO crawled_pages (
+                        url, etag, last_modified, crawled_at,
+                        metadata_json, content_hash, indexed_parent_ids_json, indexed_at
+                    )
+                    VALUES (?, NULL, NULL, ?, NULL, ?, ?, ?)
+                    ON CONFLICT(url) DO UPDATE SET
+                        content_hash = excluded.content_hash,
+                        indexed_parent_ids_json = excluded.indexed_parent_ids_json,
+                        indexed_at = excluded.indexed_at
+                """, (url, indexed_at, content_hash, parent_ids_json, indexed_at))
+                conn.commit()
+        except Exception as e:
+            logger.warning(f"Could not update index state for {url}: {e}")
+
+    def get_index_state(self, url: str) -> Dict[str, Any]:
+        """Returns indexed hash and parent IDs for a URL, if present."""
+        row = self.get_url_info(url)
+        if not row:
+            return {"content_hash": None, "parent_ids": []}
+
+        parent_ids = []
+        try:
+            raw_parent_ids = row["indexed_parent_ids_json"]
+            if raw_parent_ids:
+                parent_ids = json.loads(raw_parent_ids)
+        except Exception:
+            parent_ids = []
+
+        return {
+            "content_hash": row["content_hash"],
+            "parent_ids": parent_ids,
+        }
+
+    def clear_index_state(self, url: str):
+        """Clears only indexing metadata while preserving crawl cache headers."""
+        try:
+            with self._get_conn() as conn:
+                conn.execute("""
+                    UPDATE crawled_pages
+                    SET content_hash = NULL,
+                        indexed_parent_ids_json = NULL,
+                        indexed_at = NULL
+                    WHERE url = ?
+                """, (url,))
+                conn.commit()
+        except Exception as e:
+            logger.warning(f"Could not clear index state for {url}: {e}")
 
     @staticmethod
     def close():
