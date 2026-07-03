@@ -372,6 +372,19 @@ def classify_context_header(text: str, url: str, metadata: dict | None = None) -
 
     if "docenti.unisa.it" in host:
         person = title.split("|", 1)[0].strip()
+        # Narrow special case, checked before anything else: /didattica?...&id=...
+        # course pages only (the ones added by scripts/add_didattica_pages.py).
+        # <title> is generic ("Nome | Didattica") for every course of a docente;
+        # <h1> is course-specific ("Nome | Nome Corso") — use it when present.
+        # Header is framed around the COURSE, not the docente name, so a query about
+        # the professor doesn't pull course-content chunks (and vice versa).
+        # Every other docenti.unisa.it path (including plain /didattica with no
+        # ?id=) falls through unchanged to the original logic below.
+        if ("didattica" in path or "insegnamenti" in path) and parse_qs(parsed.query).get("id"):
+            h1 = clean_text(str((metadata or {}).get("h1", "")))
+            course = h1.split("|", 1)[-1].strip() if "|" in h1 else ""
+            if course:
+                return f"Informazioni corso - {course}"
         if "pubblicazioni" in path or "pubblicazioni" in combined:
             return f"Pubblicazioni docente - {person}" if person else "Pubblicazioni docente"
         if "curriculum" in path or "curriculum" in combined:

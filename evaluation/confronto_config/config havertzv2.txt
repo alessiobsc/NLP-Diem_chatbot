@@ -132,7 +132,7 @@ USE_LLM_CONTEXT_HEADERS = strtobool(os.getenv("USE_LLM_CONTEXT_HEADERS", "True")
 
 # Agentic RAG Settings
 # Max retrieve() calls the agent can make per turn before generate is forced.
-# Only retrieve() counts toward the cap. Set via MAX_RETRIEVE_CALLS env var.
+# Rewrite/summarize/calculate are uncapped. Set via MAX_RETRIEVE_CALLS env var.
 MAX_RETRIEVE_CALLS: int = int(os.getenv("MAX_RETRIEVE_CALLS", "3"))
 
 # OpenRouter Enrichment Settings

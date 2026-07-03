@@ -136,11 +136,14 @@ CURRENT_NAV_LINES = {
 
 
 def extract_html_metadata(html: str) -> dict:
-    """Extract title, language, and date from raw HTML.
+    """Extract title, h1, language, and date from raw HTML.
 
     Must be called BEFORE html_extractor() — the DOM is destroyed after that.
     Returns a dict suitable for doc.metadata.update(). Keys produced:
       "title"    — text of <title> tag (if present)
+      "h1"       — text of first <h1> tag (if present). On docenti.unisa.it the
+                   <title> tag is generic ("Nome | Didattica") for every course
+                   of that docente, but the <h1> is course-specific ("Nome | Nome Corso").
       "language" — <html lang="..."> lowercased (if present)
       "date"     — content of the first matching <meta> or <time datetime> (if present)
     "date" maps to an existing key in METADATA_DATE_KEYS so temporal filter picks it up automatically.
@@ -152,6 +155,10 @@ def extract_html_metadata(html: str) -> dict:
         title_tag = soup.find("title")
         if title_tag:
             meta["title"] = title_tag.get_text(strip=True)
+
+        h1_tag = soup.find("h1")
+        if h1_tag:
+            meta["h1"] = h1_tag.get_text(strip=True)
 
         html_tag = soup.find("html")
         if html_tag:
