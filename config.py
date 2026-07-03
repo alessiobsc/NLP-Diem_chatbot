@@ -15,7 +15,7 @@ from src.utils.strtobool import strtobool
 
 os.environ.setdefault("PYTHONUNBUFFERED", "1")
 
-# Load environment variables from .env file if it exists
+# Load environment variables from .env file if exists
 load_dotenv()
 
 
@@ -26,7 +26,7 @@ load_dotenv()
 PROJECT_ROOT: Path = Path(__file__).resolve().parent
 
 # ChromaDB Storage paths
-CHROMA_DIR_NAME: str = os.getenv("CHROMA_DIR_NAME", "chroma_diem")
+CHROMA_DIR_NAME: str = os.getenv("CHROMA_DIR_NAME", "chroma_diem_qwen3_Havertzv2_finale")
 CHROMA_DIR: Path = PROJECT_ROOT / CHROMA_DIR_NAME
 PARENT_STORE_DIR: Path = CHROMA_DIR / "parent_store"
 
@@ -47,20 +47,20 @@ LOG_BACKUP_COUNT: int = int(os.getenv("LOG_BACKUP_COUNT", "5"))
 # PROVIDER SELECTION
 # =============================================================================
 # LLM provider: "local" (default) or "openrouter"
-LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "local")
+LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openrouter")
 
 if LLM_PROVIDER not in ["local", "openrouter"]:
     raise NotImplementedError(f"LLM_PROVIDER '{LLM_PROVIDER}' is not supported. Use 'local' or 'openrouter'.")
 
 # Embedding provider: "local" (default, huggingface) or "openrouter"
-EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "local")
+EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "openrouter")
 
 if EMBEDDING_PROVIDER not in ["local", "openrouter"]:
     raise NotImplementedError(f"EMBEDDING_PROVIDER '{EMBEDDING_PROVIDER}' is not supported. Use 'local' or 'openrouter'.")
 
 
 # Reranking provider: "local" (default, huggingface) or "openrouter"
-RERANKER_PROVIDER: str = os.getenv("RERANKER_PROVIDER", "local")
+RERANKER_PROVIDER: str = os.getenv("RERANKER_PROVIDER", "openrouter")
 
 if RERANKER_PROVIDER not in ["local", "openrouter"]:
     raise NotImplementedError(f"RERANKER_PROVIDER '{RERANKER_PROVIDER}' is not supported. Use 'local' or 'openrouter'.")
@@ -89,8 +89,8 @@ OPENROUTER_AGENT_MODEL: str = os.getenv("OPENROUTER_AGENT_MODEL", "openai/gpt-os
 OPENROUTER_LIGHTWEIGHT_MODEL: str = os.getenv("OPENROUTER_LIGHTWEIGHT_MODEL", "meta-llama/llama-3.1-8b-instruct")
 
 # Embedding Model Settings
-OPENROUTER_EMBEDDING_MODEL: str = os.getenv("OPENROUTER_EMBEDDING_MODEL", "baai/bge-m3")
-EMBEDDING_DIMENSION: int = int(os.getenv("EMBEDDING_DIMENSION", "1024"))
+OPENROUTER_EMBEDDING_MODEL: str = os.getenv("OPENROUTER_EMBEDDING_MODEL", "qwen/qwen3-embedding-8b")
+EMBEDDING_DIMENSION: int = int(os.getenv("EMBEDDING_DIMENSION", "4096"))
 
 # Reranker Model Settings
 OPENROUTER_RERANKER_MODEL: str = os.getenv("OPENROUTER_RERANKER_MODEL", "cohere/rerank-4-pro")
@@ -104,20 +104,20 @@ DEFAULT_SESSION_ID: str = "diem-session"
 
 # Retrieval Settings
 # BI_ENCODER_K: number of documents retrieved in the first stage (fast retrieval)
-BI_ENCODER_K: int = int(os.getenv("BI_ENCODER_K", "15"))
+BI_ENCODER_K: int = int(os.getenv("BI_ENCODER_K", "18"))
 # CROSS_ENCODER_K: number of documents kept after reranking in the second stage (precision reranking)
 CROSS_ENCODER_K: int = int(os.getenv("CROSS_ENCODER_K", "5"))
 
-RETRIEVER_SCORE_THRESHOLD: float = float(os.getenv("RETRIEVER_SCORE_THRESHOLD", "0.45"))
+RETRIEVER_SCORE_THRESHOLD: float = float(os.getenv("RETRIEVER_SCORE_THRESHOLD", "0.5"))
 
 # Document Splitting Settings (Parent-Child Strategy)
 # Parent Document Settings (Broad context)
-PARENT_CHUNK_SIZE: int = int(os.getenv("PARENT_CHUNK_SIZE", "3750"))
-PARENT_CHUNK_OVERLAP: int = int(os.getenv("PARENT_CHUNK_OVERLAP", "375"))
+PARENT_CHUNK_SIZE: int = int(os.getenv("PARENT_CHUNK_SIZE", "2000"))
+PARENT_CHUNK_OVERLAP: int = int(os.getenv("PARENT_CHUNK_OVERLAP", "200"))
 
 # Child Document Settings (Precise retrieval)
-CHILD_CHUNK_SIZE: int = int(os.getenv("CHILD_CHUNK_SIZE", "600"))
-CHILD_CHUNK_OVERLAP: int = int(os.getenv("CHILD_CHUNK_OVERLAP", "80"))
+CHILD_CHUNK_SIZE: int = int(os.getenv("CHILD_CHUNK_SIZE", "400"))
+CHILD_CHUNK_OVERLAP: int = int(os.getenv("CHILD_CHUNK_OVERLAP", "50"))
 
 # Ingestion Batching
 MAX_CHILD_CHUNKS_PER_BATCH: int = 100
@@ -137,7 +137,7 @@ MAX_RETRIEVE_CALLS: int = int(os.getenv("MAX_RETRIEVE_CALLS", "3"))
 
 # OpenRouter Enrichment Settings
 OPENROUTER_ENDPOINT: str = os.getenv("OPENROUTER_ENDPOINT", "https://openrouter.ai/api/v1/chat/completions")
-OPENROUTER_CONTEXT_HEADER_MODEL: str = os.getenv("OPENROUTER_CONTEXT_HEADER_MODEL", "mistralai/mistral-nemo")
+OPENROUTER_CONTEXT_HEADER_MODEL: str = os.getenv("OPENROUTER_CONTEXT_HEADER_MODEL", "meta-llama/llama-3.1-8b-instruct")
 OPENROUTER_TIMEOUT_SECONDS: float = float(os.getenv("OPENROUTER_CONTEXT_HEADER_TIMEOUT", "30"))
 MAX_OPENROUTER_FAILURES: int = int(os.getenv("OPENROUTER_CONTEXT_HEADER_MAX_FAILURES", "3"))
 
