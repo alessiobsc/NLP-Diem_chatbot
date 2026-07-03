@@ -43,11 +43,17 @@ def dedupe_by_content(docs: list) -> list:
     testo, URL diverse per matricola). Sicuro solo qui perche' il batch e'
     omogeneo (sole pagine corso) - dedupe_docs_by_source_alias_and_content in
     main_ingestion.py e' deliberatamente piu' cauta e non collasserebbe questo
-    caso, perche' richiede anche l'alias URL uguale (qui non lo e')."""
+    caso, perche' richiede anche l'alias URL uguale (qui non lo e').
+
+    La prima riga del testo estratto e' l'h1 "{Docente} | {Corso}" (vedi
+    header_heuristic.py) ed e' l'unica parte che varia tra co-docenti sulla
+    stessa pagina corso - va esclusa dall'hash, altrimenti il contenuto
+    identico sottostante non viene mai deduplicato."""
     seen: set[str] = set()
     unique = []
     for doc in docs:
-        content_hash = normalized_content_hash(doc.page_content)
+        body = doc.page_content.split("\n", 1)[-1]
+        content_hash = normalized_content_hash(body)
         if content_hash and content_hash in seen:
             continue
         if content_hash:

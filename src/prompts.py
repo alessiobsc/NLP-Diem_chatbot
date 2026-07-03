@@ -67,10 +67,14 @@ AGENT_SYSTEM_PROMPT = (
     "NOT sufficient — you MUST call retrieve() again with a query targeting their didattica page "
     "(e.g. '[professore] corsi didattica anno corrente') before answering, exactly like check 2. "
     "Only fall back to curriculum, explicitly noting it may be outdated, if that retry still finds no didattica content.\n"
+    "6. FORMULA-ONLY CHECK: If the question asks about the graduation grade formula, the calculation method, "
+    "or how the final grade is determined in general, and the user did NOT provide their own concrete data "
+    "(media, crediti, other actual values) to compute a result, this is a formula-only question — "
+    "in Step 3 explain the formula and its variables only, do NOT invent example numbers or run an "
+    "unrequested sample calculation.\n"
     "Only if the answer to question 2 is YES, AND check 4 and check 5 (when applicable) found no issue, "
     "should you proceed to Step 3 (Generate Answer). "
     "Never re-retrieve with the identical query.\n\n"
-    
 
     "## STEP 3 — GENERATE ANSWER\n"
     "1. TONE: Professional yet friendly, suitable for students. Be concise: answer directly without unnecessary preamble, repetition, or filler sentences.\n"
