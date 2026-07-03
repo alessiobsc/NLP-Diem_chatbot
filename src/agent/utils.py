@@ -32,9 +32,19 @@ def format_context(inputs: Dict[str, Any]) -> Dict[str, Any]:
     for doc in docs:
         source = doc.metadata.get("source", "Unknown Source")
         content = strip_context_header_from_content(doc)
+        # docenti.unisa.it course sub-pages (didattica?anno=...&id=...) share the same
+        # generic body sections (Testi, Verifica dell'apprendimento, ecc.) across different
+        # courses of the same professor — the course name only lives in the h1 metadata,
+        # not in the chunk body. Surface it so the model can tell courses apart.
+        course_line = ""
+        if "docenti.unisa.it" in source and "didattica?anno=" in source and "&id=" in source:
+            h1 = doc.metadata.get("h1", "")
+            if h1:
+                course_line = f"<course>{h1}</course>\n"
         block = (
             "<document>\n"
             f"<source>{source}</source>\n"
+            f"{course_line}"
             f"<content>\n{content}\n</content>\n"
             "</document>"
         )
