@@ -3227,3 +3227,42 @@ CRONOLOGIA AGGIORNAMENTI
   - .env (CHROMA_DIR_NAME -> chroma_diem_qwen3_Havertzv2_UPDATED)
   - .claude/settings.local.json (permessi overnight, da revertire post-verifica)
 
+2026-07-03 (seguito) — Applicazione didattica pages su Havertzv2_best + fix prompt mirati
+--------------------------------------------------------------------------------
+
+  RUN add_didattica_pages.py SU chroma_diem_qwen3_Havertzv2_best
+  -----------------------------------------------------------------
+  Havertzv2 era la collection con piu' prove/tuning alle spalle; Havertzv2_best
+  e' una copia dedicata su cui applicare lo stesso arricchimento didattica gia'
+  verificato su Havertzv2_UPDATED, senza toccare l'originale. .env aggiornato
+  (CHROMA_DIR_NAME -> chroma_diem_qwen3_Havertzv2_best) prima del run.
+  Risultato: 32233 -> 36949 chunk (+4716, 1008 parent indicizzati, zero errori),
+  stesso delta della run precedente su _UPDATED. Le domande gia' verificate in
+  precedenza restano invariate: solo aggiunta, nessuna modifica al resto della
+  collection.
+
+  FIX PROMPT — MIX CROSS-CORSO E FONTE DIDATTICA VS CURRICULUM
+  -----------------------------------------------------------------
+  Due gap trovati testando domande reali contro Havertzv2_best:
+  1) "Quali libri di testo per Ingegneria del Software?" pescava anche da un
+     corso diverso (Medical Software Engineering) per somiglianza semantica.
+     Fix: nuova rule 13 in STEP 3 (COURSE-SPECIFIC SOURCES) — vieta di
+     mischiare contenuti tra corsi diversi anche se nome/dipartimento simili.
+  2) "Cosa insegna il prof. Greco?" rispondeva usando la sezione "curriculum"
+     del docente invece che "didattica" (piu' affidabile per l'elenco corsi
+     attuali). Primo fix (chiarimento in KNOWLEDGE BASE STRUCTURE + nuova
+     STEP 2 rule 5 TEACHING ASSIGNMENT CHECK) non bastava: il modello
+     rispondeva comunque da curriculum senza ritentare retrieve, perche' il
+     gate finale di STEP 2 controllava solo l'esito del check 2, non dei
+     check 4/5. Fix: gate esteso ("Only if... AND check 4 and check 5... found
+     no issue"), e rule 5 resa concreta (verifica '/didattica' nell'URL
+     sorgente invece di un giudizio vago su "sezione curriculum"). Verificato:
+     il modello ora ritenta retrieve mirato alla pagina didattica prima di
+     rispondere, cade su curriculum solo se il retry non trova nulla,
+     segnalandolo esplicitamente.
+
+  FILE MODIFICATI
+  ------------------
+  - .env (CHROMA_DIR_NAME -> chroma_diem_qwen3_Havertzv2_best)
+  - src/prompts.py (KB structure, STEP 2 rule 5, STEP 3 rule 13)
+
