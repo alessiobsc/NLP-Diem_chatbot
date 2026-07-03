@@ -431,6 +431,38 @@ pagine in inglese/cinese. Il crawler usa una \code{RateLimitedSession} Token Buc
 \code{CrawlStateManager} mantiene un database SQLite di \texttt{ETag}/\texttt{Last-Modified}
 per saltare, tramite HTTP~304, il ri-download di contenuti invariati nelle re-ingestion.
 
+\subsection{Aggiornamento Incrementale Settimanale}
+\label{sec:incremental-update}
+
+Per evitare di ricostruire l'intero Chroma a ogni aggiornamento, il progetto prevede una
+modalità incrementale orientata all'uso settimanale. Il principio è trattare ogni URL/source
+come unità atomica di indicizzazione: in \code{db/crawl\_state.db} vengono salvati l'hash
+del contenuto già indicizzato e i parent document ID associati. Durante un nuovo crawl, la
+pipeline applica gli stessi passi della full ingestion (parsing, pulizia, deduplica e
+filtri), raggruppa i documenti per \code{metadata["source"]} e ricalcola l'hash sul testo
+post-filtro. Se l'hash coincide con quello persistito, la source viene saltata; se è nuova o
+modificata, i vecchi child chunk e parent document di quella sola source vengono rimossi e
+sostituiti tramite il \code{DocumentIndexer}.
+
+La scelta è concettualmente corretta perché il confronto avviene sul contenuto che entrerebbe
+realmente nel retriever, non sull'HTML grezzo. La cancellazione è localizzata e usa sia i
+parent ID salvati nello stato sia i metadati presenti in Chroma, riducendo il rischio di
+lasciare chunk orfani. Per prudenza, però, l'incrementale non elimina automaticamente tutte
+le source che non ricompaiono nel crawl: una mancata visita può dipendere da timeout o pagine
+temporaneamente non raggiungibili. Restano da monitorare variazioni non semantiche del
+markup, modifiche ai filtri che cambiano gli hash, interruzioni tra delete e reindex e
+metadati corrotti. Prima di automatizzarlo completamente sono quindi utili lock di
+esecuzione, snapshot di Chroma/SQLite, dry-run con report delle source cambiate, verifica
+post-run di coerenza child--parent--state e un full refresh periodico per rimuovere URL
+realmente scomparsi.
+
+È importante distinguere aggiornamento e configurazione sperimentale: il Chroma usato nella
+configurazione finale più robusta non coincide necessariamente con l'ultimo indice prodotto
+dall'update incrementale. Anche a parità di parametri, context header generati da modello,
+ordine del crawling e piccole variazioni di parsing possono produrre store leggermente
+diversi; l'ultimo indice è quindi il più aggiornato, mentre quello selezionato per C5 è il
+più robusto rispetto alle valutazioni effettuate.
+
 La pipeline integra fonti supplementari: il modulo \code{easycourse.py} interroga le API
 di EasyCourse per calendario esami e orario lezioni dei cinque corsi DIEM, producendo un
 documento per coppia (CDL, insegnamento). Le risposte JSON vengono normalizzate e
