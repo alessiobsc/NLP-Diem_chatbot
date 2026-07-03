@@ -3128,3 +3128,102 @@ CRONOLOGIA AGGIORNAMENTI
   - Esempio PDF tabellare (Vincenzo Auletta / DESIGN AND ANALYSIS OF
     ALGORITHMS) documentato come limite lettura PDF.
 
+2026-07-03 — Crawl mirato pagine corso docenti (libri di testo) + fix duplicazione chunk
+--------------------------------------------------------------------------------
+
+  GAP TROVATO
+  -----------
+  Domanda "Quali libri di testo per Ingegneria del Software?" (da DOMANDE.txt,
+  domande reali dell'appello) non rispondibile dal KB: le pagine
+  docenti.unisa.it/{matricola}/didattica?anno=YYYY&id=NNN (testi di
+  riferimento/consultazione per corso) risultavano crawlate solo per 13/1226
+  pagine docenti in crawled_urls.json, nonostante il crawl full-pipeline
+  raggiunga docenti.unisa.it a depth 3. Causa non approfondita (probabile
+  dedup/visited-cache troppo aggressiva su query string). Verificato con
+  fetch statico + Playwright che il contenuto e' HTML statico (no JS/AJAX
+  richiesto), quindi risolvibile con crawl mirato senza refactoring crawler.
+
+  NUOVO SCRIPT (scripts/add_didattica_pages.py)
+  -----------------------------------------------
+  Script isolato, non tocca crawler.py/main_ingestion.py: crawla /didattica
+  base dei 55 docenti validati, estrae link corso anno corrente, fetch
+  singolo per pagina, stessa pipeline di pulizia di main_ingestion
+  (apply_html_metadata_and_filter, filter_recent_documents,
+  filter_low_quality_documents), dedup per content-hash (dedupe_by_content,
+  necessario per corsi in co-docenza: stesso corso/contenuto sotto matricole
+  diverse, l'id numerico NON e' univoco tra docenti). index_documents() upsert
+  additivo sulla collection esistente.
+
+  BUG TROVATO: DUPLICAZIONE CHILD CHUNK SU RE-INDEX (sistemico, non solo qui)
+  -----------------------------------------------------------------------------
+  ParentDocumentRetriever.add_documents (langchain_classic) accetta ids
+  espliciti solo per i parent doc; per i child chunk scritti in Chroma genera
+  sempre uuid4() nuovi, mai deterministici. Ogni re-indicizzazione delle
+  stesse URL duplica i child invece di sovrascriverli — rischio presente
+  anche per full-pipeline se rilanciato sulla stessa cartella Chroma, non
+  solo per questo script. Non fixato in src/ingestion/database.py (condiviso,
+  fuori scope stanotte per non toccare il sistema a ridosso della consegna) —
+  FIXATO SOLO in add_didattica_pages.py con purge_existing_chunks()
+  (collection.delete(where={"source": {"$in": urls}}) prima di re-indicizzare),
+  che rende idempotente solo questo script. Verificato concretamente: 138 URL
+  corso distinte, 4716 chunk totali, zero duplicati dopo il fix.
+  BACKLOG: valutare fix strutturale in database.py (assegnare ids
+  deterministici anche ai child, es. f"{parent_chunk_id}_{i}") prima di
+  qualunque futuro re-run del full-pipeline sulla stessa collection.
+
+  FIX HEADER CONTESTUALE PAGINE CORSO (isolato via query string ?id=)
+  -----------------------------------------------------------------------
+  src/ingestion/header_heuristic.py: bug reale trovato — il check
+  "curriculum" in combined (testo body, primi 1200 char) matchava PRIMA del
+  path /didattica, perche' il menu di navigazione di ogni pagina
+  docenti.unisa.it contiene il link "Curriculum" vicino all'inizio pagina;
+  le pagine corso finivano quindi taggate "Curriculum docente - Nome" invece
+  di riflettere il corso. Fix scoping stretto: nuovo ramo speciale
+  controllato PRIMA di tutto il resto, attivo solo se
+  ("didattica" in path or "insegnamenti" in path) and id= presente in query
+  string — produce "Informazioni corso - {NomeCorso}" (da <h1>, corso-
+  centrico, niente nome docente per evitare confusione prof/corso in
+  retrieval). Tutto il resto della funzione (pubblicazioni/curriculum/
+  ricevimento/didattica-senza-id/profilo) resta byte-identico all'originale
+  (verificato via git diff — pura insertion, zero righe toccate/riordinate).
+  src/ingestion/parser.py: aggiunta estrazione <h1> in extract_html_metadata
+  (nuova chiave metadata["h1"], additiva, non tocca title/language/date
+  esistenti; nessun altro punto del codice la legge tranne il nuovo ramo).
+
+  FIX PROMPT — NO SOSTITUZIONE NOME SIMILE (src/prompts.py, rule 6)
+  -----------------------------------------------------------------------
+  Aggiunta clausola esplicita: se l'utente nomina una persona specifica e
+  nessun documento recuperato contiene quel cognome esatto (o variante
+  inequivocabile), l'agente deve rispondere [KNOWLEDGE_GAP] — mai sostituire
+  silenziosamente con una persona dal nome simile. Causa del bug originale:
+  la regola precedente lasciava al modello il giudizio di cosa conta come
+  "entita' completamente diversa"; un cognome quasi identico (Addeo/Addesso,
+  2 lettere di differenza) veniva trattato come probabile refuso da
+  correggere, non come persona diversa da segnalare. Aggravato dal retrieval
+  semantico, che recupera per similarita' (non match esatto) quindi porta
+  comunque in contesto un docente "vicino" senza segnale di mismatch. Questo
+  e' un cambio di system prompt globale (ogni turno di chat), applicato su
+  esplicita richiesta esplicita nonostante la policy "non toccare il sistema
+  stanotte" — l'unico dei 3 fix non scorporabile per singola URL come gli
+  altri due.
+
+  RISULTATI FINALI (verificati)
+  ------------------------------
+  Collection chroma_diem_qwen3_Havertzv2_UPDATED: 55762 chunk finali, zero
+  duplicati (verificato per-URL: 138 sorgenti distinte, 4716 chunk, nessun
+  conteggio raddoppiato). Rerun completo delle 12 domande reali
+  dell'appello (DOMANDE.txt) via scripts di test contro l'app aggiornata:
+  domanda libri di testo ora risponde con fonte reale (Sommerville 10a ed.
+  2017 + Fowler UML Distilled 4a ed. 2018, + testi aggiuntivi), domanda
+  "prof. Addeo" ora risponde correttamente "non trovato" invece di
+  sostituire con "Paolo Addesso".
+
+  FILE MODIFICATI STASERA
+  --------------------------
+  - scripts/add_didattica_pages.py (nuovo, isolato)
+  - src/ingestion/header_heuristic.py (isolato a didattica?id=, verificato)
+  - src/ingestion/parser.py (additivo, chiave h1 inutilizzata altrove)
+  - src/prompts.py (globale, rule 6, su richiesta esplicita)
+  - .env (CHROMA_DIR_NAME -> chroma_diem_qwen3_Havertzv2_UPDATED)
+  - .claude/settings.local.json (permessi overnight, da revertire post-verifica)
+
